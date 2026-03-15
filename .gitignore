@@ -1,0 +1,33 @@
+# データベース
+*.db
+
+# Pythonキャッシュ
+__pycache__/
+*.pyc
+*.pyo
+
+# サムネキャッシュ
+thumb_cache/
+cover_cache/
+
+# ログ
+*.log
+
+# 環境設定
+.env
+
+# PyInstaller
+dist/
+build/
+*.spec
+
+# VS Code / Cursor
+.vscode/
+.cursor/
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# プラグイン実装（メタ取得等は同梱しない。README.md はコミットする）
+plugins/*/

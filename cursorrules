@@ -1,0 +1,100 @@
+# 同人誌ライブラリソフト - Cursorルール
+
+## 曖昧なまま実装しない（最優先）
+- 言葉で伝わらなかった箇所・理解できない項目・曖昧な項目は**聞き返し、質問して方向性を確定してから実装する**
+- **曖昧な実装はしない**（解釈で勝手に決めず、確認する）
+
+## マジックナンバー禁止（最優先）
+- **数値・色・フォントサイズのハードコード禁止**。必ず定数から参照する。
+- **色** → `theme.py` の `THEME_COLORS`
+- **サイズ・余白・フォント** → `config.py` の定数（該当がなければ config / theme に追加してから使用）
+- 例外: `0`, `1`, `-1` など自明な値のみ許可
+- ユーザーが「ここは 12px で」などと書いていても、**定数化してから反映**する（確認不要・自動で追加）
+
+## 環境
+- Python 3.14
+- PySide6（UIフレームワーク）
+- SQLite（db.py経由でアクセス、直接SQLは書かない）
+- 作業フォルダ: 任意（例: デスクトップ上のプロジェクトフォルダなど。ユーザー名・絶対パスはハードコードしない）
+- プロジェクト名"Noble Shelf"
+
+## コーディング規則
+
+### 全般
+- 日本語コメントを使うこと
+- 型ヒントを積極的に使うこと（`list[dict]`, `str | None` など）
+- `from __future__ import annotations` を各ファイル先頭に入れること
+
+### PySide6
+- UIはQSSで統一（theme.pyの `THEME_COLORS` と `get_main_qss()` を必ず参照）
+- シグナルは `Signal` で定義、コールバックの直接渡しは避ける
+- ダイアログは `QDialog` を継承、`exec()` で呼び出す
+- `QThread` または `QRunnable` でバックグラウンド処理
+
+### ファイル構成（役割を守ること）
+- `main.py`    : エントリーポイントのみ、ロジックを書かない
+- `app.py`     : MainWindow、レイアウトとシグナル接続のみ
+- `grid.py`    : グリッド表示ロジック
+- `db.py`      : DB操作のみ、UIコードを混入しない
+- `theme.py`   : QSS・カラー定数のみ
+- `config.py`  : 定数のみ、ロジックを書かない
+- `drop_handler.py` : D&D処理
+- `scanner.py` : スキャン処理
+- `viewer.py`  : ビューワー本体 + BookReaderアダプター
+- `context_menu.py` : コンテキストメニュー関連のみ
+- `properties.py` : プロパティ編集ダイアログ
+- `dlsite.py`     : DLSiteメタデータ取得処理
+
+### db.py の主要シグネチャ（変更しないこと）
+```python
+db.upsert_book(name, circle, title, path, cover_path, mtime=None, is_dlst=0)
+db.delete_book(path)
+db.rename_book(old_path, new_path, new_name, new_circle, new_title, new_cover_path)
+db.get_all_books()  # -> list of tuple (name, circle, title, path, cover_path, is_dlst)
+db.get_setting(key) / db.set_setting(key, value)
+db.get_book_meta(path) / db.set_book_meta(path, ...)
+```
+
+### bookのdict構造（grid.pyで使用）
+```python
+{
+    "path":   str,
+    "name":   str,   # "サークル - タイトル"
+    "title":  str,
+    "circle": str,
+    "cover":  str,   # カバー画像パス
+    "pages":  int,
+    "rating": int,
+}
+```
+
+## やってはいけないこと
+- マジックナンバー（上記「マジックナンバー禁止」参照）
+- `tkinter` や `customtkinter` を使わない（旧版コードを参考にする際も移植しない）
+- `db.py` を直接編集しない（シグネチャ変更禁止）
+- `config.py` の定数をハードコードで上書きしない
+- `QThread` を使わず重い処理をメインスレッドで実行しない
+
+## Claude + Cursor 開発フロー
+
+### 役割分担
+- Claude：フィードバックの言語化、バグのログ分析、Cursorへの指示文生成（コードは生成しない）
+- Cursor：実装・コード編集のみ
+
+### フロー
+1. SSとフィードバック → Claudeが言語化 → Cursorに投げる
+2. 2回修正しても直らない場合 → デバッグログをClaudeに貼る → Claudeがログ分析して言葉で修正指示 → Cursorに投げる
+
+### Cursorへの指示原則
+- 変更箇所のdiffのみ返すこと
+- ファイル全体を返さないこと
+- 編集対象ファイルのみ読むこと、関連ファイルを勝手にスキャンしない
+
+## UI開発方針
+- 大まかなUI骨格を先に完成させてから細部に入る
+- 細部のバグ修正で消耗しない
+
+## ダークタイトルバー
+新しいQDialog・QMainWindow・QWidgetのサブクラスを作成する場合、
+必ず `from theme import apply_dark_titlebar` をインポートし、
+`__init__` の `super().__init__()` 直後に `apply_dark_titlebar(self)` を呼び出すこと。
