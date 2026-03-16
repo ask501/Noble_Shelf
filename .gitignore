@@ -1,5 +1,6 @@
 # データベース
 *.db
+_resource/
 
 # Pythonキャッシュ
 __pycache__/
@@ -20,6 +21,7 @@ cover_cache/
 dist/
 build/
 *.spec
+localpycs/
 
 # VS Code / Cursor
 .vscode/
@@ -28,6 +30,7 @@ build/
 # Windows
 Thumbs.db
 Desktop.ini
+start.bat
 
 # プラグイン実装（メタ取得等は同梱しない。README.md はコミットする）
 plugins/*/

@@ -195,44 +195,30 @@ def backup_on_startup() -> None:
     BACKUP_DIR に library_YYYYMMDD_HHMMSS.db を作成し、
     設定の backup_max_count を超えた古いファイルを削除する。
     """
+    if not os.path.exists(DB_FILE):
+        return
     os.makedirs(BACKUP_DIR, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     dst = os.path.join(BACKUP_DIR, f"library_{ts}.db")
     shutil.copy2(DB_FILE, dst)
-    _trim_backups()
+    _trim_backups_with_setting()
 
 
-def _trim_backups() -> None:
-    """バックアップ件数が上限を超えたら古いものから削除する。"""
+def _trim_backups_with_setting() -> None:
+    """バックアップ件数が上限を超えたら古いものから削除する（backup_max_count 設定を優先）。"""
     try:
         max_count = int(get_setting("backup_max_count") or MAX_BACKUPS)
     except (TypeError, ValueError):
         max_count = MAX_BACKUPS
-    files = sorted(
-        [f for f in os.listdir(BACKUP_DIR) if f.startswith("library_") and f.endswith(".db")],
-        reverse=True
-    )
-    for old in files[max_count:]:
+    backups = list_backups()  # 既存の list_backups() は新しい順の dict リストを返す
+    for info in backups[max_count:]:
+        path = info.get("path")
+        if not path:
+            continue
         try:
-            os.remove(os.path.join(BACKUP_DIR, old))
+            os.remove(path)
         except OSError:
             pass
-
-
-def list_backups() -> list[str]:
-    """バックアップファイルのパス一覧を新しい順で返す。"""
-    if not os.path.exists(BACKUP_DIR):
-        return []
-    files = sorted(
-        [f for f in os.listdir(BACKUP_DIR) if f.startswith("library_") and f.endswith(".db")],
-        reverse=True
-    )
-    return [os.path.join(BACKUP_DIR, f) for f in files]
-
-
-def restore_backup(backup_path: str) -> None:
-    """指定したバックアップを DB_FILE に上書きコピーする。"""
-    shutil.copy2(backup_path, DB_FILE)
 
 
 # ══════════════════════════════════════════════════════

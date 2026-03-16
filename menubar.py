@@ -6,6 +6,7 @@ from PySide6.QtGui import QAction, QKeySequence, QFont
 from PySide6.QtWidgets import QMenu, QWidgetAction, QLabel
 import db
 import config
+from paths import APP_DATA_DIR
 from theme import (
     DANGER_MENU_ITEM_STYLE_NORMAL,
     DANGER_MENU_ITEM_STYLE_HOVER,
@@ -265,6 +266,23 @@ def setup_menubar(window):
     act_first_run = QAction("初回起動オーバーレイをテスト", window)
     act_first_run.triggered.connect(_open_first_run_overlay)
     debug_menu.addAction(act_first_run)
+
+    def _open_appdata_folder():
+        path = APP_DATA_DIR
+        try:
+            os.makedirs(path, exist_ok=True)
+        except OSError:
+            pass
+        if sys.platform == "win32":
+            os.startfile(path)
+        elif sys.platform == "darwin":
+            subprocess.run(["open", path], check=False)
+        else:
+            subprocess.run(["xdg-open", path], check=False)
+
+    act_open_appdata = QAction("ユーザーデータフォルダを開く", window)
+    act_open_appdata.triggered.connect(_open_appdata_folder)
+    debug_menu.addAction(act_open_appdata)
 
 
 # 設定で変更したショートカットをメニューに再反映する（設定ダイアログ保存後に呼ぶ）

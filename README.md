@@ -140,6 +140,6 @@ Noble shelf/
 
 ## License
 
-本リポジトリのコードは **MIT License** です。Copyright (c) 2026 athrect。  
+本リポジトリのコードは **MIT License** です。Copyright (c) 2026 ask501。
 全文は [LICENSE](LICENSE) を参照してください。
 

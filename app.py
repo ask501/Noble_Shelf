@@ -323,7 +323,6 @@ class MainWindow(QMainWindow):
         from PySide6.QtWidgets import QDialog, QVBoxLayout, QListWidget, QDialogButtonBox, QMessageBox
         import db
         import os
-        print(type(db.list_backups()), db.list_backups()[:1])
 
         backups = db.list_backups()
         if not backups:
@@ -336,8 +335,9 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(dlg)
 
         lst = QListWidget()
-        for path in backups:
-            fname = os.path.basename(path)
+        for info in backups:
+            path = info.get("path", "")
+            fname = os.path.basename(path) if path else ""
             # library_YYYYMMDD_HHMMSS.db → YYYY/MM/DD HH:MM:SS
             try:
                 body = fname[len("library_"):-len(".db")]
@@ -364,14 +364,21 @@ class MainWindow(QMainWindow):
 
         confirm = QMessageBox.question(
             self, "確認",
-            "選択したバックアップに復元します。\nアプリを再起動してください。\n続けますか？",
+            "選択したバックアップに復元します。\n続けますか？",
             QMessageBox.Yes | QMessageBox.No
         )
         if confirm != QMessageBox.Yes:
             return
 
-        db.restore_backup(backups[idx])
-        QMessageBox.information(self, "復元完了", "復元しました。アプリを再起動してください。")
+        db.restore_backup(backups[idx]["path"])
+        result = QMessageBox.question(
+            self, "復元完了",
+            "復元しました。今すぐ再起動しますか？\n（いいえを選ぶと次回起動時に反映されます）",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if result == QMessageBox.Yes:
+            import os as _os, sys as _sys
+            _os.execv(_sys.executable, [_sys.executable] + _sys.argv)
 
     # ── 中央レイアウト ────────────────────────────────────
     def _setup_central(self):
