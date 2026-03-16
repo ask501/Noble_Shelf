@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QScrollArea,
     QSpinBox,
+    QCheckBox,
 )
 from PySide6.QtCore import Qt, QEvent, QTimer
 from PySide6.QtGui import QFont, QFontDatabase, QKeySequence, QKeyEvent
@@ -507,6 +508,15 @@ class SettingsDialog(QDialog):
         row.addStretch()
         layout.addLayout(row)
 
+        # 自動アップデート
+        update_row = QHBoxLayout()
+        self._disable_update_check = QCheckBox("自動アップデートを無効にする")
+        self._disable_update_check.setFont(QFont(config.FONT_FAMILY, config.FONT_SIZE_DIALOG_LABEL))
+        self._disable_update_check.setChecked(db.get_setting("disable_auto_update") == "1")
+        update_row.addWidget(self._disable_update_check)
+        update_row.addStretch()
+        layout.addLayout(update_row)
+
         layout.addStretch()
         return widget
 
@@ -703,6 +713,7 @@ class SettingsDialog(QDialog):
         db.set_setting(config.CARD_SETTING_STORE_ICON,  "1" if self._chk_store_icon.isChecked()  else "0")
         db.set_setting(config.CARD_SETTING_SUB_INFO,    self._combo_sub_info.currentData())
         db.set_setting("backup_max_count", str(self._backup_count_spin.value()))
+        db.set_setting("disable_auto_update", "1" if self._disable_update_check.isChecked() else "0")
 
         self.accept()
 

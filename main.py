@@ -33,7 +33,7 @@ def _apply_dark_titlebar(window):
         pass
 
 
-def main():
+def main(on_startup=None):
     logging.basicConfig(level=logging.WARNING, format="%(name)s %(levelname)s: %(message)s", stream=sys.stderr)
     db.init_db()  # get_setting より前にテーブルを作っておく（exe を別フォルダで起動したときも必須）
     db.backup_on_startup()  # 起動時自動バックアップ
@@ -61,6 +61,9 @@ def main():
         window.setWindowIcon(icon)
     window.show()
     _apply_dark_titlebar(window)
+    if on_startup:
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(500, lambda: on_startup(window))
     sys.exit(app.exec())
 
 
