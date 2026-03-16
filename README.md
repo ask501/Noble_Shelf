@@ -64,9 +64,12 @@ Noble shelf/
 │   └── README.md
 │
 ├── assets/              # アイコン等（icon.png, desktop_icon.ico, バッジ画像 等）
-├── thumb_cache/         # サムネイルキャッシュ（.gitignore 対象）
-├── cover_cache/         # カバー画像キャッシュ（.gitignore 対象）
-└── library.db            # SQLite DB（.gitignore 対象）
+│
+└── （ユーザーデータは %APPDATA%\Roaming\NobleShelf\ に保存）
+├── library.db       # SQLite DB
+├── backups/         # 起動時自動バックアップ（最大10件）
+├── thumb_cache/     # サムネイルキャッシュ
+└── cover_cache/     # カバー画像キャッシュ
 ```
 
 ---
