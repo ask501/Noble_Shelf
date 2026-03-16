@@ -2,6 +2,7 @@
 # 全モジュールはここを参照し、マジックナンバーを排除する。
 import os
 import sys
+from paths import APP_BASE, CACHE_DIR, COVER_CACHE_DIR
 
 # ── UIスタイル共通定数 ────────────────────────────────────
 BORDER_RADIUS = 6        # ウィジェット共通の角丸半径(px)
@@ -11,23 +12,16 @@ BORDER_WIDTH  = 1       # ボーダー幅(px)
 APP_TITLE = "Noble Shelf"
 
 # ── ウィンドウ・キャッシュ ─────────────────────────────────
-# キャッシュはスクリプト/実行ファイルと同じフォルダに置く（cwd に依存しない）
-_APP_BASE = os.path.dirname(os.path.abspath(__file__))
-if getattr(sys, "frozen", False):
-    _APP_BASE = os.path.dirname(sys.executable)
-APP_BASE = _APP_BASE  # 相対パス解決用（db.cleanup_unused_cover_cache 等で使用）
 # アイコン（いずれも無くても起動はする）
 # ウィンドウ用: タイトルバー・タスクバーに表示（PNG可）
-WINDOW_ICON_PATH = os.path.join(_APP_BASE, "assets", "icon.png")
+WINDOW_ICON_PATH = os.path.join(APP_BASE, "assets", "icon.png")
 # デスクトップ用: ショートカットや .exe に使う（.ico 推奨。PyInstaller の --icon やショートカットの「アイコンの変更」で指定）
-DESKTOP_ICON_PATH = os.path.join(_APP_BASE, "assets", "desktop_icon.ico")
+DESKTOP_ICON_PATH = os.path.join(APP_BASE, "assets", "desktop_icon.ico")
 
 # グリッド右上バッジ用: DMMブックス / DLSite ビュアー形式でページ数の代わりに表示（無ければ従来の XXP 表示）
-BADGE_ICON_DMM_PATH    = os.path.join(_APP_BASE, "assets", "dmm_badge.png")
-BADGE_ICON_DLSITE_PATH = os.path.join(_APP_BASE, "assets", "dlsite_badge.png")
+BADGE_ICON_DMM_PATH    = os.path.join(APP_BASE, "assets", "dmm_badge.png")
+BADGE_ICON_DLSITE_PATH = os.path.join(APP_BASE, "assets", "dlsite_badge.png")
 
-CACHE_DIR = os.path.join(_APP_BASE, "thumb_cache")
-COVER_CACHE_DIR = os.path.join(_APP_BASE, "cover_cache")
 WINDOW_WIDTH = 1600
 WINDOW_HEIGHT = 900
 

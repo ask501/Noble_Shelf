@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QWidget,
     QFormLayout,
     QScrollArea,
+    QSpinBox,
 )
 from PySide6.QtCore import Qt, QEvent, QTimer
 from PySide6.QtGui import QFont, QFontDatabase, QKeySequence, QKeyEvent
@@ -234,6 +235,7 @@ class SettingsDialog(QDialog):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         tabs.addTab(scroll, "ショートカット")
         tabs.addTab(self._build_card_display_tab(), "カード表示")
+        tabs.addTab(self._build_backup_tab(), "バックアップ")
 
         layout.addWidget(tabs)
 
@@ -483,6 +485,31 @@ class SettingsDialog(QDialog):
 
         return page
 
+    def _build_backup_tab(self) -> QWidget:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setSpacing(12)
+
+        row = QHBoxLayout()
+        lbl = QLabel("バックアップ保持件数")
+        lbl.setFont(QFont(config.FONT_FAMILY, config.FONT_SIZE_DIALOG_LABEL))
+        row.addWidget(lbl)
+
+        self._backup_count_spin = QSpinBox()
+        self._backup_count_spin.setRange(1, 99)
+        try:
+            val = int(db.get_setting("backup_max_count") or 10)
+        except (TypeError, ValueError):
+            val = 10
+        self._backup_count_spin.setValue(val)
+        self._backup_count_spin.setFixedWidth(80)
+        row.addWidget(self._backup_count_spin)
+        row.addStretch()
+        layout.addLayout(row)
+
+        layout.addStretch()
+        return widget
+
     def _start_shortcut_capture(self, shortcut_id: str, display: QLabel, btn: QPushButton, row_widget: QWidget):
         """検知開始: 表示枠をハイライトし、次の1キーをグローバルで待つ。"""
         if self._active_shortcut_id is not None:
@@ -675,6 +702,7 @@ class SettingsDialog(QDialog):
         db.set_setting(config.CARD_SETTING_STAR,        "1" if self._chk_star.isChecked()         else "0")
         db.set_setting(config.CARD_SETTING_STORE_ICON,  "1" if self._chk_store_icon.isChecked()  else "0")
         db.set_setting(config.CARD_SETTING_SUB_INFO,    self._combo_sub_info.currentData())
+        db.set_setting("backup_max_count", str(self._backup_count_spin.value()))
 
         self.accept()
 

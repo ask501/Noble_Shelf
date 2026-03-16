@@ -35,6 +35,8 @@ def _apply_dark_titlebar(window):
 
 def main():
     logging.basicConfig(level=logging.WARNING, format="%(name)s %(levelname)s: %(message)s", stream=sys.stderr)
+    db.init_db()  # get_setting より前にテーブルを作っておく（exe を別フォルダで起動したときも必須）
+    db.backup_on_startup()  # 起動時自動バックアップ
     # libpng の ICC プロファイル警告（GRAY on RGB PNG 等）を抑止
     QLoggingCategory.setFilterRules("qt.gui.imageio.warning=false")
     app = QApplication(sys.argv)

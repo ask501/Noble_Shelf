@@ -14,14 +14,8 @@ import shutil
 import sys
 import unicodedata
 from datetime import datetime
-
-# スクリプト/実行ファイルと同じフォルダにDBを置く（cwdに依存しない）
-_base = os.path.dirname(os.path.abspath(__file__))
-if getattr(sys, "frozen", False):
-    _base = os.path.dirname(sys.executable)
-DB_FILE      = os.path.join(_base, "library.db")
-BACKUP_DIR   = os.path.join(_base, "backups")
-MAX_BACKUPS  = 10
+from paths import DB_FILE, BACKUP_DIR
+MAX_BACKUPS = 10
 
 
 # ══════════════════════════════════════════════════════
@@ -166,6 +160,8 @@ def init_db():
         conn.close()
 
 
+
+
 def migrate_release_date_format():
     """release_dateを 'yyyy年m月d日' 形式に統一する"""
     import re as _re
@@ -187,6 +183,56 @@ def migrate_release_date_format():
         conn.commit()
     finally:
         conn.close()
+
+
+# ══════════════════════════════════════════════════════
+#  バックアップ
+# ══════════════════════════════════════════════════════
+
+def backup_on_startup() -> None:
+    """
+    起動時に自動バックアップを取る。
+    BACKUP_DIR に library_YYYYMMDD_HHMMSS.db を作成し、
+    設定の backup_max_count を超えた古いファイルを削除する。
+    """
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    dst = os.path.join(BACKUP_DIR, f"library_{ts}.db")
+    shutil.copy2(DB_FILE, dst)
+    _trim_backups()
+
+
+def _trim_backups() -> None:
+    """バックアップ件数が上限を超えたら古いものから削除する。"""
+    try:
+        max_count = int(get_setting("backup_max_count") or MAX_BACKUPS)
+    except (TypeError, ValueError):
+        max_count = MAX_BACKUPS
+    files = sorted(
+        [f for f in os.listdir(BACKUP_DIR) if f.startswith("library_") and f.endswith(".db")],
+        reverse=True
+    )
+    for old in files[max_count:]:
+        try:
+            os.remove(os.path.join(BACKUP_DIR, old))
+        except OSError:
+            pass
+
+
+def list_backups() -> list[str]:
+    """バックアップファイルのパス一覧を新しい順で返す。"""
+    if not os.path.exists(BACKUP_DIR):
+        return []
+    files = sorted(
+        [f for f in os.listdir(BACKUP_DIR) if f.startswith("library_") and f.endswith(".db")],
+        reverse=True
+    )
+    return [os.path.join(BACKUP_DIR, f) for f in files]
+
+
+def restore_backup(backup_path: str) -> None:
+    """指定したバックアップを DB_FILE に上書きコピーする。"""
+    shutil.copy2(backup_path, DB_FILE)
 
 
 # ══════════════════════════════════════════════════════

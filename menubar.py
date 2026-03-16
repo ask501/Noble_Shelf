@@ -158,9 +158,9 @@ def setup_menubar(window):
     window._act_file_reset_cache.triggered.connect(window._clear_caches)
     file_menu.addAction(window._act_file_reset_cache)
 
-    # バックアップを復元（未実装）
-    window._act_file_restore_backup = QAction("バックアップを復元（未実装）", window)
-    window._act_file_restore_backup.triggered.connect(lambda: None)
+    # バックアップを復元
+    window._act_file_restore_backup = QAction("バックアップを復元", window)
+    window._act_file_restore_backup.triggered.connect(window._on_restore_backup)
     file_menu.addAction(window._act_file_restore_backup)
 
     # ライブラリフォルダを設定
@@ -247,14 +247,24 @@ def setup_menubar(window):
     act_settings.triggered.connect(window._on_open_settings)
     setting_menu.addAction(act_settings)
 
-    # ── プラグインメニュー（メタデータ取得プラグインのON/OFF）。ツール・設定の直後に並ぶ ──
-    try:
-        from plugin_loader import has_metadata_plugins
-        if has_metadata_plugins():
-            plugin_menu = menubar.addMenu("プラグイン(&G)")
-            plugin_menu.aboutToShow.connect(lambda: _refresh_plugin_menu(plugin_menu, window))
-    except Exception:
-        pass
+    # ── プラグインメニュー（メタデータ取得プラグインのON/OFF・フォルダを開く）。ツール・設定の直後に並ぶ ──
+    plugin_menu = menubar.addMenu("プラグイン(&G)")
+    plugin_menu.aboutToShow.connect(lambda: _refresh_plugin_menu(plugin_menu, window))
+
+    # ── デバッグメニュー（開発時のみ使用） ──
+    debug_menu = menubar.addMenu("デバッグ(&D)")
+
+    def _open_first_run_overlay():
+        try:
+            from debug_tools import show_first_run_overlay
+            show_first_run_overlay(window)
+        except Exception:
+            # デバッグ用途なので、失敗時は何もせず黙って無視
+            pass
+
+    act_first_run = QAction("初回起動オーバーレイをテスト", window)
+    act_first_run.triggered.connect(_open_first_run_overlay)
+    debug_menu.addAction(act_first_run)
 
 
 # 設定で変更したショートカットをメニューに再反映する（設定ダイアログ保存後に呼ぶ）

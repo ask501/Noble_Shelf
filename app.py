@@ -39,6 +39,7 @@ from filter_popover import FilterPopover
 from theme import THEME_COLORS, apply_dark_titlebar
 from properties import _auto_kana, _needs_kana_conversion, StoreFileInputDialog
 from menubar import setup_menubar, refresh_shortcuts
+from first_run import LibrarySetupOverlay
 
 
 def _resolve_cover(path: str, cover: str) -> str:
@@ -206,8 +207,6 @@ class MainWindow(QMainWindow):
             self._act_file_rescan.setEnabled(has_library)
         if hasattr(self, "_act_file_reset_cache"):
             self._act_file_reset_cache.setEnabled(True)
-        if hasattr(self, "_act_file_restore_backup"):
-            self._act_file_restore_backup.setEnabled(False)  # 未実装で常に無効
         if hasattr(self, "_act_file_set_library"):
             self._act_file_set_library.setEnabled(True)
         if hasattr(self, "_act_file_quit"):
@@ -319,6 +318,60 @@ class MainWindow(QMainWindow):
             QMessageBox.StandardButton.No,
         ) == QMessageBox.StandardButton.Yes:
             self.close()
+
+    def _on_restore_backup(self):
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QListWidget, QDialogButtonBox, QMessageBox
+        import db
+        import os
+        print(type(db.list_backups()), db.list_backups()[:1])
+
+        backups = db.list_backups()
+        if not backups:
+            QMessageBox.information(self, "バックアップ", "バックアップが見つかりませんでした。")
+            return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("バックアップから復元")
+        dlg.resize(420, 280)
+        layout = QVBoxLayout(dlg)
+
+        lst = QListWidget()
+        for path in backups:
+            fname = os.path.basename(path)
+            # library_YYYYMMDD_HHMMSS.db → YYYY/MM/DD HH:MM:SS
+            try:
+                body = fname[len("library_"):-len(".db")]
+                dt = f"{body[:4]}/{body[4:6]}/{body[6:8]} {body[9:11]}:{body[11:13]}:{body[13:15]}"
+            except Exception:
+                dt = fname
+            lst.addItem(dt)
+        lst.setCurrentRow(0)
+        layout.addWidget(lst)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.button(QDialogButtonBox.Ok).setText("復元")
+        btns.button(QDialogButtonBox.Cancel).setText("キャンセル")
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        layout.addWidget(btns)
+
+        if dlg.exec() != QDialog.Accepted:
+            return
+
+        idx = lst.currentRow()
+        if idx < 0:
+            return
+
+        confirm = QMessageBox.question(
+            self, "確認",
+            "選択したバックアップに復元します。\nアプリを再起動してください。\n続けますか？",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if confirm != QMessageBox.Yes:
+            return
+
+        db.restore_backup(backups[idx])
+        QMessageBox.information(self, "復元完了", "復元しました。アプリを再起動してください。")
 
     # ── 中央レイアウト ────────────────────────────────────
     def _setup_central(self):
@@ -440,6 +493,11 @@ class MainWindow(QMainWindow):
         self._grid = BookGridView(app_callbacks=self._make_app_callbacks())
         grid_layout.addWidget(self._grid)
 
+        # ライブラリ未設定時に中央に表示するオーバーレイ
+        self._empty_hint = LibrarySetupOverlay()
+        self._empty_hint.setupClicked.connect(self._on_click_setup_library)
+        grid_layout.addWidget(self._empty_hint)
+
         splitter.addWidget(grid_container)
 
         splitter.setStretchFactor(0, 0)
@@ -496,7 +554,7 @@ class MainWindow(QMainWindow):
         spacer = QWidget()
         spacer.setFixedWidth(16)
         sb.addPermanentWidget(spacer)
-        license_label = QLabel("Noble Shelf © 2026 athrect – MIT License")
+        license_label = QLabel("Noble Shelf © 2026 ask501 – MIT License")
         license_label.setStyleSheet("margin-right: 12px;")
         sb.addPermanentWidget(license_label)
 
@@ -521,8 +579,17 @@ class MainWindow(QMainWindow):
     def _load_library(self):
         folder = (db.get_setting("library_folder") or "").strip()
         if not folder or not os.path.isdir(folder):
-            self._select_library_folder()
+            # ライブラリ未設定: グリッドを隠し、中央ボタンのみ表示
+            if hasattr(self, "_grid"):
+                self._grid.hide()
+            if hasattr(self, "_empty_hint"):
+                self._empty_hint.show()
             return
+        # ライブラリが設定済み: オーバーレイを隠し、グリッドを表示
+        if hasattr(self, "_empty_hint"):
+            self._empty_hint.hide()
+        if hasattr(self, "_grid"):
+            self._grid.show()
         # 起動時はDBキャッシュから即表示（ソート・フィルタなし）
         try:
             rows = db.get_all_books()
@@ -562,7 +629,16 @@ class MainWindow(QMainWindow):
         )
         if folder:
             db.set_setting("library_folder", folder)
+            # 設定されたらオーバーレイを隠し、グリッドを表示してスキャン
+            if hasattr(self, "_empty_hint"):
+                self._empty_hint.hide()
+            if hasattr(self, "_grid"):
+                self._grid.show()
             self._start_scan(folder)
+
+    def _on_click_setup_library(self):
+        """中央ボタンからライブラリフォルダ設定を開く"""
+        self._select_library_folder()
 
     def _rescan_library(self):
         folder = (db.get_setting("library_folder") or "").strip()
