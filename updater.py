@@ -7,9 +7,8 @@ import zipfile
 import tempfile
 import urllib.request
 import json
-import threading
 from PySide6.QtWidgets import QProgressDialog, QMessageBox, QApplication
-from PySide6.QtCore import Qt, QThread, Signal, QObject
+from PySide6.QtCore import Qt
 from version import VERSION
 
 GITHUB_API_URL = "https://api.github.com/repos/ask501/Noble_Shelf/releases/latest"
@@ -92,7 +91,7 @@ def extract_zip(zip_path: str, extract_dir: str) -> str | None:
         # 展開されたフォルダを探す（Noble Shelfv* という名前）
         for name in os.listdir(extract_dir):
             full = os.path.join(extract_dir, name)
-            if os.path.isdir(full) and name.startswith("Noble Shelf"):
+            if os.path.isdir(full) and (name.startswith("Noble Shelf") or name.startswith("Noble_Shelf")):
                 return full
         return None
     except Exception:
@@ -188,28 +187,6 @@ def cleanup_on_startup() -> None:
                 pass
 
 
-class _DownloadWorker(QObject):
-    progress = Signal(int, int)
-    finished = Signal(bool)
-
-    def __init__(self, url: str, dest: str):
-        super().__init__()
-        self._url = url
-        self._dest = dest
-        self._cancelled = False
-
-    def cancel(self):
-        self._cancelled = True
-
-    def run(self):
-        def on_progress(dl, total):
-            if self._cancelled:
-                raise Exception("cancelled")
-            self.progress.emit(dl, total)
-        result = download_zip(self._url, self._dest, on_progress)
-        self.finished.emit(result and not self._cancelled)
-
-
 def check_and_prompt_update(parent=None) -> None:
     import db
     if db.get_setting("disable_auto_update") == "1":
@@ -240,38 +217,24 @@ def check_and_prompt_update(parent=None) -> None:
     progress_dlg.setMinimumDuration(0)
     progress_dlg.setValue(0)
     progress_dlg.show()
+    QApplication.processEvents()
 
-    worker = _DownloadWorker(zip_url, zip_path)
-    thread = QThread()
-    worker.moveToThread(thread)
-
-    _state = {"success": False, "done": False}
+    cancelled = [False]
 
     def on_progress(dl, total):
+        if progress_dlg.wasCanceled():
+            cancelled[0] = True
+            raise Exception("cancelled")
         if total > 0:
             progress_dlg.setValue(int(dl / total * 100))
         QApplication.processEvents()
 
-    def on_finished(success):
-        _state["success"] = success
-        _state["done"] = True
-        thread.quit()
-
-    def on_cancelled():
-        worker.cancel()
-
-    worker.progress.connect(on_progress, Qt.QueuedConnection)
-    worker.finished.connect(on_finished, Qt.QueuedConnection)
-    progress_dlg.canceled.connect(on_cancelled)
-    thread.started.connect(worker.run)
-    thread.start()
-
-    # スレッド終了まで待機
-    thread.wait()
+    success = download_zip(zip_url, zip_path, on_progress)
     progress_dlg.close()
 
-    if not _state["success"]:
-        QMessageBox.warning(parent, "アップデート失敗", "ダウンロードに失敗しました。後でもう一度お試しください。")
+    if cancelled[0] or not success:
+        if not cancelled[0]:
+            QMessageBox.warning(parent, "アップデート失敗", "ダウンロードに失敗しました。後でもう一度お試しください。")
         return
 
     extracted = extract_zip(zip_path, tmp_dir)

@@ -53,11 +53,9 @@ class SidebarItemDelegate(QStyledItemDelegate):
         value = index.data(Qt.UserRole)
         count = index.data(Qt.UserRole + 1) or 0
 
-        # 背景（選択/ホバー）
+        # 背景（選択のみ。ホバー時は色を変えない）
         if option.state & QStyle.State_Selected:
             bg = QColor(THEME_COLORS["accent"])
-        elif option.state & QStyle.State_MouseOver:
-            bg = QColor(THEME_COLORS["hover"])
         else:
             bg = QColor(0, 0, 0, 0)
         if bg.alpha() > 0:
@@ -148,6 +146,13 @@ class SidebarWidget(QWidget):
         layout.setContentsMargins(ml, mt, mr, mb)
         layout.setSpacing(config.SIDEBAR_SPACING)
 
+        # ヘッダー（コンボ＋下線）コンテナ: ゴーストバーと高さを揃える
+        header_container = QWidget()
+        header_container.setFixedHeight(config.GHOSTBAR_HEIGHT)
+        header_layout = QVBoxLayout(header_container)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(0)
+
         # モード選択コンボ or フィルター結果時の固定ラベル（同じ枠で切替）
         self._combo = QComboBox()
         self._combo.setFixedHeight(32)
@@ -166,20 +171,21 @@ class SidebarWidget(QWidget):
         )
 
         self._header_stack = QStackedWidget()
-        self._header_stack.setFixedHeight(42)
         # コンボが右端で切れないよう、サイドバー内容幅いっぱいを確保
         content_w = config.SIDEBAR_WIDTH - ml - mr
         self._header_stack.setMinimumWidth(content_w)
         self._header_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._header_stack.addWidget(self._combo)
         self._header_stack.addWidget(self._filter_result_label)
-        layout.addWidget(self._header_stack)
+        header_layout.addWidget(self._header_stack)
 
-        # セパレーター
+        # セパレーター（ゴーストバーの下線位置と揃える）
         sep = QFrame()
         sep.setFrameShape(QFrame.HLine)
         sep.setStyleSheet(f"color: {THEME_COLORS['sep']};")
-        layout.addWidget(sep)
+        header_layout.addWidget(sep)
+
+        layout.addWidget(header_container)
 
         # リスト
         self._list = QListWidget()
@@ -201,7 +207,7 @@ class SidebarWidget(QWidget):
                 color: {COLOR_WHITE};
             }}
             QListWidget::item:hover:!selected {{
-                background: {THEME_COLORS['hover']};
+                background: transparent;
             }}
         """)
         self._list.itemClicked.connect(self._on_item_clicked)
@@ -213,6 +219,9 @@ class SidebarWidget(QWidget):
     # ── モード切替 ────────────────────────────────────
     def _on_mode_changed(self, index: int):
         self._mode = self._combo.itemData(index)
+        # モード変更時はいったん選択状態をクリアしてからリストを再構築する
+        self._list.clearSelection()
+        self._list.setCurrentRow(-1)
         self.refresh()
         # ソートモードとしても扱う
         self.sortModeChanged.emit(self._mode)
@@ -245,6 +254,9 @@ class SidebarWidget(QWidget):
         self._showing_filter_result = active
         self._filter_result_books = list(books or [])
         if active:
+            # フィルタ結果モードに入るときも選択をクリアしておく
+            self._list.clearSelection()
+            self._list.setCurrentRow(-1)
             self._header_stack.setCurrentWidget(self._filter_result_label)
         else:
             self._header_stack.setCurrentWidget(self._combo)

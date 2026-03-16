@@ -80,6 +80,8 @@ FONT_SIZE_APP_GLOBAL      = FONT_SIZE_MD        # アプリ全体QSSのデフォ
 SIDEBAR_WIDTH       = 250
 SIDEBAR_SPACING     = 6
 SIDEBAR_MARGINS     = (6, 8, 6, 8)
+SIDEBAR_HEADER_PAD_X = 6   # サイドバーヘッダー内コンボの左右余白(px)
+SIDEBAR_HEADER_PAD_Y = 4   # サイドバーヘッダー内コンボの上下余白(px)
 SEARCHBAR_HEIGHT       = 40
 SEARCH_INPUT_MAX_WIDTH = 400   # 検索入力欄の最大幅(px)。検索バー幅はそのまま
 

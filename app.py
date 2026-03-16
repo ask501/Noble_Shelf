@@ -30,6 +30,7 @@ import time
 
 import config
 import db
+from version import VERSION
 from grid import BookGridView
 from scanner import scan_library
 from sidebar import SidebarWidget
@@ -40,6 +41,7 @@ from theme import THEME_COLORS, apply_dark_titlebar
 from properties import _auto_kana, _needs_kana_conversion, StoreFileInputDialog
 from menubar import setup_menubar, refresh_shortcuts
 from first_run import LibrarySetupOverlay
+from statusbar import setup_statusbar
 
 
 def _resolve_cover(path: str, cover: str) -> str:
@@ -71,7 +73,7 @@ def _resolve_cover(path: str, cover: str) -> str:
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(config.APP_TITLE)
+        self.setWindowTitle(f"{config.APP_TITLE} v{VERSION}")
         self.resize(config.WINDOW_WIDTH, config.WINDOW_HEIGHT)
 
         db.init_db()
@@ -547,23 +549,8 @@ class MainWindow(QMainWindow):
         self._status_label = QLabel("0 冊")
         sb.addWidget(self._status_label)
 
-        # 右端: カードサイズ スペース ライセンス（addPermanentWidget は右から並ぶので逆順で追加）
-        size_label = QLabel("カードサイズ:")
-        sb.addPermanentWidget(size_label)
-        self._size_slider = QSlider(Qt.Horizontal)
-        self._size_slider.setMinimum(config.SLIDER_MIN_WIDTH)
-        self._size_slider.setMaximum(config.SLIDER_MAX_WIDTH)
-        self._size_slider.setValue(config.DEFAULT_CARD_WIDTH)
-        self._size_slider.setFixedWidth(120)
-        self._size_slider.setToolTip("カードサイズ (Ctrl+ホイールでも変更可)")
+        self._size_slider = setup_statusbar(self, sb)
         self._size_slider.valueChanged.connect(self._on_card_size_changed)
-        sb.addPermanentWidget(self._size_slider)
-        spacer = QWidget()
-        spacer.setFixedWidth(16)
-        sb.addPermanentWidget(spacer)
-        license_label = QLabel("Noble Shelf © 2026 ask501 – MIT License")
-        license_label.setStyleSheet("margin-right: 12px;")
-        sb.addPermanentWidget(license_label)
 
         self._grid.ctrlWheelZoom.connect(self._on_ctrl_wheel_zoom)
 
@@ -653,7 +640,7 @@ class MainWindow(QMainWindow):
             self._start_scan(folder)
 
     def _start_scan(self, folder: str):
-        self.setWindowTitle(config.APP_TITLE)
+        self.setWindowTitle(f"{config.APP_TITLE} v{VERSION}")
         scan_library(
             folder,
             on_finished=self._on_scan_finished,
@@ -697,7 +684,7 @@ class MainWindow(QMainWindow):
 
         self._sidebar.refresh()
         folder = (db.get_setting("library_folder") or "").strip()
-        self.setWindowTitle(config.APP_TITLE)
+        self.setWindowTitle(f"{config.APP_TITLE} v{VERSION}")
         self._status_label.setText(f"{len(books)} 冊")
 
     def _on_store_files_pending(self, pending_list: list):
@@ -773,7 +760,7 @@ class MainWindow(QMainWindow):
         self._apply_filters()
         self._sidebar.refresh()
         folder = (db.get_setting("library_folder") or "").strip()
-        self.setWindowTitle(config.APP_TITLE)
+        self.setWindowTitle(f"{config.APP_TITLE} v{VERSION}")
         self._status_label.setText(f"{len(books)} 冊")
 
     # ── 単一ブック更新（プロパティ保存などから呼ばれる） ────────────

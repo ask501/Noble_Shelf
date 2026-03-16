@@ -32,5 +32,8 @@ Thumbs.db
 Desktop.ini
 start.bat
 
+# 開発用メモ
+DEV_NOTES.md
+
 # プラグイン実装（メタ取得等は同梱しない。README.md はコミットする）
 plugins/*/
