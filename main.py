@@ -9,7 +9,7 @@ from PySide6.QtCore import QLoggingCategory
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QFont, QIcon
 from app import MainWindow
-from theme import APP_QSS
+from theme import APP_QSS, THEME_COLORS
 import config
 import db
 
@@ -40,6 +40,7 @@ def main(on_startup=None):
     # libpng の ICC プロファイル警告（GRAY on RGB PNG 等）を抑止
     QLoggingCategory.setFilterRules("qt.gui.imageio.warning=false")
     app = QApplication(sys.argv)
+    app.setStyleSheet(f"QWidget {{ background-color: {THEME_COLORS['bg_base']}; }}")
     app.setApplicationName(config.APP_TITLE)
     # QSS適用後にフォントファミリー・サイズを上書き（ポイントサイズ未指定だと Qt が -1 で警告する）
     saved_font = db.get_setting("font_family") or config.FONT_FAMILY
@@ -59,6 +60,7 @@ def main(on_startup=None):
     window = MainWindow()
     if not icon.isNull():
         window.setWindowIcon(icon)
+    window.setStyleSheet(f"background-color: {THEME_COLORS['bg_base']};")
     window.show()
     _apply_dark_titlebar(window)
     if on_startup:

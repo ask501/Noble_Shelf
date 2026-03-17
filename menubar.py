@@ -28,19 +28,14 @@ class _DangerMenuLabel(QLabel):
 
 
 def _open_plugin_folder():
-    """メイン（exe/スクリプト）があるフォルダ内の plugins フォルダを開く。無ければ作成してから開く。"""
-    base = getattr(config, "APP_BASE", None) or os.path.dirname(os.path.abspath(__file__))
-    path = os.path.abspath(os.path.join(base, "plugins"))
-    try:
-        os.makedirs(path, exist_ok=True)
-    except OSError:
-        pass
+    """APPDATAのプラグインフォルダを開く。"""
+    from paths import PLUGINS_DIR
     if sys.platform == "win32":
-        os.startfile(path)
+        os.startfile(PLUGINS_DIR)
     elif sys.platform == "darwin":
-        subprocess.run(["open", path], check=False)
+        subprocess.run(["open", PLUGINS_DIR], check=False)
     else:
-        subprocess.run(["xdg-open", path], check=False)
+        subprocess.run(["xdg-open", PLUGINS_DIR], check=False)
 
 
 def _refresh_plugin_menu(plugin_menu: QMenu, window):
@@ -241,6 +236,10 @@ def setup_menubar(window):
     act_repair_pdf = QAction("PDFサムネを修復", window)
     act_repair_pdf.triggered.connect(window._repair_pdf_covers)
     tool_menu.addAction(act_repair_pdf)
+    tool_menu.addSeparator()
+    act_bookmarklet = QAction("ブックマークレットキュー", window)
+    act_bookmarklet.triggered.connect(window._open_bookmarklet_window)
+    tool_menu.addAction(act_bookmarklet)
 
     # ── 設定メニュー ──
     setting_menu = menubar.addMenu("設定(&T)")

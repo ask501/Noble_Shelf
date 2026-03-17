@@ -71,6 +71,7 @@ def _resolve_cover(path: str, cover: str) -> str:
 
 
 class MainWindow(QMainWindow):
+    bookmarkletReceived = Signal()  # ブックマークレット受信通知（既存のSignalインポートを使用）
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"{config.APP_TITLE} v{VERSION}")
@@ -94,6 +95,7 @@ class MainWindow(QMainWindow):
         self._filter_no_cover_only: bool = False  # 表示メニュー「サムネイル未設定」選択時
         self._startup_time = time.time()
         self._open_viewers: list = []  # 内置ビューワー（すべて閉じる用）
+        self._bookmarklet_window = None
 
         self._setup_menubar()
         self._setup_central()
@@ -102,6 +104,9 @@ class MainWindow(QMainWindow):
         self._setup_titlebar_context_menu()
         self._restore_ui_visibility()
         QTimer.singleShot(0, self._load_library)
+
+        self.bookmarkletReceived.connect(self._on_bookmarklet_received)
+        self._start_local_server()
 
         apply_dark_titlebar(self)
         # 最大化ボタンを有効化（フラグが外れている環境対策）
@@ -320,6 +325,70 @@ class MainWindow(QMainWindow):
             QMessageBox.StandardButton.No,
         ) == QMessageBox.StandardButton.Yes:
             self.close()
+
+    def _open_bookmarklet_window(self) -> None:
+        """ブックマークレットキューウィンドウを開く"""
+        if not hasattr(self, "_bookmarklet_window") or self._bookmarklet_window is None:
+            from bookmarklet_window import BookmarkletWindow
+            from theme import apply_dark_titlebar
+            self._bookmarklet_window = BookmarkletWindow(parent=self, main_window=self)
+        self._bookmarklet_window.show()
+        from theme import apply_dark_titlebar
+        apply_dark_titlebar(self._bookmarklet_window)
+        self._bookmarklet_window.raise_()
+        self._bookmarklet_window.activateWindow()
+
+    def _start_local_server(self) -> None:
+        """ローカルHTTPサーバーを起動する"""
+        import local_server
+
+        local_server.start(on_receive=self._on_receive_bookmarklet)
+
+    def _on_receive_bookmarklet(self, url: str, html: str) -> None:
+        """
+        ブックマークレットからの受信処理（バックグラウンドスレッドから呼ばれる）。
+        メタデータ取得→DB保存→メインスレッドへシグナルemit。
+        """
+        print(f"[DEBUG] _on_receive_bookmarklet called: {url}")
+        try:
+            from bookmarklet import fetch_meta
+            meta = fetch_meta(url=url, html=html)
+        except Exception as e:
+            import traceback
+            print(f"[bookmarklet] fetch_meta error: {e}")
+            traceback.print_exc()
+            meta = {}
+        try:
+            db.add_bookmarklet_queue(
+                url=url,
+                site=meta.get("site", ""),
+                title=meta.get("title", ""),
+                circle=meta.get("circle", ""),
+                author=meta.get("author", ""),
+                dlsite_id=meta.get("dlsite_id", ""),
+                tags=",".join(meta.get("tags", [])),
+                price=meta.get("price"),
+                release_date=meta.get("release_date", ""),
+                cover_url=meta.get("cover_url", ""),
+                status="pending",
+            )
+        except Exception as e:
+            import traceback
+            print(f"[bookmarklet] db error: {e}")
+            traceback.print_exc()
+        self.bookmarkletReceived.emit()
+
+    def _on_bookmarklet_received(self) -> None:
+        """メインスレッド：ウィンドウを開いてリストを更新する"""
+        self._open_bookmarklet_window()
+        if self._bookmarklet_window is not None:
+            self._bookmarklet_window.refresh()
+
+    def closeEvent(self, event) -> None:
+        import local_server
+
+        local_server.stop()
+        super().closeEvent(event)
 
     def _on_restore_backup(self):
         from PySide6.QtWidgets import QDialog, QVBoxLayout, QListWidget, QDialogButtonBox, QMessageBox

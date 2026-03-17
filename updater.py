@@ -7,8 +7,9 @@ import zipfile
 import tempfile
 import urllib.request
 import json
+import shutil
 from PySide6.QtWidgets import QProgressDialog, QMessageBox, QApplication
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal
 from version import VERSION
 
 GITHUB_API_URL = "https://api.github.com/repos/ask501/Noble_Shelf/releases/latest"
@@ -114,6 +115,7 @@ def apply_update(new_folder: str) -> bool:
     """
     import subprocess
     app_dir = get_app_dir()
+    tmp_dir = os.path.dirname(new_folder.rstrip("\\/"))
     exe_name = os.path.basename(sys.executable) if getattr(sys, "frozen", False) else "Noble Shelf.exe"
     old_exe = os.path.join(app_dir, exe_name)
     bat_path = os.path.join(app_dir, "_updater.bat")
@@ -136,6 +138,7 @@ def apply_update(new_folder: str) -> bool:
         f'start "" "{old_exe}"',
         # 残骸削除
         f'del /f /q "{old_exe}.old"',
+        f'rd /s /q "{tmp_dir}"',
         f'del /f /q "{bat_path}"',
         "exit",
         ":restore",
@@ -187,68 +190,83 @@ def cleanup_on_startup() -> None:
                 pass
 
 
+class UpdateCheckerThread(QThread):
+    result_ready = Signal(str, str)  # latest_version, zip_url
+
+    def run(self) -> None:
+        result = fetch_latest_version()
+        if result and is_newer(result[0], VERSION):
+            self.result_ready.emit(result[0], result[1])
+
+
 def check_and_prompt_update(parent=None) -> None:
     import db
     if db.get_setting("disable_auto_update") == "1":
         return
 
-    result = fetch_latest_version()
-    if result is None:
-        return
-    latest, zip_url = result
-    if not is_newer(latest, VERSION):
-        return
+    thread = UpdateCheckerThread(parent)
 
-    ans = QMessageBox.question(
-        parent,
-        "アップデートがあります",
-        f"新しいバージョン v{latest} が利用可能です。\n今すぐアップデートしますか？",
-        QMessageBox.Yes | QMessageBox.No
-    )
-    if ans != QMessageBox.Yes:
-        return
+    def on_result(latest: str, zip_url: str) -> None:
+        ans = QMessageBox.question(
+            parent,
+            "アップデートがあります",
+            f"新しいバージョン v{latest} が利用可能です。\n今すぐアップデートしますか？",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if ans != QMessageBox.Yes:
+            return
 
-    tmp_dir = tempfile.mkdtemp()
-    zip_path = os.path.join(tmp_dir, f"Noble_Shelf_v{latest}.zip")
+        tmp_dir = tempfile.mkdtemp()
+        zip_path = os.path.join(tmp_dir, f"Noble_Shelf_v{latest}.zip")
+        update_applied = False
+        try:
+            progress_dlg = QProgressDialog("ダウンロード中...", "キャンセル", 0, 100, parent)
+            progress_dlg.setWindowTitle("アップデート")
+            progress_dlg.setWindowModality(Qt.WindowModal)
+            progress_dlg.setMinimumDuration(0)
+            progress_dlg.setValue(0)
+            progress_dlg.show()
+            QApplication.processEvents()
 
-    progress_dlg = QProgressDialog("ダウンロード中...", "キャンセル", 0, 100, parent)
-    progress_dlg.setWindowTitle("アップデート")
-    progress_dlg.setWindowModality(Qt.WindowModal)
-    progress_dlg.setMinimumDuration(0)
-    progress_dlg.setValue(0)
-    progress_dlg.show()
-    QApplication.processEvents()
+            cancelled = [False]
 
-    cancelled = [False]
+            def on_progress(dl, total):
+                if progress_dlg.wasCanceled():
+                    cancelled[0] = True
+                    raise Exception("cancelled")
+                if total > 0:
+                    progress_dlg.setValue(int(dl / total * 100))
+                QApplication.processEvents()
 
-    def on_progress(dl, total):
-        if progress_dlg.wasCanceled():
-            cancelled[0] = True
-            raise Exception("cancelled")
-        if total > 0:
-            progress_dlg.setValue(int(dl / total * 100))
-        QApplication.processEvents()
+            success = download_zip(zip_url, zip_path, on_progress)
+            progress_dlg.close()
 
-    success = download_zip(zip_url, zip_path, on_progress)
-    progress_dlg.close()
+            if cancelled[0] or not success:
+                if not cancelled[0]:
+                    QMessageBox.warning(parent, "アップデート失敗", "ダウンロードに失敗しました。後でもう一度お試しください。")
+                return
 
-    if cancelled[0] or not success:
-        if not cancelled[0]:
-            QMessageBox.warning(parent, "アップデート失敗", "ダウンロードに失敗しました。後でもう一度お試しください。")
-        return
+            extracted = extract_zip(zip_path, tmp_dir)
+            if not extracted:
+                QMessageBox.warning(parent, "アップデート失敗", "ファイルの展開に失敗しました。")
+                return
 
-    extracted = extract_zip(zip_path, tmp_dir)
-    if not extracted:
-        QMessageBox.warning(parent, "アップデート失敗", "ファイルの展開に失敗しました。")
-        return
+            if not apply_update(extracted):
+                QMessageBox.warning(parent, "アップデート失敗", "アップデートの適用に失敗しました。")
+                return
 
-    if not apply_update(extracted):
-        QMessageBox.warning(parent, "アップデート失敗", "アップデートの適用に失敗しました。")
-        return
+            update_applied = True
+        finally:
+            if not update_applied:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    QMessageBox.information(parent, "アップデート", "アップデートを開始します。アプリを再起動します。")
-    from PySide6.QtCore import QTimer
-    QTimer.singleShot(500, QApplication.quit)
+        QMessageBox.information(parent, "アップデート", "アップデートを開始します。アプリを再起動します。")
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(500, QApplication.quit)
+
+    thread.result_ready.connect(on_result)
+    thread.finished.connect(thread.deleteLater)
+    thread.start()
 
 
 

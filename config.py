@@ -295,3 +295,6 @@ DEFAULT_SHORTCUTS = {
     "file_rescan": "F5",
     "file_quit": "Ctrl+Q",
 }
+
+# ── ブックマークレット連携 ──────────────────────────
+BOOKMARKLET_PORT: int = 8765

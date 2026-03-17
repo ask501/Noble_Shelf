@@ -133,6 +133,30 @@ def init_db():
             )
         """)
 
+        # ── bookmarklet_queue テーブル ─────────────────────
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS bookmarklet_queue (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                url          TEXT NOT NULL,
+                site         TEXT NOT NULL DEFAULT '',
+                title        TEXT NOT NULL DEFAULT '',
+                circle       TEXT NOT NULL DEFAULT '',
+                author       TEXT NOT NULL DEFAULT '',
+                dlsite_id    TEXT NOT NULL DEFAULT '',
+                tags         TEXT NOT NULL DEFAULT '',
+                price        INTEGER,
+                release_date TEXT NOT NULL DEFAULT '',
+                cover_url    TEXT NOT NULL DEFAULT '',
+                status       TEXT NOT NULL DEFAULT 'pending',
+                fetched_at   TEXT DEFAULT (datetime('now','localtime'))
+            )
+        """)
+
+        # bookmarklet_queue マイグレーション
+        bq_cols = [r[1] for r in c.execute("PRAGMA table_info(bookmarklet_queue)").fetchall()]
+        if "cover_url" not in bq_cols:
+            c.execute("ALTER TABLE bookmarklet_queue ADD COLUMN cover_url TEXT NOT NULL DEFAULT ''")
+
         # ── booksテーブルにcover_customカラムを追加（なければ）──
         cols = [r[1] for r in c.execute("PRAGMA table_info(books)").fetchall()]
         if 'cover_custom' not in cols:
@@ -181,6 +205,196 @@ def migrate_release_date_format():
                     (normalized, row["path"]),
                 )
         conn.commit()
+    finally:
+        conn.close()
+
+
+# ══════════════════════════════════════════════════════
+#  bookmarklet_queue
+# ══════════════════════════════════════════════════════
+
+def add_bookmarklet_queue(
+    url: str,
+    site: str,
+    title: str,
+    circle: str,
+    author: str,
+    dlsite_id: str,
+    tags: str,
+    price: int | None,
+    release_date: str,
+    cover_url: str,
+    status: str = "pending",
+) -> int:
+    """キューに1件追加してidを返す"""
+    conn = get_conn()
+    try:
+        c = conn.execute(
+            """INSERT INTO bookmarklet_queue
+               (url, site, title, circle, author, dlsite_id, tags, price, release_date, cover_url, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (url, site, title, circle, author, dlsite_id, tags, price, release_date, cover_url, status),
+        )
+        conn.commit()
+        return c.lastrowid
+    finally:
+        conn.close()
+
+
+def get_bookmarklet_queue() -> list[dict]:
+    """キュー全件を新しい順で返す"""
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM bookmarklet_queue ORDER BY fetched_at DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def update_bookmarklet_status(id: int, status: str) -> None:
+    """ステータスを更新する"""
+    conn = get_conn()
+    try:
+        conn.execute(
+            "UPDATE bookmarklet_queue SET status = ? WHERE id = ?",
+            (status, id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def delete_bookmarklet_queue_by_status(status: str) -> None:
+    """指定ステータスの件を一括削除する"""
+    conn = get_conn()
+    try:
+        conn.execute(
+            "DELETE FROM bookmarklet_queue WHERE status = ?", (status,)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def delete_bookmarklet_queue_all() -> None:
+    """キューを全削除する"""
+    conn = get_conn()
+    try:
+        conn.execute("DELETE FROM bookmarklet_queue")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def delete_bookmarklet_queue_by_id(id: int) -> None:
+    """個別削除する"""
+    conn = get_conn()
+    try:
+        conn.execute("DELETE FROM bookmarklet_queue WHERE id = ?", (id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_bookmarklet_queue_by_id(row_id: int) -> dict | None:
+    conn = get_conn()
+    try:
+        c = conn.execute(
+            "SELECT id, url, site, title, circle, author, dlsite_id, tags, price, release_date, cover_url, status, fetched_at "
+            "FROM bookmarklet_queue WHERE id = ?",
+            (row_id,),
+        )
+        row = c.fetchone()
+        if not row:
+            return None
+        keys = [
+            "id",
+            "url",
+            "site",
+            "title",
+            "circle",
+            "author",
+            "dlsite_id",
+            "tags",
+            "price",
+            "release_date",
+            "cover_url",
+            "status",
+            "fetched_at",
+        ]
+        return dict(zip(keys, row))
+    finally:
+        conn.close()
+
+
+def update_bookmarklet_queue_status(row_id: int, status: str) -> None:
+    conn = get_conn()
+    try:
+        conn.execute(
+            "UPDATE bookmarklet_queue SET status = ? WHERE id = ?",
+            (status, row_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def find_book_by_bookmarklet(dlsite_id: str, title: str, url: str = "") -> dict | None:
+    """
+    ブックマークレットのメタデータからライブラリの作品を探す。
+    検索順:
+      ① book_meta.dlsite_id 完全一致
+      ② books.name にID含む部分一致（URLからも抽出）
+      ③ NFKC正規化後のタイトル完全一致
+    """
+    import unicodedata
+    import re
+
+    def normalize(s: str) -> str:
+        return unicodedata.normalize("NFKC", (s or "").strip()).lower()
+
+    conn = get_conn()
+    try:
+        # ① dlsite_id 完全一致
+        if dlsite_id:
+            row = conn.execute(
+                "SELECT b.path, b.name, b.title, b.circle FROM books b "
+                "LEFT JOIN book_meta m ON b.path = m.path "
+                "WHERE m.dlsite_id = ?",
+                (dlsite_id,),
+            ).fetchone()
+            if row:
+                return dict(row)
+
+        # URLからIDを抽出して追加で検索
+        ids_to_check: set[str] = set()
+        if dlsite_id:
+            ids_to_check.add(dlsite_id)
+        if url:
+            m = re.search(r"(RJ|BJ|VJ|\d{6,})", url, re.IGNORECASE)
+            if m:
+                ids_to_check.add(m.group(0).upper())
+
+        # ② books.name にID含む部分一致
+        for id_str in ids_to_check:
+            row = conn.execute(
+                "SELECT path, name, title, circle FROM books WHERE name LIKE ?",
+                (f"%{id_str}%",),
+            ).fetchone()
+            if row:
+                return dict(row)
+
+        # ③ NFKC正規化タイトル完全一致
+        if title:
+            norm_title = normalize(title)
+            rows = conn.execute("SELECT path, name, title, circle FROM books").fetchall()
+            for row in rows:
+                if normalize(row["title"]) == norm_title or normalize(row["name"]) == norm_title:
+                    return dict(row)
+
+        return None
     finally:
         conn.close()
 
