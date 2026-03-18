@@ -150,7 +150,7 @@ class FilterPopover(QDialog):
             QPushButton {{
                 background: {COLOR_BTN_SAVE}; color: {COLOR_WHITE};
                 border: 1px solid {COLOR_BTN_SAVE_BORDER}; border-radius: {config.FILTER_POPOVER_BORDER_RADIUS}px;
-                padding: 2px 8px;
+                padding: {config.FILTER_POPOVER_ACTION_BTN_PADDING_Y}px {config.FILTER_POPOVER_ACTION_BTN_PADDING_X}px;
             }}
             QPushButton:hover {{ background: {COLOR_BTN_SAVE_BORDER}; }}
             """
@@ -165,7 +165,7 @@ class FilterPopover(QDialog):
             QPushButton {{
                 background: {COLOR_BTN_CANCEL}; color: {COLOR_WHITE};
                 border: 1px solid {COLOR_BTN_CANCEL_BORDER}; border-radius: {config.FILTER_POPOVER_BORDER_RADIUS}px;
-                padding: 2px 8px;
+                padding: {config.FILTER_POPOVER_ACTION_BTN_PADDING_Y}px {config.FILTER_POPOVER_ACTION_BTN_PADDING_X}px;
             }}
             QPushButton:hover {{ background: {COLOR_BTN_CANCEL_BORDER}; }}
             """
@@ -218,7 +218,7 @@ class FilterPopover(QDialog):
         """フォーカスが外れたら閉じる（他ウィジェットへ移ったか、ウィンドウ外クリック）"""
         super().focusOutEvent(event)
         # イベント処理後にフォーカスがまだポップオーバー内かどうかで判定
-        QTimer.singleShot(0, self._check_focus_and_close)
+        QTimer.singleShot(config.FILTER_POPOVER_FOCUS_CHECK_DELAY_MS, self._check_focus_and_close)
 
     def _check_focus_and_close(self):
         if not self.isVisible():
@@ -238,7 +238,7 @@ class FilterPopover(QDialog):
             self._value_combo.setCurrentIndex(-1)
             self._value_combo.setCurrentText("")
         # 左コンボの実際の高さに「+」「追加」「クリア」を揃える（レイアウト適用後に実行）
-        QTimer.singleShot(50, self._sync_button_height_to_combo)
+        QTimer.singleShot(config.FILTER_POPOVER_SHOW_SYNC_DELAY_MS, self._sync_button_height_to_combo)
 
     def _sync_button_height_to_combo(self):
         """左コンボの高さを参照し、上段の「+」ボタンと下部の追加・クリアボタンの高さを同じにする。

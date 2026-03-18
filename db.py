@@ -91,6 +91,7 @@ def init_db():
                 release_date TEXT DEFAULT '',
                 price        INTEGER,
                 memo         TEXT DEFAULT '',
+                store_url    TEXT DEFAULT '',
                 updated_at   TEXT DEFAULT (datetime('now','localtime'))
             )
         """)
@@ -114,6 +115,8 @@ def init_db():
             c.execute("ALTER TABLE book_meta ADD COLUMN memo TEXT DEFAULT ''")
         if "meta_source" not in meta_cols:
             c.execute("ALTER TABLE book_meta ADD COLUMN meta_source TEXT DEFAULT ''")
+        if "store_url" not in meta_cols:
+            c.execute("ALTER TABLE book_meta ADD COLUMN store_url TEXT DEFAULT ''")
 
         # ── book_characters テーブル ───────────────────
         c.execute("""
@@ -147,6 +150,7 @@ def init_db():
                 price        INTEGER,
                 release_date TEXT NOT NULL DEFAULT '',
                 cover_url    TEXT NOT NULL DEFAULT '',
+                store_url    TEXT NOT NULL DEFAULT '',
                 status       TEXT NOT NULL DEFAULT 'pending',
                 fetched_at   TEXT DEFAULT (datetime('now','localtime'))
             )
@@ -156,6 +160,8 @@ def init_db():
         bq_cols = [r[1] for r in c.execute("PRAGMA table_info(bookmarklet_queue)").fetchall()]
         if "cover_url" not in bq_cols:
             c.execute("ALTER TABLE bookmarklet_queue ADD COLUMN cover_url TEXT NOT NULL DEFAULT ''")
+        if "store_url" not in bq_cols:
+            c.execute("ALTER TABLE bookmarklet_queue ADD COLUMN store_url TEXT NOT NULL DEFAULT ''")
 
         # ── booksテーブルにcover_customカラムを追加（なければ）──
         cols = [r[1] for r in c.execute("PRAGMA table_info(books)").fetchall()]
@@ -225,15 +231,16 @@ def add_bookmarklet_queue(
     release_date: str,
     cover_url: str,
     status: str = "pending",
+    store_url: str = "",
 ) -> int:
     """キューに1件追加してidを返す"""
     conn = get_conn()
     try:
         c = conn.execute(
             """INSERT INTO bookmarklet_queue
-               (url, site, title, circle, author, dlsite_id, tags, price, release_date, cover_url, status)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (url, site, title, circle, author, dlsite_id, tags, price, release_date, cover_url, status),
+               (url, site, title, circle, author, dlsite_id, tags, price, release_date, cover_url, status, store_url)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (url, site, title, circle, author, dlsite_id, tags, price, release_date, cover_url, status, store_url),
         )
         conn.commit()
         return c.lastrowid
@@ -302,7 +309,7 @@ def get_bookmarklet_queue_by_id(row_id: int) -> dict | None:
     conn = get_conn()
     try:
         c = conn.execute(
-            "SELECT id, url, site, title, circle, author, dlsite_id, tags, price, release_date, cover_url, status, fetched_at "
+            "SELECT id, url, site, title, circle, author, dlsite_id, tags, price, release_date, cover_url, status, fetched_at, store_url "
             "FROM bookmarklet_queue WHERE id = ?",
             (row_id,),
         )
@@ -323,6 +330,7 @@ def get_bookmarklet_queue_by_id(row_id: int) -> dict | None:
             "cover_url",
             "status",
             "fetched_at",
+            "store_url",
         ]
         return dict(zip(keys, row))
     finally:
@@ -1218,7 +1226,7 @@ def get_book_meta(path):
     try:
         row = conn.execute(
             "SELECT author, type, series, dlsite_id, title_kana, circle_kana, "
-            "pages, release_date, price, memo "
+            "pages, release_date, price, memo, store_url "
             "FROM book_meta WHERE path=?",
             (path,)
         ).fetchone()
@@ -1233,6 +1241,7 @@ def get_book_meta(path):
             "release_date": row["release_date"] if row and row["release_date"] is not None else "",
             "price":        row["price"]        if row is not None else None,
             "memo":         row["memo"]         if row and row["memo"] is not None else "",
+            "store_url":    row["store_url"]    if row and row["store_url"] is not None else "",
         }
         chars = conn.execute(
             "SELECT character FROM book_characters WHERE path=? ORDER BY character", (path,)
@@ -1581,6 +1590,7 @@ def set_book_meta(
     price: int | None = None,
     memo: str | None = None,
     meta_source: str | None = None,
+    store_url: str | None = None,
 ):
     """
     メタ情報を保存。characters/tagsはリスト。
@@ -1592,7 +1602,7 @@ def set_book_meta(
     try:
         # 既存値を取得して、None のフィールドは既存値を維持
         cur = conn.execute(
-            "SELECT dlsite_id, title_kana, circle_kana, pages, release_date, price, memo, meta_source "
+            "SELECT dlsite_id, title_kana, circle_kana, pages, release_date, price, memo, meta_source, store_url "
             "FROM book_meta WHERE path=?",
             (path,),
         ).fetchone()
@@ -1605,6 +1615,7 @@ def set_book_meta(
         cur_price       = cur["price"]        if cur else None
         cur_memo        = cur["memo"]         if cur else ""
         cur_meta_source = (cur["meta_source"] or "") if cur else ""
+        cur_store_url   = (cur["store_url"] or "") if cur else ""
 
         new_dlsite_id   = dlsite_id   if dlsite_id   is not None else cur_dlsite_id
         new_title_kana  = title_kana  if title_kana  is not None else cur_title_kana
@@ -1614,15 +1625,16 @@ def set_book_meta(
         new_price       = price       if price       is not None else cur_price
         new_memo        = memo        if memo        is not None else cur_memo
         new_meta_source = (meta_source.strip() if meta_source is not None and meta_source.strip() else cur_meta_source or "")
+        new_store_url   = store_url   if store_url   is not None else cur_store_url
 
         conn.execute(
             """INSERT INTO book_meta(
                    path, author, type, series,
                    dlsite_id, title_kana, circle_kana,
-                   pages, release_date, price, memo, meta_source,
+                   pages, release_date, price, memo, meta_source, store_url,
                    updated_at
                )
-               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,datetime('now','localtime'))
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now','localtime'))
                ON CONFLICT(path) DO UPDATE SET
                  author=excluded.author,
                  type=excluded.type,
@@ -1635,6 +1647,7 @@ def set_book_meta(
                  price=excluded.price,
                  memo=excluded.memo,
                  meta_source=excluded.meta_source,
+                 store_url=excluded.store_url,
                  updated_at=excluded.updated_at""",
             (
                 path,
@@ -1649,6 +1662,7 @@ def set_book_meta(
                 new_price,
                 new_memo or "",
                 new_meta_source or "",
+                new_store_url or "",
             ),
         )
         # キャラクター・タグは全削除→再挿入

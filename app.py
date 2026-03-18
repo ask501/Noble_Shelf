@@ -37,7 +37,7 @@ from sidebar import SidebarWidget
 from searchbar import SearchBar, filter_books, build_haystack_cache
 from drop_handler import handle_drop, _get_archive_cover, _get_pdf_cover_and_pages
 from filter_popover import FilterPopover
-from theme import THEME_COLORS, apply_dark_titlebar
+from theme import THEME_COLORS, apply_dark_titlebar, APP_BAR_SEPARATOR_RGBA, COLOR_WHITE
 from properties import _auto_kana, _needs_kana_conversion, StoreFileInputDialog
 from menubar import setup_menubar, refresh_shortcuts
 from first_run import LibrarySetupOverlay
@@ -103,7 +103,7 @@ class MainWindow(QMainWindow):
         self.setAcceptDrops(True)
         self._setup_titlebar_context_menu()
         self._restore_ui_visibility()
-        QTimer.singleShot(0, self._load_library)
+        QTimer.singleShot(config.APP_STARTUP_LOAD_DELAY_MS, self._load_library)
 
         self.bookmarkletReceived.connect(self._on_bookmarklet_received)
         self._start_local_server()
@@ -233,7 +233,7 @@ class MainWindow(QMainWindow):
 
     def _file_show_recent_popup(self):
         """最近開いたブックをポップアップメニューで表示"""
-        recent = db.get_recent_books(limit=10)
+        recent = db.get_recent_books(limit=config.RECENT_BOOKS_MENU_LIMIT)
         if not recent:
             return
         from PySide6.QtWidgets import QMenu
@@ -349,33 +349,100 @@ class MainWindow(QMainWindow):
         ブックマークレットからの受信処理（バックグラウンドスレッドから呼ばれる）。
         メタデータ取得→DB保存→メインスレッドへシグナルemit。
         """
-        print(f"[DEBUG] _on_receive_bookmarklet called: {url}")
         try:
             from bookmarklet import fetch_meta
             meta = fetch_meta(url=url, html=html)
-        except Exception as e:
-            import traceback
-            print(f"[bookmarklet] fetch_meta error: {e}")
-            traceback.print_exc()
+        except Exception:
             meta = {}
         try:
-            db.add_bookmarklet_queue(
-                url=url,
-                site=meta.get("site", ""),
-                title=meta.get("title", ""),
-                circle=meta.get("circle", ""),
-                author=meta.get("author", ""),
+            matched = db.find_book_by_bookmarklet(
                 dlsite_id=meta.get("dlsite_id", ""),
-                tags=",".join(meta.get("tags", [])),
-                price=meta.get("price"),
-                release_date=meta.get("release_date", ""),
-                cover_url=meta.get("cover_url", ""),
-                status="pending",
+                title=meta.get("title", ""),
             )
-        except Exception as e:
-            import traceback
-            print(f"[bookmarklet] db error: {e}")
-            traceback.print_exc()
+
+            if matched is None:
+                # 一致なし → 従来通りキューに追加（🟡）
+                db.add_bookmarklet_queue(
+                    url=url,
+                    site=meta.get("site", ""),
+                    title=meta.get("title", ""),
+                    circle=meta.get("circle", ""),
+                    author=meta.get("author", ""),
+                    dlsite_id=meta.get("dlsite_id", ""),
+                    tags=",".join(meta.get("tags", [])),
+                    price=meta.get("price"),
+                    release_date=meta.get("release_date", ""),
+                    cover_url=meta.get("cover_url", ""),
+                    store_url=meta.get("store_url", ""),
+                    status="pending",
+                )
+            else:
+                # 一致あり → 空でないフィールド数で分岐
+                non_empty = 0
+                for k in ("title", "circle", "author", "dlsite_id", "release_date", "cover_url"):
+                    if (meta.get(k, "") or "").strip():
+                        non_empty += 1
+                if meta.get("tags") or []:
+                    non_empty += 1
+                if meta.get("price") is not None:
+                    non_empty += 1
+
+                if non_empty <= 1:
+                    # 即時適用（🟢）
+                    found_path = matched["path"]
+
+                    db.set_book_meta(
+                        found_path,
+                        author=meta.get("author", "") or "",
+                        tags=meta.get("tags") or [],
+                        dlsite_id=meta.get("dlsite_id") or None,
+                        release_date=meta.get("release_date") or None,
+                        price=meta.get("price"),
+                        meta_source=meta.get("site") or None,
+                    )
+
+                    if (meta.get("title", "") or "").strip() and (meta.get("circle", "") or "").strip():
+                        db.update_book_display(
+                            found_path,
+                            title=meta.get("title") or None,
+                            circle=meta.get("circle") or None,
+                        )
+
+                    if (meta.get("cover_url", "") or "").strip():
+                        db.update_book_cover_path(found_path, meta.get("cover_url"))
+
+                    db.add_bookmarklet_queue(
+                        url=url,
+                        site=meta.get("site", ""),
+                        title=meta.get("title", ""),
+                        circle=meta.get("circle", ""),
+                        author=meta.get("author", ""),
+                        dlsite_id=meta.get("dlsite_id", ""),
+                        tags=",".join(meta.get("tags", [])),
+                        price=meta.get("price"),
+                        release_date=meta.get("release_date", ""),
+                        cover_url=meta.get("cover_url", ""),
+                        store_url=meta.get("store_url", ""),
+                        status="done",
+                    )
+                else:
+                    # ユーザー確認（🟡）
+                    db.add_bookmarklet_queue(
+                        url=url,
+                        site=meta.get("site", ""),
+                        title=meta.get("title", ""),
+                        circle=meta.get("circle", ""),
+                        author=meta.get("author", ""),
+                        dlsite_id=meta.get("dlsite_id", ""),
+                        tags=",".join(meta.get("tags", [])),
+                        price=meta.get("price"),
+                        release_date=meta.get("release_date", ""),
+                        cover_url=meta.get("cover_url", ""),
+                        store_url=meta.get("store_url", ""),
+                        status="pending",
+                    )
+        except Exception:
+            pass
         self.bookmarkletReceived.emit()
 
     def _on_bookmarklet_received(self) -> None:
@@ -402,7 +469,7 @@ class MainWindow(QMainWindow):
 
         dlg = QDialog(self)
         dlg.setWindowTitle("バックアップから復元")
-        dlg.resize(420, 280)
+        dlg.resize(*config.RESTORE_BACKUP_DIALOG_SIZE)
         layout = QVBoxLayout(dlg)
 
         lst = QListWidget()
@@ -456,8 +523,8 @@ class MainWindow(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         outer = QVBoxLayout(central)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
+        outer.setContentsMargins(*config.LAYOUT_MARGINS_ZERO)
+        outer.setSpacing(config.LAYOUT_SPACING_ZERO)
 
         # 検索バー（初期非表示）
         self._searchbar = SearchBar()
@@ -468,7 +535,7 @@ class MainWindow(QMainWindow):
 
         # スプリッター（サイドバー | グリッド＋ソートバー）
         splitter = QSplitter(Qt.Horizontal)
-        splitter.setHandleWidth(1)
+        splitter.setHandleWidth(config.MAIN_SPLITTER_HANDLE_WIDTH)
 
         self._sidebar = SidebarWidget()
         self._sidebar.filterChanged.connect(self._on_filter_changed)
@@ -483,8 +550,8 @@ class MainWindow(QMainWindow):
         # 右側コンテナ: 上にソートバー（ゴーストバー）、下にグリッド
         grid_container = QWidget()
         grid_layout = QVBoxLayout(grid_container)
-        grid_layout.setContentsMargins(0, 0, 0, 0)
-        grid_layout.setSpacing(0)
+        grid_layout.setContentsMargins(*config.LAYOUT_MARGINS_ZERO)
+        grid_layout.setSpacing(config.LAYOUT_SPACING_ZERO)
 
         # ── ゴーストバー（ソートキーラベル / 昇降順 / フィルター / クリア） ──
         self._sort_bar = QWidget()
@@ -535,7 +602,7 @@ class MainWindow(QMainWindow):
         # フィルターバッジエリア（条件タグを横並びで表示）
         self._filter_badge_layout = QHBoxLayout()
         self._filter_badge_layout.setSpacing(config.SORT_BAR_BADGE_SPACING)
-        self._filter_badge_layout.setContentsMargins(0, 0, 0, 0)
+        self._filter_badge_layout.setContentsMargins(*config.LAYOUT_MARGINS_ZERO)
         bar_layout.addLayout(self._filter_badge_layout)
 
         # 右側を埋めるストレッチ
@@ -547,19 +614,19 @@ class MainWindow(QMainWindow):
             QWidget#SortBar {{
                 background-color: {THEME_COLORS["card_bg"]};
                 color: {THEME_COLORS["text_main"]};
-                border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+                border-bottom: 1px solid {APP_BAR_SEPARATOR_RGBA};
             }}
             QLabel#SortLabel {{
                 background-color: transparent;
                 color: {THEME_COLORS["text_main"]};
-                padding-left: 4px;
+                padding-left: {config.SORT_BAR_LABEL_PADDING_LEFT}px;
             }}
             QPushButton#SortOrderButton, QPushButton#FilterButton, QPushButton#ClearButton {{
                 background-color: {THEME_COLORS["bg_widget"]};
                 color: {THEME_COLORS["text_main"]};
                 border: 1px solid {THEME_COLORS["border"]};
-                border-radius: 6px;
-                padding: 4px 10px;
+                border-radius: {config.SORT_BAR_BTN_RADIUS}px;
+                padding: {config.SORT_BAR_BTN_PADDING_Y}px {config.SORT_BAR_BTN_PADDING_X}px;
             }}
             QPushButton#SortOrderButton:hover, QPushButton#FilterButton:hover, QPushButton#ClearButton:hover {{
                 background-color: {THEME_COLORS["hover"]};
@@ -580,7 +647,12 @@ class MainWindow(QMainWindow):
 
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
-        splitter.setSizes([200, config.WINDOW_WIDTH - 200])
+        splitter.setSizes(
+            [
+                config.MAIN_SPLITTER_SIDEBAR_INIT_WIDTH,
+                config.WINDOW_WIDTH - config.MAIN_SPLITTER_SIDEBAR_INIT_WIDTH,
+            ]
+        )
         outer.addWidget(splitter)
         self._splitter = splitter
 
@@ -607,7 +679,7 @@ class MainWindow(QMainWindow):
             QStatusBar {{
                 background-color: {THEME_COLORS["card_bg"]};
                 color: {THEME_COLORS["text_main"]};
-                border-top: 1px solid rgba(255, 255, 255, 0.15);
+                border-top: 1px solid {APP_BAR_SEPARATOR_RGBA};
                 font-size: {config.FONT_SIZE_STATUS_BAR}px;
             }}
             """
@@ -628,7 +700,7 @@ class MainWindow(QMainWindow):
 
     def _on_ctrl_wheel_zoom(self, delta: int):
         """Ctrl+ホイール: delta > 0 で拡大、< 0 で縮小"""
-        step = 10
+        step = config.CARD_SIZE_WHEEL_STEP
         new_val = self._size_slider.value() + (step if delta > 0 else -step)
         new_val = max(config.SLIDER_MIN_WIDTH, min(config.SLIDER_MAX_WIDTH, new_val))
         self._size_slider.setValue(new_val)  # valueChanged経由でgridも更新される
@@ -919,7 +991,10 @@ class MainWindow(QMainWindow):
                     g.setUpdatesEnabled(True)
                     # 2回目以降の on_book_updated で _apply_filters が再度走るとグリッドがリセットされるため、
                     # 即クリアせず遅延クリアする（複数回の更新後も最後の復元が効くようにする）
-                    QTimer.singleShot(600, lambda: setattr(self, "_context_menu_scroll", None))
+                    QTimer.singleShot(
+                        config.CONTEXT_MENU_SCROLL_RESET_DELAY_MS,
+                        lambda: setattr(self, "_context_menu_scroll", None),
+                    )
 
                 def on_range_changed(_min, max_val):
                     if max_val >= v_scroll:
@@ -947,7 +1022,7 @@ class MainWindow(QMainWindow):
                         except Exception:
                             pass
                         do_apply()
-                    QTimer.singleShot(400, fallback)
+                    QTimer.singleShot(config.CONTEXT_MENU_SCROLL_FALLBACK_DELAY_MS, fallback)
 
     def _on_scan_progress(self, scanned: int, total: int):
         self.setWindowTitle(config.APP_TITLE)
@@ -1065,20 +1140,20 @@ class MainWindow(QMainWindow):
                 continue
             name = label_map.get(field, field)
             badge = QPushButton(f"{name}: {value}  ×")
-            badge.setFixedHeight(26)
+            badge.setFixedHeight(config.FILTER_BADGE_HEIGHT)
             badge.setStyleSheet(
                 f"""
                 QPushButton {{
                     background-color: {THEME_COLORS["bg_widget"]};
                     color: {THEME_COLORS["text_main"]};
                     border: 1px solid {THEME_COLORS["accent"]};
-                    border-radius: 12px;
-                    padding: 2px 10px;
+                    border-radius: {config.FILTER_BADGE_RADIUS}px;
+                    padding: {config.FILTER_BADGE_PADDING_Y}px {config.FILTER_BADGE_PADDING_X}px;
                     font-size: {config.FONT_SIZE_PROP_HINT}px;
                 }}
                 QPushButton:hover {{
                     background-color: {THEME_COLORS["delete"]};
-                    color: #ffffff;
+                    color: {COLOR_WHITE};
                     border-color: {THEME_COLORS["delete"]};
                 }}
                 """
@@ -1281,7 +1356,7 @@ class MainWindow(QMainWindow):
         history_order: dict[str, int] = {}
         if key == "history":
             try:
-                recent = db.get_recent_books(limit=100)
+                recent = db.get_recent_books(limit=config.RECENT_BOOKS_LIST_LIMIT)
                 # get_recent_books は [(name, path), ...] の想定
                 for idx, (name, path) in enumerate(recent):
                     history_order[path] = idx
@@ -1376,7 +1451,7 @@ class MainWindow(QMainWindow):
         repaired_archive, repaired_pdf = 0, 0
         try:
             rows = db.get_all_books()
-            archive_exts = (".zip", ".cbz", ".7z", ".cb7", ".rar", ".cbr")
+            archive_exts = config.ARCHIVE_EXTS
             for row in rows:
                 path = row[3] or ""
                 cover = row[4] or ""
@@ -1419,7 +1494,7 @@ class MainWindow(QMainWindow):
         progress = QProgressDialog("PDFの1枚目をサムネに設定しています...", None, 0, len(need_repair), self)
         progress.setWindowTitle(config.APP_TITLE)
         progress.setWindowModality(Qt.WindowModal)
-        progress.setMinimumDuration(0)
+        progress.setMinimumDuration(config.PROGRESS_DIALOG_MIN_DURATION_MS)
         progress.setValue(0)
         repaired = 0
         for i, (path, _) in enumerate(need_repair):
@@ -1458,7 +1533,7 @@ class MainWindow(QMainWindow):
 
         progress = QProgressDialog("ふりがな一括取得中...", None, 0, total, self)
         progress.setWindowModality(Qt.WindowModal)
-        progress.setMinimumDuration(0)
+        progress.setMinimumDuration(config.PROGRESS_DIALOG_MIN_DURATION_MS)
         progress.setValue(0)
 
         updated = 0

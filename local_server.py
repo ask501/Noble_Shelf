@@ -25,7 +25,6 @@ class _Handler(BaseHTTPRequestHandler):
             data = json.loads(body)
             url: str = data.get("url", "")
             html: str = data.get("html", "")
-            print(f"[DEBUG] do_POST called, url={url}, on_receive={_Handler.on_receive}")
             if not url or not html:
                 self._respond(400, {"error": "url and html are required"})
                 return

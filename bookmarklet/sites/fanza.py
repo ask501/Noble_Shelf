@@ -13,10 +13,6 @@ class FanzaParser(BookmarkletParser):
     def parse(self, url: str, html: str) -> dict:
         soup = BeautifulSoup(html, "html.parser")
 
-        # デバッグ: JSON-LDの内容を確認
-        for i, script in enumerate(soup.find_all("script", type="application/ld+json")):
-            print(f"[DEBUG] ld+json [{i}]: {(script.string or '')[:200]}")
-
         # JSON-LDからメタデータ取得
         ld: dict = {}
         for script in soup.find_all("script", type="application/ld+json"):
@@ -38,15 +34,6 @@ class FanzaParser(BookmarkletParser):
             circle = brand
         else:
             circle = ""
-
-        # デバッグ出力
-        if isinstance(ld, dict):
-            print(f"[DEBUG] ld keys: {list(ld.keys())}")
-            print(f"[DEBUG] author raw: {ld.get('author')}")
-            print(f"[DEBUG] dateCreated: {ld.get('dateCreated')}")
-            print(f"[DEBUG] genre: {ld.get('genre')}")
-            print(f"[DEBUG] subjectOf: {ld.get('subjectOf')}")
-            print(f"[DEBUG] offers: {ld.get('offers')}")
 
         # subjectOf から詳細情報を取得
         subject = ld.get("subjectOf", {}) if isinstance(ld, dict) else {}
@@ -94,6 +81,9 @@ class FanzaParser(BookmarkletParser):
         if m:
             fanza_id = m.group(1)
 
+        # ストアURL: クエリパラメータを除いたURL
+        store_url = url.split("?")[0].rstrip("/") + "/"
+
         return {
             "title":        title,
             "circle":       circle,
@@ -103,6 +93,7 @@ class FanzaParser(BookmarkletParser):
             "price":        price,
             "release_date": release_date,
             "cover_url":    cover_url,
+            "store_url":    store_url,
             "site":         "fanza",
         }
 

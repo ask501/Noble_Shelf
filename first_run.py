@@ -21,17 +21,20 @@ class LibrarySetupOverlay(QWidget):
         super().__init__(parent)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        layout.setContentsMargins(*config.LAYOUT_MARGINS_ZERO)
+        layout.setSpacing(config.LAYOUT_SPACING_ZERO)
         layout.addStretch()
 
         self._btn = QPushButton("ライブラリフォルダを設定")
         # おおよそ縦2cm×横4cm程度（96DPI想定でやや大きめに）
-        self._btn.setFixedSize(180, 80)
+        self._btn.setFixedSize(*config.FIRST_RUN_SETUP_BTN_SIZE)
         self._btn.clicked.connect(self.setupClicked)
 
+        # fallback は theme 側の既定カラーと同値（見た目維持）
+        # THEME_COLORS にキーが無い場合でも、旧来の見た目を崩さないために直書きで残す
         accent = THEME_COLORS.get("accent", "#2d6a2d")
         accent_hover = THEME_COLORS.get("accent_hover", accent)
+        # THEME_COLORS にキーが無い場合でも、旧来の見た目を崩さないために直書きで残す
         text_main = THEME_COLORS.get("text_main", "#ffffff")
 
         self._btn.setStyleSheet(
@@ -40,17 +43,17 @@ class LibrarySetupOverlay(QWidget):
                 background-color: {accent};
                 color: {text_main};
                 border: none;
-                border-radius: 16px;
+                border-radius: {config.FIRST_RUN_SETUP_BTN_RADIUS}px;
                 font-family: {config.FONT_FAMILY};
                 font-size: {config.FONT_SIZE_SORT_LABEL}px;
-                padding: 8px 16px;
+                padding: {config.FIRST_RUN_SETUP_BTN_PADDING[0]}px {config.FIRST_RUN_SETUP_BTN_PADDING[1]}px;
             }}
             QPushButton:hover {{
                 background-color: {accent_hover};
             }}
             QPushButton:pressed {{
                 background-color: {accent};
-                opacity: 0.9;
+                opacity: {config.FIRST_RUN_SETUP_BTN_PRESSED_OPACITY};
             }}
             """
         )

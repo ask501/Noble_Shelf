@@ -7,6 +7,7 @@ class BoothParser(BookmarkletParser):
         return "booth.pm" in url
 
     def parse(self, url: str, html: str) -> dict:
+        store_url = url.split("?")[0]
         return {
             "title": "",
             "circle": "",
@@ -15,6 +16,7 @@ class BoothParser(BookmarkletParser):
             "price": None,
             "release_date": "",
             "cover_url": "",
+             "store_url": store_url,
             "site": "booth",
         }
 

@@ -11,6 +11,7 @@ import shutil
 from PySide6.QtWidgets import QProgressDialog, QMessageBox, QApplication
 from PySide6.QtCore import Qt, QThread, Signal
 from version import VERSION
+import config
 
 GITHUB_API_URL = "https://api.github.com/repos/ask501/Noble_Shelf/releases/latest"
 
@@ -26,7 +27,7 @@ def fetch_latest_version() -> tuple[str, str] | None:
             GITHUB_API_URL,
             headers={"User-Agent": "Noble-Shelf-Updater"}
         )
-        with urllib.request.urlopen(req, timeout=5) as res:
+        with urllib.request.urlopen(req, timeout=config.UPDATER_GITHUB_API_TIMEOUT_SEC) as res:
             data = json.loads(res.read().decode())
         tag = data.get("tag_name", "")
         latest = tag.lstrip("v")
@@ -60,10 +61,10 @@ def download_zip(url: str, dest_path: str, progress_callback=None) -> bool:
     """
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "Noble-Shelf-Updater"})
-        with urllib.request.urlopen(req, timeout=30) as res:
+        with urllib.request.urlopen(req, timeout=config.UPDATER_ZIP_DOWNLOAD_TIMEOUT_SEC) as res:
             total = int(res.headers.get("Content-Length", 0))
             downloaded = 0
-            chunk_size = 8192
+            chunk_size = config.UPDATER_DOWNLOAD_CHUNK_SIZE
             with open(dest_path, "wb") as f:
                 while True:
                     chunk = res.read(chunk_size)
@@ -223,7 +224,7 @@ def check_and_prompt_update(parent=None) -> None:
             progress_dlg = QProgressDialog("ダウンロード中...", "キャンセル", 0, 100, parent)
             progress_dlg.setWindowTitle("アップデート")
             progress_dlg.setWindowModality(Qt.WindowModal)
-            progress_dlg.setMinimumDuration(0)
+            progress_dlg.setMinimumDuration(config.PROGRESS_DIALOG_MIN_DURATION_MS)
             progress_dlg.setValue(0)
             progress_dlg.show()
             QApplication.processEvents()
@@ -262,7 +263,7 @@ def check_and_prompt_update(parent=None) -> None:
 
         QMessageBox.information(parent, "アップデート", "アップデートを開始します。アプリを再起動します。")
         from PySide6.QtCore import QTimer
-        QTimer.singleShot(500, QApplication.quit)
+        QTimer.singleShot(config.UPDATER_QUIT_DELAY_MS, QApplication.quit)
 
     thread.result_ready.connect(on_result)
     thread.finished.connect(thread.deleteLater)

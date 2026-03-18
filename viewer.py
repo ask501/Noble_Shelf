@@ -43,7 +43,19 @@ from PIL import Image
 import io
 import zipfile
 import config
-from theme import apply_dark_titlebar
+from theme import (
+    VIEWER_BG,
+    VIEWER_TOOLBAR_BG,
+    VIEWER_BTN_BG,
+    VIEWER_BTN_FG,
+    VIEWER_BTN_BORDER,
+    VIEWER_BTN_HOVER_BG,
+    VIEWER_BTN_PRESSED_BG,
+    VIEWER_BTN_PRESSED_FG,
+    VIEWER_TEXT_SUB,
+    VIEWER_SLIDER_GROOVE_BG,
+    apply_dark_titlebar,
+)
 
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp")
 
@@ -197,7 +209,7 @@ class PageCanvas(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setStyleSheet("background: #111111;")
+        self.setStyleSheet(f"background: {VIEWER_BG};")
         self._pixmap: Optional[QPixmap] = None
         self._zoom   = 1.0
         self._pan    = QPoint(0, 0)
@@ -264,9 +276,9 @@ class Viewer(QDialog):
         super().__init__(parent)
         apply_dark_titlebar(self)
         self.setWindowTitle(config.APP_TITLE)
-        self.resize(900, 700)
+        self.resize(config.VIEWER_INIT_WIDTH, config.VIEWER_INIT_HEIGHT)
         self.setWindowState(Qt.WindowMaximized)
-        self.setStyleSheet("background: #111111;")
+        self.setStyleSheet(f"background: {VIEWER_BG};")
         # メインウィンドウの操作をブロックしない
         self.setWindowModality(Qt.NonModal)
         self.setWindowFlags(self.windowFlags() | Qt.WindowMaximizeButtonHint)
@@ -309,8 +321,6 @@ class Viewer(QDialog):
         try:
             self._reader = BookReader.open(path)
         except Exception as e:
-            import traceback
-            traceback.print_exc()
             self._reader = None
 
     @property
@@ -322,36 +332,37 @@ class Viewer(QDialog):
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        layout.setContentsMargins(*config.LAYOUT_MARGINS_ZERO)
+        layout.setSpacing(config.LAYOUT_SPACING_ZERO)
 
         # ── ツールバー（タイトルバー代わりの上端。ダブルクリックで最大化するためフィルターを付ける）
         self._toolbar = QWidget()
-        self._toolbar.setFixedHeight(36)
-        self._toolbar.setStyleSheet("background: #1a1a1a;")
+        self._toolbar.setFixedHeight(config.VIEWER_TOOLBAR_HEIGHT)
+        self._toolbar.setStyleSheet(f"background: {VIEWER_TOOLBAR_BG};")
         tb_layout = QHBoxLayout(self._toolbar)
-        tb_layout.setContentsMargins(6, 4, 6, 4)
-        tb_layout.setSpacing(4)
+        tb_layout.setContentsMargins(*config.VIEWER_TOOLBAR_MARGIN)
+        tb_layout.setSpacing(config.VIEWER_TOOLBAR_SPACING)
 
         btn_style = f"""
             QPushButton {{
-                background: #2a2a2a; color: #cccccc;
-                border: 1px solid #444; border-radius: 4px;
-                padding: 2px 10px; font-size: {config.FONT_SIZE_VIEWER_UI}px;
+                background: {VIEWER_BTN_BG}; color: {VIEWER_BTN_FG};
+                border: 1px solid {VIEWER_BTN_BORDER}; border-radius: 4px;
+                padding: {config.VIEWER_TOOLBAR_BTN_PADDING_Y}px {config.VIEWER_TOOLBAR_BTN_PADDING_X}px;
+                font-size: {config.FONT_SIZE_VIEWER_UI}px;
             }}
-            QPushButton:hover {{ background: #3a3a3a; }}
-            QPushButton:pressed {{ background: #9A7FFF; color: #fff; }}
+            QPushButton:hover {{ background: {VIEWER_BTN_HOVER_BG}; }}
+            QPushButton:pressed {{ background: {VIEWER_BTN_PRESSED_BG}; color: {VIEWER_BTN_PRESSED_FG}; }}
         """
 
         self._btn_1p = QPushButton("1P")
         self._btn_2p = QPushButton("2P")
         self._btn_fs = QPushButton("全画面")
         self._page_label = QLabel("")
-        self._page_label.setStyleSheet(f"color: #aaaaaa; font-size: {config.FONT_SIZE_VIEWER_UI}px;")
+        self._page_label.setStyleSheet(f"color: {VIEWER_TEXT_SUB}; font-size: {config.FONT_SIZE_VIEWER_UI}px;")
 
         for btn in (self._btn_1p, self._btn_2p, self._btn_fs):
             btn.setStyleSheet(btn_style)
-            btn.setFixedHeight(26)
+            btn.setFixedHeight(config.VIEWER_TOOLBAR_BTN_HEIGHT)
 
         self._btn_1p.clicked.connect(self._set_single)
         self._btn_2p.clicked.connect(self._set_dual)
@@ -374,10 +385,10 @@ class Viewer(QDialog):
 
         # ── シークバー
         seekbar_widget = QWidget()
-        seekbar_widget.setFixedHeight(32)
-        seekbar_widget.setStyleSheet("background: #1a1a1a;")
+        seekbar_widget.setFixedHeight(config.VIEWER_SEEKBAR_HEIGHT)
+        seekbar_widget.setStyleSheet(f"background: {VIEWER_TOOLBAR_BG};")
         sb_layout = QHBoxLayout(seekbar_widget)
-        sb_layout.setContentsMargins(10, 4, 10, 4)
+        sb_layout.setContentsMargins(*config.VIEWER_SEEKBAR_MARGIN)
 
         n = max(1, len(self.images) - 1)
         self._seekbar = QSlider(Qt.Horizontal)
@@ -386,17 +397,24 @@ class Viewer(QDialog):
         self._seekbar.valueChanged.connect(self._on_seek)
         self._seekbar.installEventFilter(self)
         self._seekbar.setStyleSheet("""
-            QSlider::groove:horizontal { height: 4px; background: #444; border-radius: 2px; }
+            QSlider::groove:horizontal { height: %(groove_h)spx; background: %(groove_bg)s; border-radius: 2px; }
             QSlider::handle:horizontal {
-                background: #9A7FFF; width: 14px; height: 14px;
-                border-radius: 7px; margin: -5px 0;
+                background: %(accent)s; width: %(handle_size)spx; height: %(handle_size)spx;
+                border-radius: %(handle_radius)spx; margin: %(handle_margin_y)spx 0;
             }
-            QSlider::sub-page:horizontal { background: #9A7FFF; border-radius: 2px; }
-        """)
+            QSlider::sub-page:horizontal { background: %(accent)s; border-radius: 2px; }
+        """ % {
+            "groove_h": config.VIEWER_SLIDER_GROOVE_H,
+            "groove_bg": VIEWER_SLIDER_GROOVE_BG,
+            "accent": VIEWER_BTN_PRESSED_BG,
+            "handle_size": config.VIEWER_SLIDER_HANDLE_SIZE,
+            "handle_radius": config.VIEWER_SLIDER_HANDLE_RADIUS,
+            "handle_margin_y": config.VIEWER_SLIDER_HANDLE_MARGIN_Y,
+        })
 
         self._seek_label = QLabel("")
-        self._seek_label.setStyleSheet(f"color: #aaaaaa; font-size: {config.FONT_SIZE_VIEWER_SEEK}px;")
-        self._seek_label.setFixedWidth(80)
+        self._seek_label.setStyleSheet(f"color: {VIEWER_TEXT_SUB}; font-size: {config.FONT_SIZE_VIEWER_SEEK}px;")
+        self._seek_label.setFixedWidth(config.VIEWER_SEEKBAR_LABEL_WIDTH)
         self._seek_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
         sb_layout.addWidget(self._seekbar)

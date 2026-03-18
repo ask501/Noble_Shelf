@@ -2,7 +2,6 @@
 theme.py - アプリ全体のテーマ・スタイル定義
 旧 ui_common.py の移植。PySide6用QSSに対応。
 """
-import config
 
 # ── カラー定数 ────────────────────────────────────────────
 COLOR_BG_BASE    = "#1e1e1e"
@@ -52,11 +51,132 @@ COLOR_CARD_SUB_FG       = "#aaaaaa"
 COLOR_BADGE_BG_DARK = "#3a3a3a"
 COLOR_BADGE_FG      = "#b0b0b0"
 
+# ── 設定ダイアログ（settings_dialog.py）用カラー/QSS ───────────
+# ※settings_dialog.py の直書きスタイルを同値で定数化（見た目維持）
+SETTINGS_SHORTCUT_CAPTURE_BORDER = "#00aa77"     # "#0a7"
+SETTINGS_SHORTCUT_CAPTURE_BORDER_OK = "#00cc99"  # "#0c9"
+SETTINGS_SHORTCUT_CAPTURE_BG = "#1a2a28"
+SETTINGS_SHORTCUT_CONFIRMED_BG = "#0d3d38"
+SETTINGS_CARD_PREVIEW_THUMB_BG = "#2a2a38"       # カード表示タブのプレビュー用サムネ背景
+SETTINGS_CARD_PREVIEW_META_OK_BG = "#4caf50"     # プレビューのメタバッジ(✓)背景
+
+# ── properties/meta_apply_dialog.py 用カラー/QSS ──────────────
+# ※meta_apply_dialog.py の直書き #xxxxxx を同値で定数化（見た目維持）
+META_APPLY_THUMB_BG = "#222"
+META_APPLY_THUMB_BORDER = "#444"
+META_APPLY_TEXT_DIM = "#666"
+META_APPLY_TEXT_SUB = "#888"
+META_APPLY_RADIO_TEXT = "#ccc"
+META_APPLY_RADIO_BORDER = "#888"
+
+# ── properties/meta_search_dialog.py 用カラー ────────────────
+# ※meta_search_dialog.py の直書き #xxx を同値で定数化（見た目維持）
+META_SEARCH_SITE_DEFAULT = "#888"
+META_SEARCH_ITEM_DIM_FG = "#666666"
+
+# ── properties/meta_apply_dialog.py 用カラー（追加）────────────
+META_APPLY_TOGGLE_TEXT = "#aaa"
+META_APPLY_TOGGLE_DIM_TEXT = "#555"
+
+# ── properties/properties_dialog.py 用カラー ────────────────
+# ※properties_dialog.py の直書き #xxxxxx を同値で定数化（見た目維持）
+PROPERTY_BULK_HINT_FG = "#ee6666"    # "#e66"
+PROPERTY_BORDER = "#444"
+PROPERTY_THUMB_BG = "#111111"        # サムネ枠背景（theme.COLOR_THUMB_BG と同値）
+PROPERTY_FOLDER_BG = "#2a2a2a"       # フォルダ名ラベル背景（theme.COLOR_FOLDER_BG と同値）
+PROPERTY_FOLDER_FG = "#ccc"
+PROPERTY_FOLDER_HOVER_BORDER = "#666"
+PROPERTY_STAR_OFF_FG = "#888"        # 未選択の星色
+
+# ── context_menu/actions_bookmark.py 用カラー ────────────────
+# ※actions_bookmark.py の直書き #xxxxxx を同値で定数化（見た目維持）
+BOOKMARK_STAR_ON_FG = "#f5c518"
+BOOKMARK_STAR_OFF_FG = "#555555"
+BOOKMARK_SAVE_BG = "#2d7a2d"
+
+# ── bookmarklet_window.py 用カラー ─────────────────────────
+# ※bookmarklet_window.py の直書き #xxxxxx を同値で定数化（見た目維持）
+BOOKMARKLET_THUMB_BG = "#1a1a1a"
+BOOKMARKLET_THUMB_BORDER = "#333333"
+
+# ── thumbnail_crop_dialog.py 用カラー ──────────────────────
+# ※thumbnail_crop_dialog.py の直書き #xxxxxx を同値で定数化（見た目維持）
+THUMB_CROP_HINT_FG = "#aaa"
+THUMB_CROP_VIEW_BG = "#1a1a1a"
+THUMB_CROP_BTN_FG = "#aaa"
+THUMB_CROP_FRAME_COLOR = (255, 80, 80)  # QPainter overlay（赤枠）
+THUMB_CROP_FRAME_PEN_W = 2
+# 「切り抜き」ボタン（既存の保存ボタン配色と同系統）
+THUMB_CROP_BTN_CROP_BG = "#2d6a2d"
+THUMB_CROP_BTN_CROP_BORDER = "#3a8a3a"
+THUMB_CROP_BTN_CROP_PAD_Y = 6
+THUMB_CROP_BTN_CROP_PAD_X = 16
+
+# ── app.py 用カラー/QSS ───────────────────────────────────
+# ※app.py のQSS直書き値を同値で定数化（見た目維持）
+APP_BAR_SEPARATOR_RGBA = "rgba(255, 255, 255, 0.15)"  # ソートバー/ステータスバーの細い境界線
+
+# ── 旧 config.py 由来のカラー（移動）────────────────────────
+# 互換維持のため定数名はそのまま使用する
+CONTEXT_MENU_BG = "#2b2b2b"
+CONTEXT_MENU_HOVER_BG = "#0078d4"
+CONTEXT_MENU_SEP_COLOR = "#444444"
+CONTEXT_MENU_TEXT_FG = "#f0f0f0"
+CONTEXT_MENU_DELETE_FG = "#ff6b6b"
+CONTEXT_MENU_DELETE_HOVER = "#c0392b"
+CONTEXT_MENU_DIM_FG = "#888888"
+
+SEARCH_BAR_BG = "#1a1a1a"
+SEARCH_CHIP_BG = "#2a475e"
+SEARCH_CHIP_HOVER = "#1e3a52"
+SEARCH_CHIP_FG = "#e0e0e0"
+SEARCH_DROPDOWN_BG = "#252525"
+SEARCH_DROPDOWN_HOVER = "#0078d4"
+SEARCH_SEP_COLOR = "#3a3a3a"
+
+CHIP_COLOR_SORT = "#444444"
+CHIP_COLOR_PATH = "#2b579a"
+CHIP_COLOR_TAG = "#1e7145"
+CHIP_COLOR_AUTHOR = "#b91d47"
+
+# ── ビューワー（viewer.py）用カラー ───────────────────────────
+# ※見た目維持のため、viewer.py の直書き #xxxxxx を同値で定数化
+VIEWER_BG = "#111111"              # ページキャンバス/ビューワー背景
+VIEWER_TOOLBAR_BG = "#1a1a1a"      # 上部ツールバー背景・シークバー背景
+VIEWER_BTN_BG = "#2a2a2a"          # ツールバーボタン背景
+VIEWER_BTN_FG = "#cccccc"          # ツールバーボタン文字色
+VIEWER_BTN_BORDER = "#444444"      # ツールバーボタン枠
+VIEWER_BTN_HOVER_BG = "#3a3a3a"    # ツールバーボタン hover 背景
+VIEWER_BTN_PRESSED_BG = "#9A7FFF"  # ツールバーボタン pressed 背景（アクセント）
+VIEWER_BTN_PRESSED_FG = "#ffffff"  # ツールバーボタン pressed 文字色
+VIEWER_TEXT_SUB = "#aaaaaa"        # ページ表示ラベル等の補助文字色
+VIEWER_SLIDER_GROOVE_BG = "#444444"  # シークバー溝背景
+
 # カード描画用アルファ値（0–255）
 CARD_BADGE_OVERLAY_ALPHA   = 160
 CARD_SHADOW_ALPHA         = 120
 CARD_RATING_BG_ALPHA      = 115
 CARD_TITLE_SHADOW_ALPHA   = 180
+
+# ── 設定ダイアログ（settings_dialog.py）用QSS（ローカル適用）──────
+SETTINGS_SHORTCUT_HINT_STYLE = (
+    f"color: {COLOR_CHECK_MAN}; font-size: 9px;"
+)
+SETTINGS_SHORTCUT_DISPLAY_STYLE_NORMAL = (
+    f"padding: 4px 8px; min-width: 140px; "
+    f"border: 1px solid {COLOR_MENU_DISABLED}; border-radius: 4px; "
+    f"background: {COLOR_FOLDER_BG}; font-size: 10px;"
+)
+SETTINGS_SHORTCUT_DISPLAY_STYLE_CAPTURE = (
+    f"padding: 4px 8px; min-width: 140px; "
+    f"border: 2px solid {SETTINGS_SHORTCUT_CAPTURE_BORDER}; border-radius: 4px; "
+    f"background: {SETTINGS_SHORTCUT_CAPTURE_BG}; font-size: 10px;"
+)
+SETTINGS_SHORTCUT_DISPLAY_STYLE_CONFIRMED = (
+    f"padding: 4px 8px; min-width: 140px; "
+    f"border: 2px solid {SETTINGS_SHORTCUT_CAPTURE_BORDER_OK}; border-radius: 4px; "
+    f"background: {SETTINGS_SHORTCUT_CONFIRMED_BG}; font-size: 10px;"
+)
 
 # ── サイト別カラー ──
 SITE_COLORS = {
@@ -135,7 +255,7 @@ APP_QSS = f"""
 QWidget {{
     background-color: {COLOR_BG_BASE};
     color: {COLOR_TEXT_MAIN};
-    font-size: {config.FONT_SIZE_APP_GLOBAL}px;
+    font-size: 12px;
 }}
 
 QMainWindow {{
@@ -204,9 +324,9 @@ QDialogButtonBox QPushButton#DialogOkButton {{
     background-color: {COLOR_BTN_SAVE};
     color: {COLOR_WHITE};
     border: 1px solid {COLOR_BTN_SAVE_BORDER};
-    border-radius: {config.BORDER_RADIUS}px;
+    border-radius: 6px;
     padding: 6px 16px;
-    font-size: {config.FONT_SIZE_BTN_ACTION}px;
+    font-size: 12px;
 }}
 QDialogButtonBox QPushButton#DialogOkButton:hover {{
     background-color: {COLOR_BTN_SAVE_BORDER};
@@ -220,9 +340,9 @@ QDialogButtonBox QPushButton#DialogCancelButton {{
     background-color: {COLOR_BTN_CANCEL};
     color: {COLOR_WHITE};
     border: 1px solid {COLOR_BTN_CANCEL_BORDER};
-    border-radius: {config.BORDER_RADIUS}px;
+    border-radius: 6px;
     padding: 6px 16px;
-    font-size: {config.FONT_SIZE_BTN_ACTION}px;
+    font-size: 12px;
 }}
 QDialogButtonBox QPushButton#DialogCancelButton:hover {{
     background-color: {COLOR_BTN_CANCEL_BORDER};
@@ -259,10 +379,10 @@ QTabBar::tab {{
     color: {COLOR_TEXT_SUB};
     border: 1px solid {COLOR_BORDER};
     border-bottom: none;
-    border-radius: {config.BORDER_RADIUS}px {config.BORDER_RADIUS}px 0 0;
+    border-radius: 6px 6px 0 0;
     padding: 8px 20px;
     margin-right: 2px;
-    font-size: {config.FONT_SIZE_DIALOG_LABEL}px;
+    font-size: 10px;
 }}
 QTabBar::tab:selected {{
     background-color: {COLOR_BG_PANEL};
@@ -281,7 +401,7 @@ QLabel {{
     color: {COLOR_TEXT_MAIN};
 }}
 QLabel#SortLabel {{
-    font-size: {config.FONT_SIZE_SORT_LABEL}px;
+    font-size: 24px;
     font-weight: bold;
 }}
 
@@ -450,11 +570,10 @@ class StyledComboBox(_QComboBox):
         """)
         self._arrow = QLabel(DROPDOWN_ARROW, self)
         self._arrow.setAttribute(Qt.WA_TransparentForMouseEvents)
-        arrow_font = QFont(config.FONT_FAMILY)
+        # theme.py は config を参照しない（循環import防止）。フォントはアプリ既定に従う。
+        arrow_font = QFont()
         arrow_font.setPixelSize(12)
         self._arrow.setFont(arrow_font)
-        # デバッグ: 四角が見えるかでクリップ/Z-order を切り分け（確認後戻す）
-        self._arrow.setStyleSheet("background: red; color: white;")
         self._arrow.setAlignment(Qt.AlignCenter)
 
     def resizeEvent(self, event):

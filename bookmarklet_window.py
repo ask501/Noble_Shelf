@@ -11,7 +11,8 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
-from theme import apply_dark_titlebar, THEME_COLORS
+import config
+from theme import apply_dark_titlebar, BOOKMARKLET_THUMB_BG, BOOKMARKLET_THUMB_BORDER
 import db
 
 
@@ -34,8 +35,8 @@ class BookmarkletWindow(QWidget):
         super().__init__(parent, Qt.Window)
         self._main_window = main_window
         apply_dark_titlebar(self)
-        self.setWindowTitle("ブックマークレットキュー")
-        self.resize(800, 500)
+        self.setWindowTitle(config.BOOKMARKLET_WINDOW_TITLE)
+        self.resize(*config.BOOKMARKLET_WINDOW_SIZE)
         self._build_ui()
         self.refresh()
 
@@ -73,9 +74,9 @@ class BookmarkletWindow(QWidget):
         columns.addLayout(right, stretch=1)
 
         self._thumb = QLabel()
-        self._thumb.setFixedSize(180, 180)
+        self._thumb.setFixedSize(*config.BOOKMARKLET_THUMB_SIZE)
         self._thumb.setAlignment(Qt.AlignCenter)
-        self._thumb.setStyleSheet("background: #1a1a1a; border: 1px solid #333;")
+        self._thumb.setStyleSheet(f"background: {BOOKMARKLET_THUMB_BG}; border: 1px solid {BOOKMARKLET_THUMB_BORDER};")
         right.addWidget(self._thumb)
 
         self._detail = QLabel()
@@ -113,7 +114,6 @@ class BookmarkletWindow(QWidget):
 
         # サムネイル
         cover_url = row.get("cover_url", "")
-        print(f"[DEBUG] cover_url={cover_url!r}")
         if cover_url:
             try:
                 import urllib.request
@@ -122,18 +122,22 @@ class BookmarkletWindow(QWidget):
                 req = urllib.request.Request(
                     cover_url,
                     headers={
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                        "Referer": "https://www.dlsite.com/",
+                        "User-Agent": config.BOOKMARKLET_UA,
+                        "Referer": config.BOOKMARKLET_REFERER_DLSITE,
                     },
                 )
-                data = urllib.request.urlopen(req, timeout=5).read()
+                data = urllib.request.urlopen(req, timeout=config.BOOKMARKLET_HTTP_TIMEOUT_SEC).read()
                 pixmap = QPixmap()
                 pixmap.loadFromData(data)
                 self._thumb.setPixmap(
-                    pixmap.scaled(180, 180, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    pixmap.scaled(
+                        config.BOOKMARKLET_THUMB_SIZE[0],
+                        config.BOOKMARKLET_THUMB_SIZE[1],
+                        Qt.KeepAspectRatio,
+                        Qt.SmoothTransformation,
+                    )
                 )
-            except Exception as e:
-                print(f"[DEBUG] thumb error: {e}")
+            except Exception:
                 self._thumb.setText("画像なし")
         else:
             self._thumb.setText("画像なし")
@@ -150,6 +154,7 @@ class BookmarkletWindow(QWidget):
             f"サイト: {row.get('site') or '—'}",
             f"ステータス: {row.get('status') or '—'}",
             f"取得日時: {row.get('fetched_at') or '—'}",
+            f"商品URL: {row.get('store_url') or '—'}",
             f"タグ: {tags or '—'}",
         ]
         self._detail.setText("\n".join(lines))
@@ -159,8 +164,6 @@ class BookmarkletWindow(QWidget):
 
     def _copy_bookmarklet(self) -> None:
         """圧縮版ブックマークレットJSをクリップボードにコピーする"""
-        import config
-
         port = config.BOOKMARKLET_PORT
         js = (
             f'javascript:(function(){{const PORT={port};const url=location.href;'
@@ -258,15 +261,13 @@ class BookmarkletWindow(QWidget):
             "release_date": row.get("release_date", ""),
             "image_url": row.get("cover_url", ""),
             "site": row.get("site", ""),
+            "store_url": row.get("store_url", ""),
         }
 
-        print(f"[DEBUG] opening MetaApplyDialog, found_path={found_path}")
         dlg = MetaApplyDialog(current=current, fetched=fetched, parent=self, book_path=found_path)
         result = dlg.exec()
-        print(f"[DEBUG] dlg.exec() result={result}")
         if result:
             applied = dlg.selected_keys()
-            print(f"[DEBUG] applied: {applied}")
 
             # release_dateの正規化
             import re as _re
@@ -289,6 +290,7 @@ class BookmarkletWindow(QWidget):
                 release_date=rd or None,
                 price=_to_int(applied.get("price")),
                 dlsite_id=applied.get("dlsite_id") or None,
+                store_url=applied.get("store_url") or None,
             )
 
             # books テーブルのタイトル・サークルも更新

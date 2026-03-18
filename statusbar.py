@@ -23,14 +23,16 @@ def setup_statusbar(window, sb: QStatusBar) -> QSlider:
     slider.setMinimum(config.SLIDER_MIN_WIDTH)
     slider.setMaximum(config.SLIDER_MAX_WIDTH)
     slider.setValue(config.DEFAULT_CARD_WIDTH)
-    slider.setFixedWidth(120)
+    slider.setFixedWidth(config.STATUSBAR_SLIDER_WIDTH)
     slider.setToolTip("カードサイズ (Ctrl+ホイールでも変更可)")
     sb.addPermanentWidget(slider)
 
     license_label = QLabel(
         f"Noble Shelf v{VERSION} © 2026 ask501 – MIT License "
     )
-    license_label.setStyleSheet("margin-left: 12px; margin-right: 12px;")
+    license_label.setStyleSheet(
+        f"margin-left: {config.STATUSBAR_LICENSE_MARGIN_X}px; margin-right: {config.STATUSBAR_LICENSE_MARGIN_X}px;"
+    )
     sb.addPermanentWidget(license_label)
 
     return slider

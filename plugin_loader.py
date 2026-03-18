@@ -37,10 +37,6 @@ def _is_plugin_dir(path: str) -> bool:
 
 
 def _load_plugin_module(plugin_dir: str):
-    import logging
-    log_path = os.path.join(os.environ.get("APPDATA", ""), "NobleShelf", "debug.log")
-    logging.basicConfig(filename=log_path, level=logging.DEBUG, force=True)
-    logging.debug(f"_load_plugin_module: {plugin_dir}, sys.path: {sys.path}")
     if plugin_dir not in sys.path:
         sys.path.insert(0, plugin_dir)
     try:
@@ -81,10 +77,8 @@ def _resolve_plugin(mod: Any) -> Any | None:
             api = mod.get_plugin()
             if api is not None and _check_contract(api):
                 return api
-        except Exception as e:
-            import logging
-            import traceback
-            logging.debug(f"get_plugin error: {traceback.format_exc()}")
+        except Exception:
+            pass
         return None
     if _check_contract(mod):
         return mod

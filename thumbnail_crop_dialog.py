@@ -22,7 +22,19 @@ from PySide6.QtWidgets import (
 )
 
 import config
-from theme import apply_dark_titlebar
+from theme import (
+    apply_dark_titlebar,
+    COLOR_WHITE,
+    THUMB_CROP_HINT_FG,
+    THUMB_CROP_VIEW_BG,
+    THUMB_CROP_BTN_FG,
+    THUMB_CROP_FRAME_COLOR,
+    THUMB_CROP_FRAME_PEN_W,
+    THUMB_CROP_BTN_CROP_BG,
+    THUMB_CROP_BTN_CROP_BORDER,
+    THUMB_CROP_BTN_CROP_PAD_Y,
+    THUMB_CROP_BTN_CROP_PAD_X,
+)
 
 CROP_ASPECT_W = getattr(config, "CARD_WIDTH_BASE", 150)
 CROP_ASPECT_H = getattr(config, "CARD_HEIGHT_BASE", 220)
@@ -33,7 +45,7 @@ def _download_image(url: str) -> QPixmap | None:
     try:
         import urllib.request
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=15) as res:
+        with urllib.request.urlopen(req, timeout=config.THUMB_CROP_DOWNLOAD_TIMEOUT_SEC) as res:
             data = res.read()
         pix = QPixmap()
         if not pix.loadFromData(data):
@@ -80,7 +92,7 @@ class CropGraphicsView(QGraphicsView):
         if r.width() <= 0 or r.height() <= 0:
             return
         painter = QPainter(self.viewport())
-        painter.setPen(QPen(QColor(255, 80, 80), 2, Qt.PenStyle.SolidLine))
+        painter.setPen(QPen(QColor(*THUMB_CROP_FRAME_COLOR), THUMB_CROP_FRAME_PEN_W, Qt.PenStyle.SolidLine))
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawRect(r)
         painter.end()
@@ -150,8 +162,8 @@ class ThumbnailCropDialog(QDialog):
         super().__init__(parent)
         apply_dark_titlebar(self)
         self.setWindowTitle(config.APP_TITLE)
-        self.setMinimumSize(640, 480)
-        self.resize(800, 600)
+        self.setMinimumSize(*config.THUMB_CROP_DIALOG_MIN_SIZE)
+        self.resize(*config.THUMB_CROP_DIALOG_SIZE)
 
         self._book_path = book_path
         self._source_path_or_url = image_source
@@ -159,39 +171,41 @@ class ThumbnailCropDialog(QDialog):
         self.result_path: str | None = None
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(8)
+        layout.setContentsMargins(*config.THUMB_CROP_LAYOUT_MARGINS)
+        layout.setSpacing(config.THUMB_CROP_LAYOUT_SPACING)
 
         lbl = QLabel("赤枠がカードの表示比率です。ホイールで拡大縮小・ドラッグで位置を調整し、「切り抜き」で赤枠内を保存します。")
         lbl.setWordWrap(True)
-        lbl.setStyleSheet(f"color: #aaa; font-size: {config.FONT_SIZE_PROP_HINT}px;")
+        lbl.setStyleSheet(f"color: {THUMB_CROP_HINT_FG}; font-size: {config.FONT_SIZE_PROP_HINT}px;")
         layout.addWidget(lbl)
 
         self._scene = QGraphicsScene(self)
         self._view = CropGraphicsView(self)
         self._view.setScene(self._scene)
-        self._view.setStyleSheet("background: #1a1a1a; border-radius: 4px;")
+        self._view.setStyleSheet(f"background: {THUMB_CROP_VIEW_BG}; border-radius: {config.PROP_ACTION_BTN_RADIUS}px;")
         layout.addWidget(self._view)
 
         btn_row = QHBoxLayout()
         btn_fit_h = QPushButton("縦フィット")
-        btn_fit_h.setStyleSheet("color: #aaa;")
+        btn_fit_h.setStyleSheet(f"color: {THUMB_CROP_BTN_FG};")
         btn_fit_h.setToolTip("画像の高さを赤枠の高さに合わせます")
         btn_fit_h.clicked.connect(self._view.fit_height_to_crop_frame)
         btn_fit_w = QPushButton("横フィット")
-        btn_fit_w.setStyleSheet("color: #aaa;")
+        btn_fit_w.setStyleSheet(f"color: {THUMB_CROP_BTN_FG};")
         btn_fit_w.setToolTip("画像の幅を赤枠の幅に合わせます")
         btn_fit_w.clicked.connect(self._view.fit_width_to_crop_frame)
         btn_row.addWidget(btn_fit_h)
         btn_row.addWidget(btn_fit_w)
         btn_row.addStretch()
         btn_crop = QPushButton("切り抜き")
-        btn_crop.setStyleSheet("""
-            QPushButton { background: #2d6a2d; color: #fff; border: 1px solid #3a8a3a; border-radius: 4px; padding: 6px 16px; }
-            QPushButton:hover { background: #3a8a3a; }
-        """)
+        btn_crop.setStyleSheet(
+            f"""
+            QPushButton {{ background: {THUMB_CROP_BTN_CROP_BG}; color: {COLOR_WHITE}; border: 1px solid {THUMB_CROP_BTN_CROP_BORDER}; border-radius: {config.PROP_ACTION_BTN_RADIUS}px; padding: {THUMB_CROP_BTN_CROP_PAD_Y}px {THUMB_CROP_BTN_CROP_PAD_X}px; }}
+            QPushButton:hover {{ background: {THUMB_CROP_BTN_CROP_BORDER}; }}
+        """
+        )
         btn_cancel = QPushButton("キャンセル")
-        btn_cancel.setStyleSheet("color: #aaa;")
+        btn_cancel.setStyleSheet(f"color: {THUMB_CROP_BTN_FG};")
         btn_crop.clicked.connect(self._do_crop)
         btn_cancel.clicked.connect(self.reject)
         btn_row.addWidget(btn_crop)
@@ -215,7 +229,7 @@ class ThumbnailCropDialog(QDialog):
         self._scene.addItem(item)
         self._scene.setSceneRect(QRectF(self._pixmap.rect()))
         self._view._zoom = 1.0
-        QTimer.singleShot(50, self._view.fit_image_to_crop_frame)
+        QTimer.singleShot(config.THUMB_CROP_FIT_DELAY_MS, self._view.fit_image_to_crop_frame)
 
     def _do_crop(self):
         if self._pixmap is None or self._pixmap.isNull():
@@ -240,7 +254,7 @@ class ThumbnailCropDialog(QDialog):
         os.makedirs(cover_dir, exist_ok=True)
         key = hashlib.md5(self._book_path.encode()).hexdigest()
         out_path = os.path.join(cover_dir, f"{key}_custom.jpg")
-        if not cropped.save(out_path, "JPEG", quality=90):
+        if not cropped.save(out_path, "JPEG", quality=config.THUMB_CROP_JPEG_QUALITY):
             self.reject()
             return
         self.result_path = out_path

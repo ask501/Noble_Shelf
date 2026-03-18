@@ -2,14 +2,12 @@ from __future__ import annotations
 from bookmarklet.sites.dlsite import DLsiteParser
 from bookmarklet.sites.fanza import FanzaParser
 from bookmarklet.sites.booth import BoothParser
-from bookmarklet.sites.toranoana import ToranoanaParser
 from bookmarklet.sites.doujindb import DoujindbParser
 
 _PARSERS = [
     DLsiteParser(),
     FanzaParser(),
     BoothParser(),
-    ToranoanaParser(),
     DoujindbParser(),
 ]
 

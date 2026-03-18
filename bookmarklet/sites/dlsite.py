@@ -100,6 +100,9 @@ class DLsiteParser(BookmarkletParser):
             if cover_url.startswith("//"):
                 cover_url = "https:" + cover_url
 
+        # ストアURL（dlsite_id が取れている場合のみ）
+        store_url = f"https://www.dlsite.com/maniax/work/=/product_id/{dlsite_id}.html" if dlsite_id else ""
+
         return {
             "title": title,
             "circle": circle,
@@ -109,6 +112,7 @@ class DLsiteParser(BookmarkletParser):
             "price": price,
             "release_date": release_date,
             "cover_url": cover_url,
+            "store_url": store_url,
             "site": "dlsite",
         }
 

@@ -14,7 +14,8 @@ from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QKeyEvent
 
 import db
-from theme import THEME_COLORS
+import config
+from theme import THEME_COLORS, COLOR_WHITE
 
 
 def _nfkc(s: str) -> str:
@@ -34,32 +35,27 @@ class SearchBar(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        from config import SEARCHBAR_HEIGHT
-
-        self.setFixedHeight(SEARCHBAR_HEIGHT)
+        self.setFixedHeight(config.SEARCHBAR_HEIGHT)
         self.setStyleSheet(f"background: {THEME_COLORS['bg_panel']}; border-bottom: 1px solid {THEME_COLORS['sep']};")
         self._debounce_timer = QTimer()
         self._debounce_timer.setSingleShot(True)
-        self._debounce_timer.setInterval(50)    # 50ms後に検索発火
+        self._debounce_timer.setInterval(config.SEARCHBAR_DEBOUNCE_MS)    # 入力後に検索発火
         self._debounce_timer.timeout.connect(self._emit_search)
         self._setup_ui()
 
     def _setup_ui(self):
-        import config
-        from config import SEARCHBAR_HEIGHT, SEARCH_INPUT_MAX_WIDTH
-
         outer = QHBoxLayout(self)
         # スペースは検索フィールドの外に配置（中は詰める）
-        outer.setContentsMargins(8, 4, 8, 4)
-        outer.setSpacing(0)
+        outer.setContentsMargins(*config.SEARCHBAR_OUTER_MARGINS)
+        outer.setSpacing(config.LAYOUT_SPACING_ZERO)
 
-        cap_h = SEARCHBAR_HEIGHT - 8
-        radius = 14
+        cap_h = config.SEARCHBAR_HEIGHT - config.SEARCHBAR_CAPSULE_HEIGHT_INSET
+        radius = config.SEARCHBAR_CAPSULE_RADIUS
         # 検索バーと検索ボタンをひとつの角丸枠で囲む（QFrameで枠を確実に表示）
         capsule = QFrame()
         capsule.setObjectName("SearchCapsule")
         capsule.setFixedHeight(cap_h)
-        capsule.setFixedWidth(SEARCH_INPUT_MAX_WIDTH + 44)
+        capsule.setFixedWidth(config.SEARCH_INPUT_MAX_WIDTH + config.SEARCHBAR_CAPSULE_BTN_WIDTH)
         capsule.setFrameShape(QFrame.NoFrame)
         capsule.setStyleSheet(f"""
             #SearchCapsule {{
@@ -69,12 +65,12 @@ class SearchBar(QWidget):
             }}
         """)
         cap_layout = QHBoxLayout(capsule)
-        cap_layout.setContentsMargins(0, 0, 0, 0)
-        cap_layout.setSpacing(0)
+        cap_layout.setContentsMargins(*config.LAYOUT_MARGINS_ZERO)
+        cap_layout.setSpacing(config.LAYOUT_SPACING_ZERO)
 
         # テキスト入力（configで幅指定・枠はカプセルで表示）
         self._input = _SearchInput()
-        self._input.setMaximumWidth(SEARCH_INPUT_MAX_WIDTH)
+        self._input.setMaximumWidth(config.SEARCH_INPUT_MAX_WIDTH)
         self._input.setPlaceholderText("検索")
         self._input.setStyleSheet(f"""
             QLineEdit {{
@@ -83,7 +79,7 @@ class SearchBar(QWidget):
                 border: none;
                 border-top-left-radius: {radius - 1}px;
                 border-bottom-left-radius: {radius - 1}px;
-                padding: 6px 12px;
+                padding: {config.SEARCHBAR_INPUT_PADDING_Y}px {config.SEARCHBAR_INPUT_PADDING_X}px;
                 font-size: {config.FONT_SIZE_SEARCH_INPUT}px;
             }}
             QLineEdit:focus {{
@@ -96,7 +92,7 @@ class SearchBar(QWidget):
 
         # 検索ボタン（右側・縦線で区切り・枠の右端の角丸）
         self._btn_search = QPushButton("🔍")
-        self._btn_search.setFixedSize(44, cap_h)
+        self._btn_search.setFixedSize(config.SEARCHBAR_CAPSULE_BTN_WIDTH, cap_h)
         self._btn_search.setToolTip("検索を実行")
         self._btn_search.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_search.setStyleSheet(f"""
@@ -113,7 +109,7 @@ class SearchBar(QWidget):
             }}
             QPushButton:hover {{
                 background: {THEME_COLORS['accent']};
-                color: white;
+                color: {COLOR_WHITE};
             }}
         """)
         self._btn_search.clicked.connect(self._emit_search)

@@ -111,7 +111,7 @@ def _get_pdf_cover_and_pages(pdf_path: str) -> tuple[str, int]:
         doc = fitz.open(pdf_path)
         pages = len(doc)
         if not os.path.exists(cover_path) and pages > 0:
-            pix = doc[0].get_pixmap(matrix=fitz.Matrix(1.5, 1.5))
+            pix = doc[0].get_pixmap(matrix=fitz.Matrix(config.PDF_COVER_SCALE, config.PDF_COVER_SCALE))
             pix.save(cover_path)
         doc.close()
     except Exception:
@@ -130,12 +130,12 @@ class FolderDropDialog(QDialog):
         super().__init__(parent)
         apply_dark_titlebar(self)
         self.setWindowTitle(config.APP_TITLE)
-        self.setFixedSize(360, 160)
+        self.setFixedSize(*config.DROP_FOLDER_DIALOG_SIZE)
         self.setWindowModality(Qt.ApplicationModal)
         self.choice = None  # "copy" | "zip" | None(cancel)
 
         layout = QVBoxLayout(self)
-        layout.setSpacing(12)
+        layout.setSpacing(config.DROP_DIALOG_SPACING)
 
         lbl = QLabel(f"「{folder_name}」をどのように追加しますか？")
         lbl.setWordWrap(True)
@@ -146,9 +146,9 @@ class FolderDropDialog(QDialog):
         btn_zip  = QPushButton("Zip化して登録")
         btn_cancel = QPushButton("キャンセル")
 
-        btn_copy.setFixedHeight(32)
-        btn_zip.setFixedHeight(32)
-        btn_cancel.setFixedHeight(32)
+        btn_copy.setFixedHeight(config.DROP_DIALOG_BTN_HEIGHT)
+        btn_zip.setFixedHeight(config.DROP_DIALOG_BTN_HEIGHT)
+        btn_cancel.setFixedHeight(config.DROP_DIALOG_BTN_HEIGHT)
 
         btn_copy.clicked.connect(lambda: self._choose("copy"))
         btn_zip.clicked.connect(lambda:  self._choose("zip"))
@@ -171,19 +171,19 @@ class ArchiveDropDialog(QDialog):
         super().__init__(parent)
         apply_dark_titlebar(self)
         self.setWindowTitle(config.APP_TITLE)
-        self.setFixedSize(400, 140)
+        self.setFixedSize(*config.DROP_ARCHIVE_DIALOG_SIZE)
         self.setWindowModality(Qt.ApplicationModal)
 
         layout = QVBoxLayout(self)
-        layout.setSpacing(12)
+        layout.setSpacing(config.DROP_DIALOG_SPACING)
         lbl = QLabel(f"「{fname}」をライブラリに追加しますか？")
         lbl.setWordWrap(True)
         layout.addWidget(lbl)
         btn_layout = QHBoxLayout()
         btn_ok = QPushButton("コピーして登録")
-        btn_ok.setFixedHeight(32)
+        btn_ok.setFixedHeight(config.DROP_DIALOG_BTN_HEIGHT)
         btn_cancel = QPushButton("キャンセル")
-        btn_cancel.setFixedHeight(32)
+        btn_cancel.setFixedHeight(config.DROP_DIALOG_BTN_HEIGHT)
         btn_ok.clicked.connect(self.accept)
         btn_cancel.clicked.connect(self.reject)
         btn_layout.addWidget(btn_ok)
@@ -482,11 +482,17 @@ def _register_subfolder_file(file_path: str, folder_path: str):
 
 def _run_zip_with_progress(src_folder: str, dest_zip: str, parent, on_done):
     """バックグラウンドでZip化しながらプログレスダイアログ表示"""
-    progress_dlg = QProgressDialog("Zip化中...", "キャンセル", 0, 100, parent)
+    progress_dlg = QProgressDialog(
+        "Zip化中...",
+        "キャンセル",
+        config.DROP_ZIP_PROGRESS_RANGE[0],
+        config.DROP_ZIP_PROGRESS_RANGE[1],
+        parent,
+    )
     progress_dlg.setWindowTitle(config.APP_TITLE)
     progress_dlg.setWindowModality(Qt.WindowModal)
-    progress_dlg.setMinimumDuration(0)
-    progress_dlg.setValue(0)
+    progress_dlg.setMinimumDuration(config.DROP_ZIP_PROGRESS_MIN_DURATION_MS)
+    progress_dlg.setValue(config.DROP_ZIP_PROGRESS_RANGE[0])
 
     worker = ZipWorker(src_folder, dest_zip)
 

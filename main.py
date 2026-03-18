@@ -65,7 +65,7 @@ def main(on_startup=None):
     _apply_dark_titlebar(window)
     if on_startup:
         from PySide6.QtCore import QTimer
-        QTimer.singleShot(500, lambda: on_startup(window))
+        QTimer.singleShot(config.MAIN_ON_STARTUP_DELAY_MS, lambda: on_startup(window))
     sys.exit(app.exec())
 
 

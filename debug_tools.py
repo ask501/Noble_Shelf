@@ -7,6 +7,7 @@ debug_tools.py - 開発・デバッグ用ユーティリティ
 from PySide6.QtWidgets import QDialog, QVBoxLayout
 
 from first_run import LibrarySetupOverlay
+import config
 
 
 def show_first_run_overlay(parent=None) -> None:
@@ -15,11 +16,11 @@ def show_first_run_overlay(parent=None) -> None:
     MainWindow とは独立した小さめのモーダルダイアログで開く。
     """
     dlg = QDialog(parent)
-    dlg.setWindowTitle("初回起動オーバーレイ（デバッグ）")
-    dlg.resize(400, 300)
+    dlg.setWindowTitle(config.DEBUG_FIRST_RUN_DIALOG_TITLE)
+    dlg.resize(*config.DEBUG_FIRST_RUN_DIALOG_SIZE)
 
     layout = QVBoxLayout(dlg)
-    layout.setContentsMargins(16, 16, 16, 16)
+    layout.setContentsMargins(*config.DEBUG_FIRST_RUN_DIALOG_MARGINS)
 
     overlay = LibrarySetupOverlay()
     layout.addWidget(overlay)

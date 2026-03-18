@@ -61,20 +61,36 @@ class SidebarItemDelegate(QStyledItemDelegate):
         if bg.alpha() > 0:
             painter.setBrush(bg)
             painter.setPen(Qt.NoPen)
-            painter.drawRoundedRect(rect.adjusted(1, 1, -1, -1), 4, 4)
+            painter.drawRoundedRect(
+                rect.adjusted(
+                    config.SIDEBAR_DELEGATE_BG_INSET,
+                    config.SIDEBAR_DELEGATE_BG_INSET,
+                    -config.SIDEBAR_DELEGATE_BG_INSET,
+                    -config.SIDEBAR_DELEGATE_BG_INSET,
+                ),
+                config.SIDEBAR_ITEM_RADIUS,
+                config.SIDEBAR_ITEM_RADIUS,
+            )
 
         # バッジのサイズ計算
-        badge_margin = 8
+        badge_margin = config.SIDEBAR_BADGE_MARGIN
         show_badge = isinstance(count, int) and count > 0 and value is not None
         badge_text = str(count) if show_badge else ""
 
         fm_badge = QFontMetrics(QFont(config.FONT_FAMILY, config.FONT_SIZE_SIDEBAR_BADGE))
-        badge_h = 18
-        badge_w = max(badge_h, fm_badge.horizontalAdvance(badge_text) + 10) if show_badge else 0
+        badge_h = config.SIDEBAR_BADGE_HEIGHT
+        badge_w = (
+            max(badge_h, fm_badge.horizontalAdvance(badge_text) + config.SIDEBAR_BADGE_TEXT_PAD)
+            if show_badge
+            else 0
+        )
 
         # テキスト描画領域（右端にバッジスペースを確保）
-        text_right = rect.right() - (badge_w + badge_margin if show_badge else 4)
-        text_rect = QRect(rect.left() + 8, rect.top(), max(0, text_right - (rect.left() + 8)), rect.height())
+        text_right = rect.right() - (
+            badge_w + badge_margin if show_badge else config.SIDEBAR_TEXT_RIGHT_INSET_NO_BADGE
+        )
+        text_left = rect.left() + config.SIDEBAR_ITEM_PADDING_X
+        text_rect = QRect(text_left, rect.top(), max(0, text_right - text_left), rect.height())
 
         # テキスト色
         if option.state & QStyle.State_Selected:
@@ -90,7 +106,11 @@ class SidebarItemDelegate(QStyledItemDelegate):
         # 件数バッジ
         if show_badge:
             widget = option.widget
-            view_width = widget.viewport().width() if widget and hasattr(widget, "viewport") else 200
+            view_width = (
+                widget.viewport().width()
+                if widget and hasattr(widget, "viewport")
+                else config.SIDEBAR_VIEWPORT_FALLBACK_WIDTH
+            )
             bx = view_width - badge_w - config.SIDEBAR_BADGE_MARGIN_RIGHT
             by = rect.center().y() - badge_h // 2
             badge_rect = QRect(bx, by, badge_w, badge_h)
@@ -101,7 +121,7 @@ class SidebarItemDelegate(QStyledItemDelegate):
             radius = badge_h / 2
             painter.drawRoundedRect(badge_rect, radius, radius)
 
-            painter.setPen(QPen(Qt.white))
+            painter.setPen(QPen(QColor(COLOR_WHITE)))
             painter.drawText(badge_rect, Qt.AlignCenter, badge_text)
 
         painter.restore()
@@ -150,12 +170,12 @@ class SidebarWidget(QWidget):
         header_container = QWidget()
         header_container.setFixedHeight(config.GHOSTBAR_HEIGHT)
         header_layout = QVBoxLayout(header_container)
-        header_layout.setContentsMargins(0, 0, 0, 0)
-        header_layout.setSpacing(0)
+        header_layout.setContentsMargins(*config.LAYOUT_MARGINS_ZERO)
+        header_layout.setSpacing(config.LAYOUT_SPACING_ZERO)
 
         # モード選択コンボ or フィルター結果時の固定ラベル（同じ枠で切替）
         self._combo = QComboBox()
-        self._combo.setFixedHeight(32)
+        self._combo.setFixedHeight(config.SIDEBAR_HEADER_CONTROL_HEIGHT)
         for key, label in SIDEBAR_MODES:
             self._combo.addItem(label, key)
         self._combo.setCurrentIndex(0)
@@ -163,11 +183,12 @@ class SidebarWidget(QWidget):
         self._combo.currentIndexChanged.connect(self._on_mode_changed)
 
         self._filter_result_label = QLabel("フィルター")
-        self._filter_result_label.setFixedHeight(32)
+        self._filter_result_label.setFixedHeight(config.SIDEBAR_HEADER_CONTROL_HEIGHT)
         self._filter_result_label.setAlignment(Qt.AlignCenter)
         self._filter_result_label.setStyleSheet(
             f"background: {THEME_COLORS['bg_widget']}; color: {THEME_COLORS['text_main']}; "
-            f"border: 1px solid #404040; border-radius: 4px; font-size: {config.FONT_SIZE_BTN_ACTION}px;"
+            f"border: 1px solid {THEME_COLORS['border']}; border-radius: {config.SIDEBAR_ITEM_RADIUS}px; "
+            f"font-size: {config.FONT_SIZE_BTN_ACTION}px;"
         )
 
         self._header_stack = QStackedWidget()
@@ -198,8 +219,8 @@ class SidebarWidget(QWidget):
             }}
             QListWidget::item {{
                 color: {THEME_COLORS['text_main']};
-                padding: 5px 8px;
-                border-radius: 4px;
+                padding: {config.SIDEBAR_ITEM_PADDING_Y}px {config.SIDEBAR_ITEM_PADDING_X}px;
+                border-radius: {config.SIDEBAR_ITEM_RADIUS}px;
                 font-size: {config.FONT_SIZE_SIDEBAR_ITEM}px;
             }}
             QListWidget::item:selected {{

@@ -26,7 +26,22 @@ import os
 
 import db
 import config
-from theme import apply_dark_titlebar
+from theme import (
+    apply_dark_titlebar,
+    SETTINGS_SHORTCUT_HINT_STYLE,
+    SETTINGS_SHORTCUT_DISPLAY_STYLE_NORMAL,
+    SETTINGS_SHORTCUT_DISPLAY_STYLE_CAPTURE,
+    SETTINGS_SHORTCUT_DISPLAY_STYLE_CONFIRMED,
+    SETTINGS_CARD_PREVIEW_THUMB_BG,
+    SETTINGS_CARD_PREVIEW_META_OK_BG,
+    COLOR_BG_WIDGET,
+    COLOR_BORDER,
+    COLOR_STAR_ACTIVE,
+    COLOR_CARD_TITLE_FG,
+    COLOR_CARD_SUB_FG,
+    CARD_BADGE_OVERLAY_ALPHA,
+    CARD_RATING_BG_ALPHA,
+)
 from context_menu import resolve_shortcut, is_valid_store_viewer_path
 
 # ビュアー選択のファイル種類（.exe と .lnk を同じ一覧で参照）
@@ -59,8 +74,8 @@ class SettingsDialog(QDialog):
         apply_dark_titlebar(self)
         self.setWindowTitle(config.APP_TITLE)
         self.setModal(True)
-        self.setMinimumSize(480, 460)
-        self.resize(520, 520)
+        self.setMinimumSize(*config.SETTINGS_DIALOG_MIN_SIZE)
+        self.resize(*config.SETTINGS_DIALOG_DEFAULT_SIZE)
         self._setup_ui()
         self._load()
 
@@ -76,14 +91,14 @@ class SettingsDialog(QDialog):
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(12)
+        layout.setContentsMargins(*config.SETTINGS_DIALOG_MARGINS)
+        layout.setSpacing(config.SETTINGS_DIALOG_SPACING)
 
         tabs = QTabWidget()
         # ── タブ1: 一般 ──
         general = QWidget()
         general_layout = QVBoxLayout(general)
-        general_layout.setSpacing(12)
+        general_layout.setSpacing(config.SETTINGS_DIALOG_SPACING)
 
         # 外部ビュアー
         lbl = QLabel("外部ビュアー (未設定なら既定のアプリで開く)")
@@ -99,7 +114,7 @@ class SettingsDialog(QDialog):
         row.addWidget(self._viewer_edit)
 
         btn_browse = QPushButton("参照...")
-        btn_browse.setFixedWidth(72)
+        btn_browse.setFixedWidth(config.SETTINGS_BROWSE_BTN_WIDTH)
         btn_browse.clicked.connect(self._browse)
         row.addWidget(btn_browse)
         general_layout.addLayout(row)
@@ -115,7 +130,7 @@ class SettingsDialog(QDialog):
         self._dmm_viewer_edit.setFont(QFont(config.FONT_FAMILY, config.FONT_SIZE_DIALOG_INPUT))
         row_dmm.addWidget(self._dmm_viewer_edit)
         btn_dmm = QPushButton("参照...")
-        btn_dmm.setFixedWidth(72)
+        btn_dmm.setFixedWidth(config.SETTINGS_BROWSE_BTN_WIDTH)
         btn_dmm.clicked.connect(self._browse_dmm)
         row_dmm.addWidget(btn_dmm)
         general_layout.addLayout(row_dmm)
@@ -131,7 +146,7 @@ class SettingsDialog(QDialog):
         self._dlsite_viewer_edit.setFont(QFont(config.FONT_FAMILY, config.FONT_SIZE_DIALOG_INPUT))
         row_dlsite.addWidget(self._dlsite_viewer_edit)
         btn_dlsite = QPushButton("参照...")
-        btn_dlsite.setFixedWidth(72)
+        btn_dlsite.setFixedWidth(config.SETTINGS_BROWSE_BTN_WIDTH)
         btn_dlsite.clicked.connect(self._browse_dlsite)
         row_dlsite.addWidget(btn_dlsite)
         general_layout.addLayout(row_dlsite)
@@ -181,7 +196,7 @@ class SettingsDialog(QDialog):
         shortcut_layout = QVBoxLayout(shortcut_widget)
         hint = QLabel("「検知」を押してから割り当てたいキーを押してください。直接入力はできません。×でクリア。")
         hint.setWordWrap(True)
-        hint.setStyleSheet("color: #888; font-size: 9px;")
+        hint.setStyleSheet(SETTINGS_SHORTCUT_HINT_STYLE)
         shortcut_layout.addWidget(hint)
         form = QFormLayout()
         self._shortcut_displays = {}
@@ -190,9 +205,9 @@ class SettingsDialog(QDialog):
         self._shortcut_capture_btn = None
         self._shortcut_capture_row = None
         self._shortcut_capture_original_value = ""
-        self._shortcut_normal_style = "padding: 4px 8px; min-width: 140px; border: 1px solid #555; border-radius: 4px; background: #2a2a2a; font-size: 10px;"
-        self._shortcut_capture_style = "padding: 4px 8px; min-width: 140px; border: 2px solid #0a7; border-radius: 4px; background: #1a2a28; font-size: 10px;"
-        self._shortcut_confirmed_style = "padding: 4px 8px; min-width: 140px; border: 2px solid #0c9; border-radius: 4px; background: #0d3d38; font-size: 10px;"
+        self._shortcut_normal_style = SETTINGS_SHORTCUT_DISPLAY_STYLE_NORMAL
+        self._shortcut_capture_style = SETTINGS_SHORTCUT_DISPLAY_STYLE_CAPTURE
+        self._shortcut_confirmed_style = SETTINGS_SHORTCUT_DISPLAY_STYLE_CONFIRMED
         for key, label in (
             ("file_open", "開く"),
             ("file_recent", "最近開いたブック"),
@@ -210,15 +225,15 @@ class SettingsDialog(QDialog):
             key_display.setAlignment(Qt.AlignmentFlag.AlignCenter)
             key_display.setToolTip("検知ボタンで割り当て")
             btn_capture = QPushButton("検知")
-            btn_capture.setFixedWidth(56)
+            btn_capture.setFixedWidth(config.SETTINGS_SHORTCUT_CAPTURE_BTN_WIDTH)
             btn_capture.setToolTip("クリック後、割り当てたいキーを1回押してください（Escでキャンセル）")
             btn_clear = QPushButton("×")
-            btn_clear.setFixedWidth(28)
+            btn_clear.setFixedWidth(config.SETTINGS_SHORTCUT_CLEAR_BTN_WIDTH)
             btn_clear.setToolTip("ショートカットをクリア")
             row_w = QWidget()
             row_layout = QHBoxLayout(row_w)
-            row_layout.setContentsMargins(0, 0, 0, 0)
-            row_layout.setSpacing(6)
+            row_layout.setContentsMargins(*config.LAYOUT_MARGINS_ZERO)
+            row_layout.setSpacing(config.SETTINGS_SHORTCUT_ROW_SPACING)
             row_layout.addWidget(key_display)
             row_layout.addWidget(btn_capture)
             row_layout.addWidget(btn_clear)
@@ -260,14 +275,17 @@ class SettingsDialog(QDialog):
         )
         from PySide6.QtCore import Qt, QRect, QSize
 
-        CARD_W, CARD_H = 120, 170
+        CARD_W, CARD_H = config.THUMB_WIDTH_BASE, config.THUMB_HEIGHT_BASE
         THUMB_H = int(CARD_H * 0.80)
         TEXT_H = CARD_H - THUMB_H
 
         class _CardPreview(QWidget):
             def __init__(self, parent=None):
                 super().__init__(parent)
-                self.setFixedSize(CARD_W + 32, CARD_H + 32)
+                self.setFixedSize(
+                    CARD_W + config.SETTINGS_CARD_PREVIEW_OUTER_PAD * 2,
+                    CARD_H + config.SETTINGS_CARD_PREVIEW_OUTER_PAD * 2,
+                )
                 self.show_meta       = True
                 self.show_pages      = True
                 self.show_star       = True
@@ -276,44 +294,70 @@ class SettingsDialog(QDialog):
                 self.sub_text    = "サークル名サンプル"
 
             def sizeHint(self):
-                return QSize(CARD_W + 32, CARD_H + 32)
+                return QSize(
+                    CARD_W + config.SETTINGS_CARD_PREVIEW_OUTER_PAD * 2,
+                    CARD_H + config.SETTINGS_CARD_PREVIEW_OUTER_PAD * 2,
+                )
 
             def paintEvent(self, event):
                 p = QPainter(self)
                 p.setRenderHint(QPainter.RenderHint.Antialiasing)
                 p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
 
-                cx, cy = 16, 16
+                cx, cy = config.SETTINGS_CARD_PREVIEW_OUTER_PAD, config.SETTINGS_CARD_PREVIEW_OUTER_PAD
 
                 # カード背景
-                p.setBrush(QBrush(QColor("#262626")))
+                p.setBrush(QBrush(QColor(COLOR_BG_WIDGET)))
                 p.setPen(Qt.PenStyle.NoPen)
-                p.drawRoundedRect(QRect(cx, cy, CARD_W, CARD_H), 6, 6)
+                p.drawRoundedRect(QRect(cx, cy, CARD_W, CARD_H), config.BORDER_RADIUS, config.BORDER_RADIUS)
 
                 # サムネプレースホルダー
-                p.setBrush(QBrush(QColor("#2a2a38")))
+                p.setBrush(QBrush(QColor(SETTINGS_CARD_PREVIEW_THUMB_BG)))
                 p.setPen(Qt.PenStyle.NoPen)
                 p.drawRect(QRect(cx, cy, CARD_W, THUMB_H))
 
                 # サムネ下グラデーション
-                grad = QLinearGradient(0, cy + THUMB_H - 20, 0, cy + THUMB_H)
+                grad = QLinearGradient(
+                    0,
+                    cy + THUMB_H - config.CARD_GRADIENT_HEIGHT,
+                    0,
+                    cy + THUMB_H,
+                )
                 grad.setColorAt(0.0, QColor(0, 0, 0, 0))
-                grad.setColorAt(1.0, QColor("#262626"))
+                grad.setColorAt(1.0, QColor(COLOR_BG_WIDGET))
                 p.setBrush(QBrush(grad))
                 p.setPen(Qt.PenStyle.NoPen)
-                p.drawRect(QRect(cx, cy + THUMB_H - 20, CARD_W, 20))
+                p.drawRect(QRect(cx, cy + THUMB_H - config.CARD_GRADIENT_HEIGHT, CARD_W, config.CARD_GRADIENT_HEIGHT))
 
                 # 左上メタバッジ（✓）
                 if self.show_meta:
-                    p.setBrush(QBrush(QColor("#4caf50")))
+                    p.setBrush(QBrush(QColor(SETTINGS_CARD_PREVIEW_META_OK_BG)))
                     p.setPen(Qt.PenStyle.NoPen)
-                    p.drawRoundedRect(QRect(cx + 4, cy + 4, 18, 18), 5, 5)
+                    p.drawRoundedRect(
+                        QRect(
+                            cx + config.CARD_INSET,
+                            cy + config.CARD_INSET,
+                            config.CARD_META_BADGE_SIZE,
+                            config.CARD_META_BADGE_SIZE,
+                        ),
+                        config.CARD_META_BADGE_RADIUS,
+                        config.CARD_META_BADGE_RADIUS,
+                    )
                     p.setPen(QPen(Qt.GlobalColor.white))
                     f = QFont(config.FONT_FAMILY)
                     f.setPointSize(config.FONT_SIZE_CARD_BADGE)
                     f.setBold(True)
                     p.setFont(f)
-                    p.drawText(QRect(cx + 4, cy + 4, 18, 18), Qt.AlignmentFlag.AlignCenter, "✓")
+                    p.drawText(
+                        QRect(
+                            cx + config.CARD_INSET,
+                            cy + config.CARD_INSET,
+                            config.CARD_META_BADGE_SIZE,
+                            config.CARD_META_BADGE_SIZE,
+                        ),
+                        Qt.AlignmentFlag.AlignCenter,
+                        "✓",
+                    )
 
                 # 右上ページ数バッジ
                 if self.show_pages:
@@ -322,12 +366,30 @@ class SettingsDialog(QDialog):
                     p.setFont(f)
                     fm = QFontMetrics(f)
                     badge_text = "148P"
-                    bw = fm.horizontalAdvance(badge_text) + 10
-                    p.setBrush(QBrush(QColor(0, 0, 0, 160)))
+                    bw = fm.horizontalAdvance(badge_text) + (config.PAGE_BADGE_PAD * 2)
+                    p.setBrush(QBrush(QColor(0, 0, 0, CARD_BADGE_OVERLAY_ALPHA)))
                     p.setPen(Qt.PenStyle.NoPen)
-                    p.drawRoundedRect(QRect(cx + CARD_W - bw - 4, cy + 4, bw, 16), 4, 4)
+                    p.drawRoundedRect(
+                        QRect(
+                            cx + CARD_W - bw - config.CARD_INSET,
+                            cy + config.CARD_INSET,
+                            bw,
+                            config.BADGE_HEIGHT,
+                        ),
+                        config.CARD_BADGE_RADIUS,
+                        config.CARD_BADGE_RADIUS,
+                    )
                     p.setPen(QPen(Qt.GlobalColor.white))
-                    p.drawText(QRect(cx + CARD_W - bw - 4, cy + 4, bw, 16), Qt.AlignmentFlag.AlignCenter, badge_text)
+                    p.drawText(
+                        QRect(
+                            cx + CARD_W - bw - config.CARD_INSET,
+                            cy + config.CARD_INSET,
+                            bw,
+                            config.BADGE_HEIGHT,
+                        ),
+                        Qt.AlignmentFlag.AlignCenter,
+                        badge_text,
+                    )
 
                 # 左下星レーティング
                 if self.show_star:
@@ -336,12 +398,30 @@ class SettingsDialog(QDialog):
                     p.setFont(f)
                     fm = QFontMetrics(f)
                     stars = "★★★"
-                    sw = fm.horizontalAdvance(stars) + 10
-                    p.setBrush(QBrush(QColor(0, 0, 0, 115)))
+                    sw = fm.horizontalAdvance(stars) + (config.PAGE_BADGE_PAD * 2)
+                    p.setBrush(QBrush(QColor(0, 0, 0, CARD_RATING_BG_ALPHA)))
                     p.setPen(Qt.PenStyle.NoPen)
-                    p.drawRoundedRect(QRect(cx + 4, cy + THUMB_H - 20, sw, 16), 4, 4)
-                    p.setPen(QPen(QColor("#FFD700")))
-                    p.drawText(QRect(cx + 4, cy + THUMB_H - 20, sw, 16), Qt.AlignmentFlag.AlignCenter, stars)
+                    p.drawRoundedRect(
+                        QRect(
+                            cx + config.CARD_INSET,
+                            cy + THUMB_H - config.CARD_GRADIENT_HEIGHT,
+                            sw,
+                            config.BADGE_HEIGHT,
+                        ),
+                        config.CARD_BADGE_RADIUS,
+                        config.CARD_BADGE_RADIUS,
+                    )
+                    p.setPen(QPen(QColor(COLOR_STAR_ACTIVE)))
+                    p.drawText(
+                        QRect(
+                            cx + config.CARD_INSET,
+                            cy + THUMB_H - config.CARD_GRADIENT_HEIGHT,
+                            sw,
+                            config.BADGE_HEIGHT,
+                        ),
+                        Qt.AlignmentFlag.AlignCenter,
+                        stars,
+                    )
 
                 # テキスト行
                 line_h = (TEXT_H - 2) // 2
@@ -353,7 +433,7 @@ class SettingsDialog(QDialog):
                 fm = QFontMetrics(f)
                 title = config.APP_TITLE
                 elided = fm.elidedText(title, Qt.TextElideMode.ElideRight, CARD_W - 8)
-                p.setPen(QPen(QColor("#f5f5f5")))
+                p.setPen(QPen(QColor(COLOR_CARD_TITLE_FG)))
                 p.drawText(QRect(cx + 4, cy + THUMB_H + 2, CARD_W - 8, line_h),
                            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided)
 
@@ -364,7 +444,7 @@ class SettingsDialog(QDialog):
                     p.setFont(f2)
                     fm2 = QFontMetrics(f2)
                     elided_sub = fm2.elidedText(self.sub_text, Qt.TextElideMode.ElideRight, CARD_W - 8)
-                    p.setPen(QPen(QColor("#aaaaaa")))
+                    p.setPen(QPen(QColor(COLOR_CARD_SUB_FG)))
                     p.drawText(QRect(cx + 4, cy + THUMB_H + 2 + line_h, CARD_W - 8, line_h),
                                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided_sub)
 
@@ -373,15 +453,17 @@ class SettingsDialog(QDialog):
         # ── メインレイアウト（左: 設定 / 右: プレビュー）──────────
         page = QWidget()
         root = QHBoxLayout(page)
-        root.setContentsMargins(16, 16, 16, 16)
-        root.setSpacing(24)
+        root.setContentsMargins(*config.SETTINGS_DIALOG_MARGINS)
+        root.setSpacing(config.SETTINGS_CARD_TAB_ROOT_SPACING)
 
         # 左カラム（設定項目）
         left = QVBoxLayout()
-        left.setSpacing(16)
+        left.setSpacing(config.SETTINGS_CARD_TAB_LEFT_SPACING)
 
         section_badge = QLabel("バッジ・レーティング")
-        section_badge.setStyleSheet("font-weight: bold; color: #aaaaaa; font-size: 11px;")
+        section_badge.setStyleSheet(
+            f"font-weight: bold; color: {COLOR_CARD_SUB_FG}; font-size: {config.SETTINGS_SECTION_LABEL_FONT_SIZE_PX}px;"
+        )
         left.addWidget(section_badge)
 
         self._chk_meta_badge  = QCheckBox("メタデータバッジ（✓）を表示")
@@ -393,11 +475,13 @@ class SettingsDialog(QDialog):
 
         sep = QFrame()
         sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet("color: #404040;")
+        sep.setStyleSheet(f"color: {COLOR_BORDER};")
         left.addWidget(sep)
 
         section_sub = QLabel("カード下部のサブ情報")
-        section_sub.setStyleSheet("font-weight: bold; color: #aaaaaa; font-size: 11px;")
+        section_sub.setStyleSheet(
+            f"font-weight: bold; color: {COLOR_CARD_SUB_FG}; font-size: {config.SETTINGS_SECTION_LABEL_FONT_SIZE_PX}px;"
+        )
         left.addWidget(section_sub)
 
         sub_row = QHBoxLayout()
@@ -429,9 +513,11 @@ class SettingsDialog(QDialog):
 
         # 右カラム（プレビュー）
         right = QVBoxLayout()
-        right.setSpacing(8)
+        right.setSpacing(config.SETTINGS_CARD_TAB_RIGHT_SPACING)
         preview_label = QLabel("プレビュー")
-        preview_label.setStyleSheet("color: #aaaaaa; font-size: 11px;")
+        preview_label.setStyleSheet(
+            f"color: {COLOR_CARD_SUB_FG}; font-size: {config.SETTINGS_SECTION_LABEL_FONT_SIZE_PX}px;"
+        )
         preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         preview = _CardPreview()
@@ -489,7 +575,7 @@ class SettingsDialog(QDialog):
     def _build_backup_tab(self) -> QWidget:
         widget = QWidget()
         layout = QVBoxLayout(widget)
-        layout.setSpacing(12)
+        layout.setSpacing(config.SETTINGS_DIALOG_SPACING)
 
         row = QHBoxLayout()
         lbl = QLabel("バックアップ保持件数")
@@ -497,13 +583,13 @@ class SettingsDialog(QDialog):
         row.addWidget(lbl)
 
         self._backup_count_spin = QSpinBox()
-        self._backup_count_spin.setRange(1, 99)
+        self._backup_count_spin.setRange(config.SETTINGS_BACKUP_COUNT_MIN, config.SETTINGS_BACKUP_COUNT_MAX)
         try:
-            val = int(db.get_setting("backup_max_count") or 10)
+            val = int(db.get_setting("backup_max_count") or config.SETTINGS_BACKUP_COUNT_DEFAULT)
         except (TypeError, ValueError):
-            val = 10
+            val = config.SETTINGS_BACKUP_COUNT_DEFAULT
         self._backup_count_spin.setValue(val)
-        self._backup_count_spin.setFixedWidth(80)
+        self._backup_count_spin.setFixedWidth(config.SETTINGS_BACKUP_SPIN_WIDTH)
         row.addWidget(self._backup_count_spin)
         row.addStretch()
         layout.addLayout(row)
@@ -600,7 +686,7 @@ class SettingsDialog(QDialog):
             display.setStyleSheet(self._shortcut_confirmed_style)
             QApplication.processEvents()
             display.repaint()
-            QTimer.singleShot(80, self._end_shortcut_capture)
+            QTimer.singleShot(config.SETTINGS_SHORTCUT_CAPTURE_END_DELAY_MS, self._end_shortcut_capture)
             return True
 
         # 2. マウス等は後回し: 検知行外クリックでキャンセル
