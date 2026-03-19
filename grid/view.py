@@ -8,18 +8,20 @@ from PySide6.QtWidgets import QAbstractItemView, QListView, QMessageBox
 
 import config
 import db
+from ui.auto_scroll_mixin import AutoScrollMixin
 from .delegate import BookCardDelegate, CARD_H, CARD_W, MIN_GAP
 from .model import BookListModel
 from .roles import ROLE_CIRCLE, ROLE_COVER, ROLE_PAGES, ROLE_PATH, ROLE_RATING, ROLE_TITLE
 
 
-class BookGridView(QListView):
+class BookGridView(AutoScrollMixin, QListView):
     bookOpened = Signal(str)
     bookSelected = Signal(dict)
     ctrlWheelZoom = Signal(int)  # Ctrl+ホイール: delta (+/-)
 
     def __init__(self, parent=None, app_callbacks: dict | None = None):
         super().__init__(parent)
+        self._init_auto_scroll()
         self._card_w = CARD_W
         self._card_h = CARD_H
         self._app_callbacks: dict | None = app_callbacks

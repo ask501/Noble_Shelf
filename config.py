@@ -186,6 +186,14 @@ CARD_BADGE_RADIUS = 4            # ページ数・星バッジの角丸
 CARD_META_BADGE_RADIUS = 5       # メタバッジの角丸
 GRID_SCROLL_SINGLE_STEP = 20     # グリッド縦スクロールの単步
 
+# ── オートスクロール（中クリックMixin）────────────────────────
+AUTO_SCROLL_DEAD_ZONE = 8        # 基準点からのデッドゾーン(px)
+AUTO_SCROLL_TIMER_MS = 16        # スクロール適用タイマー間隔(ms)
+AUTO_SCROLL_SPEED_FACTOR = 1     # 差分ピクセル→スクロール量の係数
+AUTO_SCROLL_MAX_SPEED = 20       # スクロール速度の上限（ピクセル/ティック）
+AUTO_SCROLL_DRAG_THRESHOLD = 8   # ドラッグ判定の移動量(px)
+AUTO_SCROLL_ICON_SIZE = 64       # オートスクロールアンカーアイコンの描画サイズ(px)
+
 # ── カード表示設定キー ──────────────────────────────────────
 CARD_SETTING_META_BADGE   = "card_show_meta_badge"    # "1"/"0"
 CARD_SETTING_PAGES_BADGE  = "card_show_pages_badge"   # "1"/"0"
@@ -574,3 +582,4 @@ DEFAULT_SHORTCUTS = {
 
 # ── ブックマークレット連携 ──────────────────────────
 BOOKMARKLET_PORT: int = 8765
+

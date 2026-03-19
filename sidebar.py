@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal, QRect, QSize, QEvent
 from PySide6.QtGui import QFont, QPainter, QColor, QPen, QFontMetrics
+from ui.auto_scroll_mixin import AutoScrollListWidget
 
 import db
 import config
@@ -209,7 +210,7 @@ class SidebarWidget(QWidget):
         layout.addWidget(header_container)
 
         # リスト
-        self._list = QListWidget()
+        self._list = AutoScrollListWidget()
         self._list.setFocusPolicy(Qt.NoFocus)
         self._list.setStyleSheet(f"""
             QListWidget {{
