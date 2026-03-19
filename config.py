@@ -1,4 +1,4 @@
-﻿# config.py - アプリ全体で共有する定数・設定の一元管理
+# config.py - アプリ全体で共有する定数・設定の一元管理
 # 全モジュールはここを参照し、マジックナンバーを排除する。
 import os
 import sys
@@ -188,11 +188,13 @@ GRID_SCROLL_SINGLE_STEP = 20     # グリッド縦スクロールの単步
 
 # ── オートスクロール（中クリックMixin）────────────────────────
 AUTO_SCROLL_DEAD_ZONE = 8        # 基準点からのデッドゾーン(px)
-AUTO_SCROLL_TIMER_MS = 16        # スクロール適用タイマー間隔(ms)
+AUTO_SCROLL_TIMER_MS = 8        # スクロール適用タイマー間隔(ms)
 AUTO_SCROLL_SPEED_FACTOR = 1     # 差分ピクセル→スクロール量の係数
 AUTO_SCROLL_MAX_SPEED = 20       # スクロール速度の上限（ピクセル/ティック）
+AUTO_SCROLL_SPEED_RANGE = 512    # 最高速到達距離(px)
+AUTO_SCROLL_SPEED_RANGE_SIDEBAR = 512  # サイドバー用最高速到達距離(px)
 AUTO_SCROLL_DRAG_THRESHOLD = 8   # ドラッグ判定の移動量(px)
-AUTO_SCROLL_ICON_SIZE = 64       # オートスクロールアンカーアイコンの描画サイズ(px)
+AUTO_SCROLL_ICON_SIZE = 32       # オートスクロールアンカーアイコンの描画サイズ(px)
 
 # ── カード表示設定キー ──────────────────────────────────────
 CARD_SETTING_META_BADGE   = "card_show_meta_badge"    # "1"/"0"

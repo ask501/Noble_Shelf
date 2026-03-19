@@ -5,6 +5,7 @@ import os
 from PySide6.QtCore import QPoint, QTimer, Qt
 from PySide6.QtGui import QPainter, QPixmap
 from PySide6.QtWidgets import QListWidget
+from PySide6.QtWidgets import QAbstractItemView, QListWidget
 
 import config
 
@@ -54,17 +55,12 @@ class AutoScrollMixin:
         self.viewport().update()
 
     def _stop_auto_scroll(self):
-        print("[DEBUG] _stop_auto_scroll called")
         self._auto_scroll_active = False
         self._auto_scroll_timer.stop()
         self.unsetCursor()
         self.viewport().update()
-        print(f"[DEBUG] after stop: active={self._auto_scroll_active}, timer={self._auto_scroll_timer.isActive()}")
 
     def _on_auto_scroll_tick(self):
-        if not self._auto_scroll_active:
-            return
-
         zone = config.AUTO_SCROLL_DEAD_ZONE
         max_speed = config.AUTO_SCROLL_MAX_SPEED
 
@@ -73,12 +69,11 @@ class AutoScrollMixin:
         if eff_dx == 0 and eff_dy == 0:
             return
 
-        denom = zone * 4
-        speed_x = (eff_dx / denom) * max_speed if denom else 0
-        speed_y = (eff_dy / denom) * max_speed if denom else 0
+        speed_range = config.AUTO_SCROLL_SPEED_RANGE
+        speed_x = (eff_dx / speed_range) * max_speed if speed_range else 0
+        speed_y = (eff_dy / speed_range) * max_speed if speed_range else 0
         speed_x = max(-max_speed, min(max_speed, speed_x))
         speed_y = max(-max_speed, min(max_speed, speed_y))
-
         vbar = self.verticalScrollBar()
         hbar = self.horizontalScrollBar()
         if vbar is not None:
@@ -154,4 +149,27 @@ class AutoScrollMixin:
 class AutoScrollListWidget(AutoScrollMixin, QListWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.verticalScrollBar().setSingleStep(1)
+        self.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
         self._init_auto_scroll()
+
+    def _on_auto_scroll_tick(self):
+        zone = config.AUTO_SCROLL_DEAD_ZONE
+        max_speed = config.AUTO_SCROLL_MAX_SPEED
+        speed_range = config.AUTO_SCROLL_SPEED_RANGE_SIDEBAR
+
+        eff_dx = _apply_dead_zone(self._auto_scroll_dx, zone)
+        eff_dy = _apply_dead_zone(self._auto_scroll_dy, zone)
+        if eff_dx == 0 and eff_dy == 0:
+            return
+
+        speed_x = (eff_dx / speed_range) * max_speed if speed_range else 0
+        speed_y = (eff_dy / speed_range) * max_speed if speed_range else 0
+        speed_x = max(-max_speed, min(max_speed, speed_x))
+        speed_y = max(-max_speed, min(max_speed, speed_y))
+        vbar = self.verticalScrollBar()
+        hbar = self.horizontalScrollBar()
+        if vbar is not None:
+            vbar.setValue(vbar.value() + int(speed_y))
+        if hbar is not None:
+            hbar.setValue(hbar.value() + int(speed_x))
