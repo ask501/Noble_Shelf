@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import zipfile
 from typing import Optional
 
 from PySide6.QtCore import QAbstractListModel, QModelIndex, QSize, Qt, QThreadPool
@@ -14,43 +13,6 @@ from .thumb import ThumbSignals, ThumbWorker, _cache_path
 
 # ページ数カウントに使用する拡張子
 PAGE_COUNT_EXTS = (".jpg", ".jpeg", ".png", ".webp")
-
-# アーカイブ拡張子（Zip等の圧縮ファイル内ファイル数をページ数表示する）
-ARCHIVE_EXTS = (".zip", ".cbz", ".7z", ".cb7", ".rar", ".cbr")
-
-
-def _archive_page_count(path: str) -> int:
-    """Zip等のアーカイブ内の画像ファイル数（ページ数）を返す。取得失敗時は0。"""
-    if not path or not os.path.isfile(path):
-        return 0
-    ext = os.path.splitext(path)[1].lower()
-    try:
-        if ext in (".zip", ".cbz"):
-            with zipfile.ZipFile(path, "r") as zf:
-                return sum(
-                    1
-                    for n in zf.namelist()
-                    if os.path.splitext(n)[1].lower() in PAGE_COUNT_EXTS
-                    and not os.path.basename(n).startswith(".")
-                )
-        if ext in (".7z", ".cb7"):
-            try:
-                import py7zr
-            except ImportError:
-                return 0
-            with py7zr.SevenZipFile(path, "r") as zf:
-                return sum(1 for n in zf.getnames() if os.path.splitext(n)[1].lower() in PAGE_COUNT_EXTS)
-        if ext in (".rar", ".cbr"):
-            try:
-                import rarfile
-            except ImportError:
-                return 0
-            with rarfile.RarFile(path) as rf:
-                return sum(1 for n in rf.namelist() if os.path.splitext(n)[1].lower() in PAGE_COUNT_EXTS)
-    except Exception:
-        return 0
-    return 0
-
 
 class BookListModel(QAbstractListModel):
     def __init__(self, parent=None):
@@ -93,13 +55,6 @@ class BookListModel(QAbstractListModel):
                     count = 0
                 b["pages"] = count
                 return count
-
-            # Zip等のアーカイブ内の画像ファイル数をページ数として表示
-            if os.path.isfile(path) and os.path.splitext(path)[1].lower() in ARCHIVE_EXTS:
-                count = _archive_page_count(path)
-                if count > 0:
-                    b["pages"] = count
-                    return count
 
             return 0
         if role == ROLE_PATH:  # noqa: F405
@@ -192,6 +147,21 @@ class BookListModel(QAbstractListModel):
         for row, b in enumerate(self._books):
             if b.get("cover") == cover:
                 idx = self.index(row)
+                self.dataChanged.emit(idx, idx, [ROLE_THUMB])  # noqa: F405
+                break
+
+    def invalidate_thumb(self, cover: str) -> None:
+        """特定coverのメモリ・ディスクキャッシュを破棄して再描画をトリガーする"""
+        if not cover:
+            return
+        self._thumbs.pop(cover, None)
+        self._pending.discard(cover)
+        cp = _cache_path(cover)
+        if os.path.exists(cp):
+            os.remove(cp)
+        for i, b in enumerate(self._books):
+            if b.get("cover") == cover:
+                idx = self.index(i)
                 self.dataChanged.emit(idx, idx, [ROLE_THUMB])  # noqa: F405
                 break
 

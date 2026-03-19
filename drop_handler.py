@@ -1,13 +1,13 @@
 """
 drop_handler.py - ドラッグ&ドロップ処理
-- フォルダ: 確認ダイアログ（そのまま登録 or Zip化）
-- zip/cbz/7z/cb7/rar/cbr: そのまま登録
-- 変換中はプログレスダイアログ表示
+- フォルダ: 確認ダイアログ（そのまま登録 or キャンセル）
+- zip/cbz/7z/cb7/rar/cbr: 解凍してフォルダとして登録
+- 解凍中はプログレスダイアログ表示
 """
 from __future__ import annotations
 import os
 import shutil
-import zipfile
+import tempfile
 from typing import Callable
 
 from PySide6.QtWidgets import (
@@ -28,73 +28,6 @@ SUBFOLDER_EXTS = {".pdf"}
 # DMM/DLSite ストアファイル（ルートにコピーして入力ダイアログで登録）
 STORE_FILE_EXTS = {".dmmb", ".dmme", ".dmmr", ".dlst"}
 IMAGE_EXTS   = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
-
-
-# ══════════════════════════════════════════════════════════
-#  アーカイブ内サムネ取得ユーティリティ
-# ══════════════════════════════════════════════════════════
-
-def _get_archive_cover(path: str) -> str | None:
-    """アーカイブ内の1枚目画像を cover_cache に展開してパスを返す（キャッシュ削除で消えない）"""
-    ext = os.path.splitext(path)[1].lower()
-    try:
-        import config
-        import hashlib
-        h = hashlib.md5(path.encode()).hexdigest()
-        cover_path = os.path.join(config.COVER_CACHE_DIR, f"archive_{h}.jpg")
-        if os.path.exists(cover_path):
-            return cover_path
-        os.makedirs(config.COVER_CACHE_DIR, exist_ok=True)
-
-        if ext in (".zip", ".cbz"):
-            with zipfile.ZipFile(path, "r") as zf:
-                imgs = sorted(
-                    n for n in zf.namelist()
-                    if os.path.splitext(n)[1].lower() in IMAGE_EXTS
-                    and not os.path.basename(n).startswith(".")
-                )
-                if imgs:
-                    data = zf.read(imgs[0])
-                    with open(cover_path, "wb") as f:
-                        f.write(data)
-                    return cover_path
-
-        elif ext in (".7z", ".cb7"):
-            try:
-                import py7zr
-                with py7zr.SevenZipFile(path, "r") as zf:
-                    names = sorted(
-                        n for n in zf.getnames()
-                        if os.path.splitext(n)[1].lower() in IMAGE_EXTS
-                    )
-                    if names:
-                        zf.extract(targets=[names[0]], path=os.path.dirname(cover_path))
-                        extracted = os.path.join(os.path.dirname(cover_path), names[0])
-                        if os.path.exists(extracted):
-                            shutil.move(extracted, cover_path)
-                        return cover_path
-            except ImportError:
-                pass
-
-        elif ext in (".rar", ".cbr"):
-            try:
-                import rarfile
-                with rarfile.RarFile(path) as rf:
-                    imgs = sorted(
-                        n for n in rf.namelist()
-                        if os.path.splitext(n)[1].lower() in IMAGE_EXTS
-                    )
-                    if imgs:
-                        data = rf.read(imgs[0])
-                        with open(cover_path, "wb") as f:
-                            f.write(data)
-                        return cover_path
-            except (ImportError, Exception):
-                pass
-
-    except Exception:
-        pass
-    return None
 
 
 def _get_pdf_cover_and_pages(pdf_path: str) -> tuple[str, int]:
@@ -124,7 +57,7 @@ def _get_pdf_cover_and_pages(pdf_path: str) -> tuple[str, int]:
 # ══════════════════════════════════════════════════════════
 
 class FolderDropDialog(QDialog):
-    """フォルダドロップ時: そのまま登録 or Zip化を選択"""
+    """フォルダドロップ時: そのまま登録 or キャンセルを選択"""
 
     def __init__(self, folder_name: str, parent=None):
         super().__init__(parent)
@@ -132,7 +65,7 @@ class FolderDropDialog(QDialog):
         self.setWindowTitle(config.APP_TITLE)
         self.setFixedSize(*config.DROP_FOLDER_DIALOG_SIZE)
         self.setWindowModality(Qt.ApplicationModal)
-        self.choice = None  # "copy" | "zip" | None(cancel)
+        self.choice = None  # "copy" | None(cancel)
 
         layout = QVBoxLayout(self)
         layout.setSpacing(config.DROP_DIALOG_SPACING)
@@ -143,19 +76,15 @@ class FolderDropDialog(QDialog):
 
         btn_layout = QHBoxLayout()
         btn_copy = QPushButton("そのまま登録")
-        btn_zip  = QPushButton("Zip化して登録")
         btn_cancel = QPushButton("キャンセル")
 
         btn_copy.setFixedHeight(config.DROP_DIALOG_BTN_HEIGHT)
-        btn_zip.setFixedHeight(config.DROP_DIALOG_BTN_HEIGHT)
         btn_cancel.setFixedHeight(config.DROP_DIALOG_BTN_HEIGHT)
 
         btn_copy.clicked.connect(lambda: self._choose("copy"))
-        btn_zip.clicked.connect(lambda:  self._choose("zip"))
         btn_cancel.clicked.connect(self.reject)
 
         btn_layout.addWidget(btn_copy)
-        btn_layout.addWidget(btn_zip)
         btn_layout.addWidget(btn_cancel)
         layout.addLayout(btn_layout)
 
@@ -165,7 +94,7 @@ class FolderDropDialog(QDialog):
 
 
 class ArchiveDropDialog(QDialog):
-    """Zip/アーカイブドロップ時: コピーして登録するか確認"""
+    """Zip/アーカイブドロップ時: 解凍してフォルダとして登録するか確認"""
 
     def __init__(self, fname: str, parent=None):
         super().__init__(parent)
@@ -176,11 +105,11 @@ class ArchiveDropDialog(QDialog):
 
         layout = QVBoxLayout(self)
         layout.setSpacing(config.DROP_DIALOG_SPACING)
-        lbl = QLabel(f"「{fname}」をライブラリに追加しますか？")
+        lbl = QLabel(f"「{fname}」を解凍してライブラリに追加しますか？")
         lbl.setWordWrap(True)
         layout.addWidget(lbl)
         btn_layout = QHBoxLayout()
-        btn_ok = QPushButton("コピーして登録")
+        btn_ok = QPushButton("解凍して登録")
         btn_ok.setFixedHeight(config.DROP_DIALOG_BTN_HEIGHT)
         btn_cancel = QPushButton("キャンセル")
         btn_cancel.setFixedHeight(config.DROP_DIALOG_BTN_HEIGHT)
@@ -192,32 +121,63 @@ class ArchiveDropDialog(QDialog):
 
 
 # ══════════════════════════════════════════════════════════
-#  Zip変換ワーカースレッド
+#  アーカイブ解凍ワーカースレッド
 # ══════════════════════════════════════════════════════════
 
-class ZipWorker(QThread):
+class ExtractWorker(QThread):
     progress = Signal(int)   # 0-100
-    finished = Signal(str)   # 完成したzipのパス
+    finished = Signal(str)   # 展開先フォルダパス
     error    = Signal(str)
 
-    def __init__(self, src_folder: str, dest_zip: str):
+    def __init__(self, src_path: str, dest_tmp: str):
         super().__init__()
-        self.src_folder = src_folder
-        self.dest_zip   = dest_zip
+        self.src_path = src_path
+        self.dest_tmp = dest_tmp
+        self.ext = os.path.splitext(src_path)[1].lower()
 
     def run(self):
         try:
-            files = []
-            for root, _, fnames in os.walk(self.src_folder):
-                for fn in fnames:
-                    files.append(os.path.join(root, fn))
-            total = max(len(files), 1)
-            with zipfile.ZipFile(self.dest_zip, "w", zipfile.ZIP_STORED) as zf:
-                for i, fp in enumerate(files):
-                    arcname = os.path.relpath(fp, self.src_folder)
-                    zf.write(fp, arcname)
-                    self.progress.emit(int((i + 1) / total * 100))
-            self.finished.emit(self.dest_zip)
+            if self.ext in (".zip", ".cbz"):
+                import zipfile
+                with zipfile.ZipFile(self.src_path, "r") as zf:
+                    members = zf.infolist()
+                    total = max(len(members), 1)
+                    for idx, member in enumerate(members):
+                        zf.extract(member, self.dest_tmp)
+                        self.progress.emit(int((idx + 1) / total * 100))
+
+            elif self.ext in (".7z", ".cb7"):
+                try:
+                    import py7zr
+                except ImportError:
+                    self.error.emit("7z/cb7 の解凍に必要なライブラリ (py7zr) がインストールされていません。")
+                    return
+
+                with py7zr.SevenZipFile(self.src_path, "r") as zf:
+                    members = zf.getnames()
+                    total = max(len(members), 1)
+                    for idx, member in enumerate(members):
+                        zf.extract(path=self.dest_tmp, targets=[member])
+                        self.progress.emit(int((idx + 1) / total * 100))
+
+            elif self.ext in (".rar", ".cbr"):
+                try:
+                    import rarfile
+                except ImportError:
+                    self.error.emit("rar/cbr の解凍に必要なライブラリ (rarfile) がインストールされていません。")
+                    return
+
+                with rarfile.RarFile(self.src_path) as rf:
+                    members = rf.infolist()
+                    total = max(len(members), 1)
+                    for idx, member in enumerate(members):
+                        rf.extract(member, self.dest_tmp)
+                        self.progress.emit(int((idx + 1) / total * 100))
+            else:
+                self.error.emit("未対応のアーカイブ形式です。")
+                return
+
+            self.finished.emit(self.dest_tmp)
         except Exception as e:
             self.error.emit(str(e))
 
@@ -279,31 +239,28 @@ def _handle_folder(path: str, library_folder: str, parent, on_done):
         try:
             shutil.copytree(path, dest)
             _register_folder(dest)
+            nested_archives = [
+                f for f in os.listdir(dest)
+                if os.path.splitext(f)[1].lower() in ARCHIVE_EXTS
+            ]
+            if nested_archives:
+                QMessageBox.information(
+                    parent,
+                    "アーカイブが含まれています",
+                    "登録したフォルダ内にアーカイブファイルが含まれています。\n必要に応じて手動で展開してください。",
+                )
             if on_done:
                 on_done()
         except Exception as e:
             QMessageBox.critical(parent, "エラー", str(e))
 
-    elif dlg.choice == "zip":
-        dest_zip = os.path.join(library_folder, folder_name + ".zip")
-        if os.path.exists(dest_zip):
-            QMessageBox.warning(parent, "重複", f"「{folder_name}.zip」は既に存在します。")
-            return
-        if db.is_path_registered(dest_zip):
-            QMessageBox.warning(parent, "重複", f"「{folder_name}.zip」は既に登録済みです。")
-            return
-        _run_zip_with_progress(path, dest_zip, parent, on_done)
-
-
 def _handle_archive(path: str, library_folder: str, parent, on_done):
-    """アーカイブファイルを確認ダイアログ表示後にライブラリにコピーしてDB登録・グリッド読み込み"""
+    """アーカイブを確認ダイアログ表示後に解凍してフォルダとして登録・グリッド読み込み"""
     fname = os.path.basename(path)
-    dest = os.path.join(library_folder, fname)
-    if os.path.exists(dest):
-        QMessageBox.warning(parent, "重複", f"「{fname}」は既に存在します。")
-        return
-    if db.is_path_registered(dest):
-        QMessageBox.warning(parent, "重複", f"「{fname}」は既に登録済みです。")
+    dest_name = os.path.splitext(fname)[0]
+    dest = os.path.join(library_folder, dest_name)
+    if os.path.exists(dest) or db.is_path_registered(dest):
+        QMessageBox.warning(parent, "重複", f"「{dest_name}」は既に存在または登録済みです。")
         return
     dlg = ArchiveDropDialog(fname, parent)
     if parent:
@@ -311,13 +268,7 @@ def _handle_archive(path: str, library_folder: str, parent, on_done):
         dlg.activateWindow()
     if dlg.exec() != QDialog.Accepted:
         return
-    try:
-        shutil.copy2(path, dest)
-        _register_archive(dest)
-        if on_done:
-            on_done()
-    except Exception as e:
-        QMessageBox.critical(parent, "エラー", str(e))
+    _run_extract_with_progress(path, dest, parent, on_done)
 
 
 def _handle_other_file(path: str, parent):
@@ -480,10 +431,28 @@ def _register_subfolder_file(file_path: str, folder_path: str):
     )
 
 
-def _run_zip_with_progress(src_folder: str, dest_zip: str, parent, on_done):
-    """バックグラウンドでZip化しながらプログレスダイアログ表示"""
+def _flatten_single_subdir(extract_dir: str):
+    """展開先直下が単一サブフォルダのみなら中身を1段繰り上げる。"""
+    entries = os.listdir(extract_dir)
+    if len(entries) != 1:
+        return
+    only_name = entries[0]
+    only_path = os.path.join(extract_dir, only_name)
+    if not os.path.isdir(only_path):
+        return
+    for child_name in os.listdir(only_path):
+        src_path = os.path.join(only_path, child_name)
+        dst_path = os.path.join(extract_dir, child_name)
+        shutil.move(src_path, dst_path)
+    os.rmdir(only_path)
+
+
+def _run_extract_with_progress(src_path: str, dest_dir: str, parent, on_done):
+    """バックグラウンドで解凍し、完了後にフォルダとして登録する。"""
+    dest_tmp = tempfile.mkdtemp()
+    _finished_called = [False]
     progress_dlg = QProgressDialog(
-        "Zip化中...",
+        "解凍中...",
         "キャンセル",
         config.DROP_ZIP_PROGRESS_RANGE[0],
         config.DROP_ZIP_PROGRESS_RANGE[1],
@@ -494,25 +463,44 @@ def _run_zip_with_progress(src_folder: str, dest_zip: str, parent, on_done):
     progress_dlg.setMinimumDuration(config.DROP_ZIP_PROGRESS_MIN_DURATION_MS)
     progress_dlg.setValue(config.DROP_ZIP_PROGRESS_RANGE[0])
 
-    worker = ZipWorker(src_folder, dest_zip)
+    worker = ExtractWorker(src_path, dest_tmp)
 
     def _on_progress(v):
         progress_dlg.setValue(v)
 
-    def _on_finished(zip_path):
+    def _on_finished(tmp_path: str):
+        _finished_called[0] = True
         progress_dlg.close()
-        _register_archive(zip_path)
-        if on_done:
-            on_done()
+        try:
+            _flatten_single_subdir(tmp_path)
+            shutil.copytree(tmp_path, dest_dir)
+            _register_folder(dest_dir)
+            nested_archives = [
+                f for f in os.listdir(dest_dir)
+                if os.path.splitext(f)[1].lower() in ARCHIVE_EXTS
+            ]
+            if nested_archives:
+                QMessageBox.information(
+                    parent,
+                    "アーカイブが含まれています",
+                    "解凍後のフォルダ内にアーカイブファイルが含まれています。\n必要に応じて手動で展開してください。",
+                )
+            if on_done:
+                on_done()
+        except Exception as e:
+            QMessageBox.critical(parent, "エラー", str(e))
+        finally:
+            shutil.rmtree(tmp_path, ignore_errors=True)
 
-    def _on_error(msg):
+    def _on_error(msg: str):
         progress_dlg.close()
-        QMessageBox.critical(parent, "Zip化エラー", msg)
+        shutil.rmtree(dest_tmp, ignore_errors=True)
+        QMessageBox.warning(parent, "解凍できません", msg)
 
     def _on_cancel():
-        worker.terminate()
-        if os.path.exists(dest_zip):
-            os.remove(dest_zip)
+        if not _finished_called[0]:
+            worker.terminate()
+            shutil.rmtree(dest_tmp, ignore_errors=True)
 
     worker.progress.connect(_on_progress)
     worker.finished.connect(_on_finished)
@@ -521,7 +509,7 @@ def _run_zip_with_progress(src_folder: str, dest_zip: str, parent, on_done):
 
     # workerをインスタンス変数に保持（GC対策）
     if parent:
-        parent._zip_worker = worker
+        parent._extract_worker = worker
 
     worker.start()
     progress_dlg.exec()
@@ -543,21 +531,6 @@ def _register_folder(path: str):
         if os.path.splitext(f)[1].lower() in IMAGE_EXTS
     )
     cover  = os.path.join(path, imgs[0]) if imgs else ""
-    mtime  = os.path.getmtime(path)
-    db.upsert_book(
-        name=name, circle=circle, title=title,
-        path=path, cover_path=cover, mtime=mtime
-    )
-
-
-def _register_archive(path: str):
-    """アーカイブをDBに登録（サムネはキャッシュから）。表示名は[サークル名]作品名。"""
-    raw_name = os.path.splitext(os.path.basename(path))[0]
-    circle, title = db.parse_display_name(raw_name)
-    if not title:
-        title = raw_name.strip()
-    name = db.format_book_name(circle, title)
-    cover  = _get_archive_cover(path) or ""
     mtime  = os.path.getmtime(path)
     db.upsert_book(
         name=name, circle=circle, title=title,

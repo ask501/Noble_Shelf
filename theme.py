@@ -36,7 +36,6 @@ COLOR_BTN_CANCEL_BORDER = "#8a3a3a"
 COLOR_BTN_FETCH         = "#6a5a1a"
 COLOR_BTN_FETCH_BORDER  = "#8a7a2a"
 COLOR_STAR_ACTIVE       = "#FFD700"
-COLOR_THUMB_BG          = "#111111"
 COLOR_FOLDER_BG         = "#2a2a2a"
 
 # ── カード・バッジ ──
@@ -116,28 +115,7 @@ THUMB_CROP_BTN_CROP_PAD_X = 16
 # ※app.py のQSS直書き値を同値で定数化（見た目維持）
 APP_BAR_SEPARATOR_RGBA = "rgba(255, 255, 255, 0.15)"  # ソートバー/ステータスバーの細い境界線
 
-# ── 旧 config.py 由来のカラー（移動）────────────────────────
-# 互換維持のため定数名はそのまま使用する
-CONTEXT_MENU_BG = "#2b2b2b"
-CONTEXT_MENU_HOVER_BG = "#0078d4"
 CONTEXT_MENU_SEP_COLOR = "#444444"
-CONTEXT_MENU_TEXT_FG = "#f0f0f0"
-CONTEXT_MENU_DELETE_FG = "#ff6b6b"
-CONTEXT_MENU_DELETE_HOVER = "#c0392b"
-CONTEXT_MENU_DIM_FG = "#888888"
-
-SEARCH_BAR_BG = "#1a1a1a"
-SEARCH_CHIP_BG = "#2a475e"
-SEARCH_CHIP_HOVER = "#1e3a52"
-SEARCH_CHIP_FG = "#e0e0e0"
-SEARCH_DROPDOWN_BG = "#252525"
-SEARCH_DROPDOWN_HOVER = "#0078d4"
-SEARCH_SEP_COLOR = "#3a3a3a"
-
-CHIP_COLOR_SORT = "#444444"
-CHIP_COLOR_PATH = "#2b579a"
-CHIP_COLOR_TAG = "#1e7145"
-CHIP_COLOR_AUTHOR = "#b91d47"
 
 # ── ビューワー（viewer.py）用カラー ───────────────────────────
 # ※見た目維持のため、viewer.py の直書き #xxxxxx を同値で定数化
@@ -225,10 +203,9 @@ THEME_COLORS = {
 DROPDOWN_ARROW = "▼"
 
 # ── メニュー項目（QMenu::item と危険項目ラベルで共通・一元管理）────────────
-#
+
 # ホバー = テーマのグレー（COLOR_HOVER）。選択/確定時用の紫（COLOR_ACCENT）とは分離。
 # メニュー上でマウスを乗せたときは MENU_ITEM_HOVER_*（グレー）、全項目で共通。
-#
 MENU_ITEM_PADDING = "6px 24px 6px 12px"
 MENU_ITEM_BORDER_RADIUS = "4px"
 # メニュー項目ホバー色（グレー。QMenuBar::item:selected や QPushButton:hover と同じ COLOR_HOVER）
@@ -244,11 +221,6 @@ DANGER_MENU_ITEM_STYLE_HOVER = (
     f"color: {MENU_ITEM_HOVER_FG}; padding: {MENU_ITEM_PADDING}; "
     f"background-color: {MENU_ITEM_HOVER_BG}; border-radius: {MENU_ITEM_BORDER_RADIUS};"
 )
-
-
-def get_theme() -> dict:
-    return THEME_COLORS
-
 
 # ── グローバルQSS ─────────────────────────────────────────
 APP_QSS = f"""
@@ -544,42 +516,6 @@ QToolTip {{
     padding: 4px 8px;
 }}
 """
-
-
-# ── シェブロン矢印付きコンボボックス ─────────────────────
-from PySide6.QtWidgets import QWidget, QComboBox as _QComboBox, QLabel
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
-
-
-class StyledComboBox(_QComboBox):
-    """シェブロン矢印付きのカスタムQComboBox。プロパティの_DropdownEntryと同様、子QLabelで∨を表示する。"""
-    _DROP_WIDTH = 28
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setStyleSheet(f"""
-            QComboBox::drop-down {{
-                width: 0;
-                border: none;
-                background: transparent;
-            }}
-            QComboBox {{
-                padding-right: {self._DROP_WIDTH}px;
-            }}
-        """)
-        self._arrow = QLabel(DROPDOWN_ARROW, self)
-        self._arrow.setAttribute(Qt.WA_TransparentForMouseEvents)
-        # theme.py は config を参照しない（循環import防止）。フォントはアプリ既定に従う。
-        arrow_font = QFont()
-        arrow_font.setPixelSize(12)
-        self._arrow.setFont(arrow_font)
-        self._arrow.setAlignment(Qt.AlignCenter)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._arrow.setGeometry(self.width() - self._DROP_WIDTH, 0, self._DROP_WIDTH, self.height())
-        self._arrow.raise_()
 
 
 def apply_dark_titlebar(window) -> None:

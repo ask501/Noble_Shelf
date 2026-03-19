@@ -1,4 +1,4 @@
-# config.py - アプリ全体で共有する定数・設定の一元管理
+﻿# config.py - アプリ全体で共有する定数・設定の一元管理
 # 全モジュールはここを参照し、マジックナンバーを排除する。
 import os
 import sys
@@ -339,15 +339,6 @@ UPDATER_QUIT_DELAY_MS = 500
 # main.py: on_startup コールバックを呼ぶまでの遅延(ms)
 MAIN_ON_STARTUP_DELAY_MS = 500
 
-from theme import (
-    CONTEXT_MENU_BG,
-    CONTEXT_MENU_HOVER_BG,
-    CONTEXT_MENU_SEP_COLOR,
-    CONTEXT_MENU_TEXT_FG,
-    CONTEXT_MENU_DELETE_FG,
-    CONTEXT_MENU_DELETE_HOVER,
-    CONTEXT_MENU_DIM_FG,
-)
 CONTEXT_MENU_ITEM_HEIGHT = 28
 CONTEXT_MENU_SEP_HEIGHT = 9
 CONTEXT_MENU_WIDTH = 240
@@ -380,18 +371,7 @@ UI_DROPDOWN_STYLE = {
     "context_item_height": 28,
 }
 
-# ── 検索バー・チップ ───────────────────────────────────────
-from theme import (
-    SEARCH_BAR_BG,
-    SEARCH_CHIP_BG,
-    SEARCH_CHIP_HOVER,
-    SEARCH_CHIP_FG,
-    SEARCH_DROPDOWN_BG,
-    SEARCH_DROPDOWN_HOVER,
-    SEARCH_SEP_COLOR,
-)
 
-from theme import CHIP_COLOR_SORT, CHIP_COLOR_PATH, CHIP_COLOR_TAG, CHIP_COLOR_AUTHOR
 
 SEARCH_TYPING_DELAY_MS = 150
 

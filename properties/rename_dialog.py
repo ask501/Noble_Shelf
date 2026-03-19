@@ -83,7 +83,7 @@ class RenameDialog(QDialog):
             else:
                 parent_dir = os.path.dirname(path)
                 if _is_library_root(parent_dir):
-                    # ライブラリ直下のファイル（Zip等）→ ファイル自体をリネーム
+                    # ライブラリ直下のファイル（ストアファイル等）→ ファイル自体をリネーム
                     ext = os.path.splitext(path)[1]
                     new_path = os.path.join(parent_dir, new_name + ext)
                     if new_path != path:

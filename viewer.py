@@ -27,21 +27,7 @@ try:
 except ImportError:
     HAS_PYMUPDF = False
 
-try:
-    import py7zr
-    HAS_PY7ZR = True
-except ImportError:
-    HAS_PY7ZR = False
-
-try:
-    import rarfile
-    HAS_RARFILE = True
-except ImportError:
-    HAS_RARFILE = False
-
 from PIL import Image
-import io
-import zipfile
 import config
 from theme import (
     VIEWER_BG,
@@ -81,12 +67,6 @@ class BookReader:
         ext = os.path.splitext(path)[1].lower()
         if os.path.isdir(path):
             return FolderReader(path)
-        elif ext in (".zip", ".cbz"):
-            return ZipReader(path)
-        elif ext in (".7z", ".cb7"):
-            return SevenZipReader(path)
-        elif ext in (".rar", ".cbr"):
-            return RarReader(path)
         elif ext == ".pdf":
             return PdfReader(path)
         else:
@@ -106,68 +86,6 @@ class FolderReader(BookReader):
 
     def read_page(self, idx: int) -> Image.Image:
         return Image.open(os.path.join(self._path, self._files[idx])).convert("RGB")
-
-
-class ZipReader(BookReader):
-    def __init__(self, path: str):
-        self._zf = zipfile.ZipFile(path, "r")
-        self._files = sorted(
-            n for n in self._zf.namelist()
-            if os.path.splitext(n)[1].lower() in IMAGE_EXTS
-            and not os.path.basename(n).startswith(".")
-        )
-
-    def page_count(self):
-        return len(self._files)
-
-    def read_page(self, idx: int) -> Image.Image:
-        data = self._zf.read(self._files[idx])
-        return Image.open(io.BytesIO(data)).convert("RGB")
-
-    def close(self):
-        self._zf.close()
-
-
-class SevenZipReader(BookReader):
-    def __init__(self, path: str):
-        if not HAS_PY7ZR:
-            raise ImportError("py7zr が必要です: pip install py7zr")
-        self._path = path
-        with py7zr.SevenZipFile(path, "r") as zf:
-            self._files = sorted(
-                n for n in zf.getnames()
-                if os.path.splitext(n)[1].lower() in IMAGE_EXTS
-            )
-
-    def page_count(self):
-        return len(self._files)
-
-    def read_page(self, idx: int) -> Image.Image:
-        with py7zr.SevenZipFile(self._path, "r") as zf:
-            target = self._files[idx]
-            data = zf.read([target])[target].read()
-        return Image.open(io.BytesIO(data)).convert("RGB")
-
-
-class RarReader(BookReader):
-    def __init__(self, path: str):
-        if not HAS_RARFILE:
-            raise ImportError("rarfile が必要です: pip install rarfile")
-        self._rf = rarfile.RarFile(path)
-        self._files = sorted(
-            n for n in self._rf.namelist()
-            if os.path.splitext(n)[1].lower() in IMAGE_EXTS
-        )
-
-    def page_count(self):
-        return len(self._files)
-
-    def read_page(self, idx: int) -> Image.Image:
-        data = self._rf.read(self._files[idx])
-        return Image.open(io.BytesIO(data)).convert("RGB")
-
-    def close(self):
-        self._rf.close()
 
 
 class PdfReader(BookReader):
@@ -226,18 +144,13 @@ class PageCanvas(QWidget):
         if not self._pixmap:
             return
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.SmoothPixmapTransform)
-
         w, h = self.width(), self.height()
         iw, ih = self._pixmap.width(), self._pixmap.height()
-
-        # キャンバスに収まるベースサイズを計算
         scale = min(w / iw, h / ih) if iw > 0 and ih > 0 else 1.0
         pw = int(iw * scale * self._zoom)
         ph = int(ih * scale * self._zoom)
         x  = (w - pw) // 2 + self._pan.x()
         y  = (h - ph) // 2 + self._pan.y()
-
         painter.drawPixmap(x, y, pw, ph, self._pixmap)
 
     def wheelEvent(self, event: QWheelEvent):
@@ -290,7 +203,8 @@ class Viewer(QDialog):
 
         self._load_source(path)
         self._setup_ui()
-        self._show_page()
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(0, self._show_page)
         if parent and hasattr(parent, "_open_viewers"):
             parent._open_viewers.append(self)
 
@@ -306,12 +220,6 @@ class Viewer(QDialog):
             if pdfs:
                 return PdfReader(os.path.join(path, pdfs[0]))
             return FolderReader(path)
-        elif ext in (".zip", ".cbz"):
-            return ZipReader(path)
-        elif ext in (".7z", ".cb7"):
-            return SevenZipReader(path)
-        elif ext in (".rar", ".cbr"):
-            return RarReader(path)
         elif ext == ".pdf":
             return PdfReader(path)
         else:
@@ -467,27 +375,41 @@ class Viewer(QDialog):
         self._seekbar.setValue(self.index)
         self._seekbar.blockSignals(False)
 
-    def _get_page_pixmap(self, idx: int) -> QPixmap:
+    def _get_page_pixmap(self, idx: int, canvas_w: int, canvas_h: int) -> QPixmap:
         if self._reader is None:
             return QPixmap()
         try:
-            img = self._reader.read_page(idx)
+            if isinstance(self._reader, FolderReader):
+                path = os.path.join(self._reader._path, self._reader._files[idx])
+                img = Image.open(path)
+            else:
+                img = self._reader.read_page(idx)
+
+            # キャンバスサイズに収まるよう事前にLANCZOSでリサイズ
+            iw, ih = img.size
+            scale = min(canvas_w / iw, canvas_h / ih)
+            if scale < 1.0:  # 縮小時のみ
+                nw = int(iw * scale)
+                nh = int(ih * scale)
+                img = img.resize((nw, nh), Image.BICUBIC)
+
             return _pil_to_qpixmap(img)
-        except Exception as e:
+        except Exception:
             return QPixmap()
 
     def _render_single(self) -> tuple[QPixmap, str]:
-        pix  = self._get_page_pixmap(self.index)
+        pix  = self._get_page_pixmap(self.index, self._canvas.width(), self._canvas.height())
         text = f"{self.index + 1} / {len(self.images)}"
         return pix, text
 
     def _render_dual(self) -> tuple[QPixmap, str]:
         if self.index + 1 >= len(self.images):
             return self._render_single()
-        p1 = self._get_page_pixmap(self.index)
-        p2 = self._get_page_pixmap(self.index + 1)
+        cw = self._canvas.width() // 2
+        ch = self._canvas.height()
+        p1 = self._get_page_pixmap(self.index,     cw, ch)
+        p2 = self._get_page_pixmap(self.index + 1, cw, ch)
         h  = min(p1.height(), p2.height())
-        # 同じ高さにスケール
         p1s = p1.scaledToHeight(h, Qt.SmoothTransformation)
         p2s = p2.scaledToHeight(h, Qt.SmoothTransformation)
         combined = QPixmap(p1s.width() + p2s.width(), h)

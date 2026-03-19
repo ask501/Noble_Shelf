@@ -11,28 +11,6 @@ from PySide6.QtCore import QObject, Signal, QRunnable, QThreadPool
 import db
 
 
-def _generate_pdf_cover(pdf_path: str) -> str:
-    """PDFの1ページ目を cover_cache フォルダに永続保存して返す（thumb_cacheとは別）"""
-    import hashlib
-    import config
-    cover_dir = config.COVER_CACHE_DIR
-    os.makedirs(cover_dir, exist_ok=True)
-    key = hashlib.md5(pdf_path.encode()).hexdigest()
-    cover_path = os.path.join(cover_dir, f"{key}.jpg")
-    if os.path.exists(cover_path):
-        return cover_path
-    try:
-        import fitz
-        doc = fitz.open(pdf_path)
-        if len(doc) > 0:
-            pix = doc[0].get_pixmap(matrix=fitz.Matrix(1.5, 1.5))
-            pix.save(cover_path)
-        doc.close()
-        return cover_path if os.path.exists(cover_path) else ""
-    except Exception:
-        return ""
-
-
 # ══════════════════════════════════════════════════════════
 #  スキャンワーカー
 # ══════════════════════════════════════════════════════════
@@ -180,7 +158,7 @@ class ScannerWorker(QRunnable):
 
         # 消えたパスをDBから削除
         # フォルダ → found_pathsにないもの
-        # ファイル系（pdf/zip/dlst/dmme等）→ os.path.exists()で個別チェック
+        # ファイル系（pdf/dlst/dmme等）→ os.path.exists()で個別チェック
         all_books = db.get_all_books()
         delete_paths: list[str] = []
         for row in all_books:

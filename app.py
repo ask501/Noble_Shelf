@@ -35,7 +35,7 @@ from grid import BookGridView
 from scanner import scan_library
 from sidebar import SidebarWidget
 from searchbar import SearchBar, filter_books, build_haystack_cache
-from drop_handler import handle_drop, _get_archive_cover, _get_pdf_cover_and_pages
+from drop_handler import handle_drop, _get_pdf_cover_and_pages
 from filter_popover import FilterPopover
 from theme import THEME_COLORS, apply_dark_titlebar, APP_BAR_SEPARATOR_RGBA, COLOR_WHITE
 from properties import _auto_kana, _needs_kana_conversion, StoreFileInputDialog
@@ -915,6 +915,16 @@ class MainWindow(QMainWindow):
         ※ 現状はシンプルに全フィルタ適用＋グリッド再描画だが、
           将来的に最小限の dataChanged だけに最適化するためのフックポイント。
         """
+        # coverが変わっていたらサムネキャッシュを破棄
+        if path:
+            old_cover = next(
+                (b.get("cover", "") for b in self._all_books if b.get("path") == path),
+                "",
+            )
+            if old_cover:
+                model = self._grid.model() if hasattr(self, "_grid") else None
+                if model and hasattr(model, "invalidate_thumb"):
+                    model.invalidate_thumb(old_cover)
         # コンテキストメニュー展開時に保存したスクロール位置を復元用に取得（未設定時は復元しない）
         # クリアは復元実行後に行うので、on_book_updated が複数回呼ばれても最後の更新後に復元できる
         saved = getattr(self, "_context_menu_scroll", None)
@@ -1447,11 +1457,13 @@ class MainWindow(QMainWindow):
         if err:
             QMessageBox.critical(self, "キャッシュの削除", f"削除中にエラーが発生しました:\n{err}")
             return
+        model = self._grid.model() if hasattr(self, "_grid") else None
+        if model and hasattr(model, "invalidate_thumbs"):
+            model.invalidate_thumbs()
         repaired = db.repair_folder_covers()
-        repaired_archive, repaired_pdf = 0, 0
+        repaired_pdf = 0
         try:
             rows = db.get_all_books()
-            archive_exts = config.ARCHIVE_EXTS
             for row in rows:
                 path = row[3] or ""
                 cover = row[4] or ""
@@ -1462,19 +1474,12 @@ class MainWindow(QMainWindow):
                         if new_cover and db.update_book_cover_path(path, new_cover):
                             repaired_pdf += 1
                     continue
-                if ext not in archive_exts:
-                    continue
-                if cover and os.path.isfile(cover):
-                    continue
-                new_cover = _get_archive_cover(path)
-                if new_cover and db.update_book_cover_path(path, new_cover):
-                    repaired_archive += 1
         except Exception:
             pass
         msg = (
             f"グリッド用サムネキャッシュを {removed} 件削除しました。\n"
             f"（PDF・dmme・dlst・アーカイブ等のサムネ元画像は保持しています）\n"
-            f"フォルダ型: {repaired} 件、アーカイブ: {repaired_archive} 件、PDF: {repaired_pdf} 件を再設定しました。"
+            f"フォルダ型: {repaired} 件、PDF: {repaired_pdf} 件を再設定しました。"
         )
         QMessageBox.information(self, "キャッシュの削除", msg)
         self._apply_filters()

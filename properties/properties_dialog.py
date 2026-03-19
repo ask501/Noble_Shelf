@@ -566,7 +566,6 @@ class PropertyDialog(QDialog):
         bottom_row.addStretch()
         bottom_row.addWidget(btn_save)
         bottom_row.addWidget(btn_cancel)
-        bottom_row.addStretch()
         try:
             from plugin_loader import get_plugin_property_widgets
 
@@ -574,10 +573,12 @@ class PropertyDialog(QDialog):
             for w in get_plugin_property_widgets(ctx):
                 if isinstance(w, QPushButton):
                     w.setStyleSheet(BTN_FETCH_STYLE)
-                    w.setFixedSize(BTN_W, BTN_H)
-                bottom_row.addWidget(w)
+                    w.setFixedSize(BTN_W, config.PROPERTY_ACTION_BTN_SIZE[1])
+                bottom_row.addWidget(w) 
         except Exception:
             pass
+        bottom_row.addStretch()
+
 
         btn_save.clicked.connect(self._on_save)
         btn_cancel.clicked.connect(self._on_cancel)
@@ -1058,10 +1059,10 @@ class PropertyDialog(QDialog):
                     if new_path != path:
                         os.rename(path, new_path)
                 else:
-                    # ファイル（Zip/PDF/ストアファイル等）のリネーム
+                    # ファイル（PDF/ストアファイル等）のリネーム
                     parent_dir = os.path.dirname(path)
                     if _is_library_root(parent_dir):
-                        # ライブラリ直下のファイル → ファイル自体をリネーム（例: Book.zip → NewName.zip）
+                        # ライブラリ直下のファイル → ファイル自体をリネーム（例: Book.dlst → NewName.dlst）
                         ext = os.path.splitext(path)[1]
                         new_path = os.path.join(parent_dir, new_name + ext)
                         if new_path != path:
