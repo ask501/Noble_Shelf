@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Noble Shelf - Local Manga Library Manager</title>
+    <style>
+        :root {
+            --bg-color: #121212;
+            --text-color: #e0e0e0;
+            --accent-color: #4a90e2;
+            --card-bg: #1e1e1e;
+            --border-color: #333;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            line-height: 1.6;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+        }
+
+        .container {
+            max-width: 800px;
+            width: 100%;
+        }
+
+        header {
+            text-align: center;
+            padding: 40px 0;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        h1 { margin: 0; font-size: 2.5rem; letter-spacing: 1px; }
+        .tagline { color: #888; margin-top: 10px; }
+
+        .download-section {
+            text-align: center;
+            padding: 40px 0;
+        }
+
+        .btn {
+            display: inline-block;
+            background-color: var(--accent-color);
+            color: white;
+            padding: 12px 32px;
+            text-decoration: none;
+            border-radius: 4px;
+            font-weight: bold;
+            transition: opacity 0.2s;
+        }
+
+        .btn:hover { opacity: 0.8; }
+
+        .loading { color: #888; font-style: italic; }
+        .error { color: #ff5555; border: 1px solid #ff5555; padding: 10px; border-radius: 4px; }
+
+        h2 { border-left: 4px solid var(--accent-color); padding-left: 15px; margin-top: 40px; }
+
+        .release-item {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+        }
+
+        .release-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            margin-bottom: 10px;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 5px;
+        }
+
+        .version { font-size: 1.2rem; font-weight: bold; color: var(--accent-color); }
+        .date { font-size: 0.9rem; color: #888; }
+        .release-body { white-space: pre-wrap; font-size: 0.95rem; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <header>
+        <h1>Noble Shelf</h1>
+        <p class="tagline">ローカル同人誌ライブラリ管理ツール</p>
+    </header>
+
+    <div id="main-content">
+        <div id="latest-download" class="download-section">
+            <p class="loading">最新バージョンをチェック中...</p>
+        </div>
+
+        <h2>更新履歴</h2>
+        <div id="changelog">
+            <p class="loading">情報を取得中...</p>
+        </div>
+    </div>
+</div>
+
+<script>
+    const API_URL = 'https://api.github.com/repos/ask501/Noble_Shelf/releases';
+
+    async function fetchReleases() {
+        const downloadEl = document.getElementById('latest-download');
+        const changelogEl = document.getElementById('changelog');
+
+        try {
+            const response = await fetch(API_URL);
+            if (!response.ok) throw new Error('GitHub APIへのアクセスに失敗しました');
+            
+            const releases = await response.json();
+            if (releases.length === 0) {
+                downloadEl.innerHTML = '<p>リリースはまだありません</p>';
+                changelogEl.innerHTML = '';
+                return;
+            }
+
+            // 最新リリースのダウンロードボタン作成
+            const latest = releases[0];
+            const asset = latest.assets.find(a => a.name.endsWith('.zip') || a.name.endsWith('.exe'));
+            
+            if (asset) {
+                downloadEl.innerHTML = `
+                    <p>最新版: <strong>${latest.tag_name}</strong></p>
+                    <a href="${asset.browser_download_url}" class="btn">${asset.name} をダウンロード</a>
+                `;
+            } else {
+                downloadEl.innerHTML = `<a href="${latest.html_url}" class="btn">最新のリリースを確認</a>`;
+            }
+
+            // 更新履歴の生成
+            changelogEl.innerHTML = releases.map(rel => `
+                <div class="release-item">
+                    <div class="release-header">
+                        <span class="version">${rel.tag_name}</span>
+                        <span class="date">${new Date(rel.published_at).toLocaleDateString('ja-JP')}</span>
+                    </div>
+                    <div class="release-body">${rel.body || '説明なし'}</div>
+                </div>
+            `).join('');
+
+        } catch (error) {
+            const errorMsg = `<p class="error">エラー: ${error.message}</p>`;
+            downloadEl.innerHTML = errorMsg;
+            changelogEl.innerHTML = '';
+        }
+    }
+
+    fetchReleases();
+</script>
+
+</body>
+</html>
