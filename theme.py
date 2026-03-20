@@ -105,6 +105,11 @@ THUMB_CROP_VIEW_BG = "#1a1a1a"
 THUMB_CROP_BTN_FG = "#aaa"
 THUMB_CROP_FRAME_COLOR = (255, 80, 80)  # QPainter overlay（赤枠）
 THUMB_CROP_FRAME_PEN_W = 2
+# 赤枠外の半透明オーバーレイ（RGBA）
+THUMB_CROP_OVERLAY_COLOR = (0, 0, 0, 120)
+# 「横固定」トグル ON 時の強調色
+THUMB_CROP_BTN_LOCK_ON_BG = "#3a6ea5"
+THUMB_CROP_BTN_LOCK_ON_FG = "#ffffff"
 # 「切り抜き」ボタン（既存の保存ボタン配色と同系統）
 THUMB_CROP_BTN_CROP_BG = "#2d6a2d"
 THUMB_CROP_BTN_CROP_BORDER = "#3a8a3a"

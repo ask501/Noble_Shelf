@@ -270,6 +270,11 @@ THUMB_CROP_FIT_DELAY_MS = 50
 THUMB_CROP_DOWNLOAD_TIMEOUT_SEC = 15
 # JPEG保存品質（見た目/容量維持）
 THUMB_CROP_JPEG_QUALITY = 90
+# 切り抜きビュー：フィット時のスケール下限・上限（ホイールズームと整合）
+THUMB_CROP_ZOOM_MIN = 0.05
+THUMB_CROP_ZOOM_MAX = 0.50
+# 切り抜きビュー：ホイール1ノッチあたりの拡大縮小倍率
+THUMB_CROP_WHEEL_ZOOM_FACTOR = 1.05
 
 # drop_handler.py: UI寸法・進捗（見た目維持）
 DROP_FOLDER_DIALOG_SIZE = (360, 160)
