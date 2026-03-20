@@ -29,6 +29,7 @@ except ImportError:
 
 from PIL import Image
 import config
+import db
 from theme import (
     VIEWER_BG,
     VIEWER_TOOLBAR_BG,
@@ -200,6 +201,8 @@ class Viewer(QDialog):
         self._reader: BookReader | None = None
         self.index    = 0
         self.dual     = False
+        direction = db.get_setting(config.VIEWER_DIRECTION_SETTING_KEY) or config.VIEWER_DIRECTION_DEFAULT
+        self.rtl = (direction == config.VIEWER_DIRECTION_DATA_RTL)
 
         self._load_source(path)
         self._setup_ui()
@@ -300,25 +303,40 @@ class Viewer(QDialog):
 
         n = max(1, len(self.images) - 1)
         self._seekbar = QSlider(Qt.Horizontal)
+        self._seekbar.setInvertedAppearance(self.rtl)
+        self._seekbar.setInvertedControls(self.rtl)
         self._seekbar.setRange(0, n)
         self._seekbar.setValue(0)
         self._seekbar.valueChanged.connect(self._on_seek)
         self._seekbar.installEventFilter(self)
-        self._seekbar.setStyleSheet("""
-            QSlider::groove:horizontal { height: %(groove_h)spx; background: %(groove_bg)s; border-radius: 2px; }
-            QSlider::handle:horizontal {
-                background: %(accent)s; width: %(handle_size)spx; height: %(handle_size)spx;
-                border-radius: %(handle_radius)spx; margin: %(handle_margin_y)spx 0;
-            }
-            QSlider::sub-page:horizontal { background: %(accent)s; border-radius: 2px; }
-        """ % {
-            "groove_h": config.VIEWER_SLIDER_GROOVE_H,
-            "groove_bg": VIEWER_SLIDER_GROOVE_BG,
-            "accent": VIEWER_BTN_PRESSED_BG,
-            "handle_size": config.VIEWER_SLIDER_HANDLE_SIZE,
-            "handle_radius": config.VIEWER_SLIDER_HANDLE_RADIUS,
-            "handle_margin_y": config.VIEWER_SLIDER_HANDLE_MARGIN_Y,
-        })
+        if self.rtl:
+            active_page = "add-page"
+            inactive_page = "sub-page"
+        else:
+            active_page = "sub-page"
+            inactive_page = "add-page"
+        self._seekbar.setStyleSheet(f"""
+            QSlider::groove:horizontal {{
+                height: {config.VIEWER_SLIDER_GROOVE_H}px;
+                background: {VIEWER_SLIDER_GROOVE_BG};
+                border-radius: 2px;
+            }}
+            QSlider::handle:horizontal {{
+                background: {VIEWER_BTN_PRESSED_BG};
+                width: {config.VIEWER_SLIDER_HANDLE_SIZE}px;
+                height: {config.VIEWER_SLIDER_HANDLE_SIZE}px;
+                border-radius: {config.VIEWER_SLIDER_HANDLE_RADIUS}px;
+                margin: {config.VIEWER_SLIDER_HANDLE_MARGIN_Y}px 0;
+            }}
+            QSlider::{active_page}:horizontal {{
+                background: {VIEWER_BTN_PRESSED_BG};
+                border-radius: 2px;
+            }}
+            QSlider::{inactive_page}:horizontal {{
+                background: {VIEWER_SLIDER_GROOVE_BG};
+                border-radius: 2px;
+            }}
+        """)
 
         self._seek_label = QLabel("")
         self._seek_label.setStyleSheet(f"color: {VIEWER_TEXT_SUB}; font-size: {config.FONT_SIZE_VIEWER_SEEK}px;")
@@ -344,12 +362,20 @@ class Viewer(QDialog):
         if event.type() == QEvent.Type.KeyPress:
             key = event.key()
             if obj is self._canvas or obj is self._seekbar:
-                if key in (Qt.Key_Right, Qt.Key_Down, Qt.Key_Space):
-                    self._next()
-                    return True
-                if key in (Qt.Key_Left, Qt.Key_Up):
-                    self._prev()
-                    return True
+                if self.rtl:
+                    if key in (Qt.Key_Right, Qt.Key_Up):
+                        self._prev()
+                        return True
+                    if key in (Qt.Key_Left, Qt.Key_Down, Qt.Key_Space):
+                        self._next()
+                        return True
+                else:
+                    if key in (Qt.Key_Right, Qt.Key_Down, Qt.Key_Space):
+                        self._next()
+                        return True
+                    if key in (Qt.Key_Left, Qt.Key_Up):
+                        self._prev()
+                        return True
                 if key == Qt.Key_Escape:
                     if self.isFullScreen():
                         self.showMaximized()
@@ -449,10 +475,18 @@ class Viewer(QDialog):
 
     def _canvas_click(self, event: QMouseEvent):
         if event.button() == Qt.LeftButton:
-            if event.pos().x() < self._canvas.width() // 2:
-                self._prev()
+            mid_x = self._canvas.width() // 2
+            on_left = event.pos().x() < mid_x
+            if self.rtl:
+                if on_left:
+                    self._next()
+                else:
+                    self._prev()
             else:
-                self._next()
+                if on_left:
+                    self._prev()
+                else:
+                    self._next()
         elif event.button() == Qt.RightButton:
             self._prev()
         # 中ボタンはPageCanvas本来の処理に渡す
@@ -483,18 +517,28 @@ class Viewer(QDialog):
     # ── キーボード（方向キー・スペースでページ送り） ─────────────────
     def keyPressEvent(self, event: QKeyEvent):
         key = event.key()
-        if key in (Qt.Key_Right, Qt.Key_Down, Qt.Key_Space):
-            self._next()
-        elif key in (Qt.Key_Left, Qt.Key_Up):
-            self._prev()
-        elif key == Qt.Key_Escape:
+        if self.rtl:
+            if key in (Qt.Key_Right, Qt.Key_Up):
+                self._prev()
+                return
+            if key in (Qt.Key_Left, Qt.Key_Down, Qt.Key_Space):
+                self._next()
+                return
+        else:
+            if key in (Qt.Key_Right, Qt.Key_Down, Qt.Key_Space):
+                self._next()
+                return
+            if key in (Qt.Key_Left, Qt.Key_Up):
+                self._prev()
+                return
+        if key == Qt.Key_Escape:
             if self.isFullScreen():
                 self.showMaximized()
                 self._btn_fs.setText("全画面")
             else:
                 self.close()
-        else:
-            super().keyPressEvent(event)
+            return
+        super().keyPressEvent(event)
 
     def closeEvent(self, event):
         parent = self.parent()

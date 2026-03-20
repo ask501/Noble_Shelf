@@ -240,6 +240,8 @@ def setup_menubar(window):
     act_bookmarklet = QAction("ブックマークレットキュー", window)
     act_bookmarklet.triggered.connect(window._open_bookmarklet_window)
     tool_menu.addAction(act_bookmarklet)
+    window._act_tool_library_check = QAction("ライブラリ整合性チェック...", window)
+    tool_menu.addAction(window._act_tool_library_check)
 
     # ── 設定メニュー ──
     setting_menu = menubar.addMenu("設定(&T)")

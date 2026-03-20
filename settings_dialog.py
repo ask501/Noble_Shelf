@@ -43,6 +43,7 @@ from theme import (
     CARD_RATING_BG_ALPHA,
 )
 from context_menu import resolve_shortcut, is_valid_store_viewer_path
+from properties._utils import BTN_CANCEL_STYLE, BTN_SAVE_STYLE
 
 # ビュアー選択のファイル種類（.exe と .lnk を同じ一覧で参照）
 VIEWER_FILE_FILTER = "ビュアー (*.exe *.lnk);;実行ファイル (*.exe);;ショートカット (*.lnk);;すべてのファイル (*.*)"
@@ -99,6 +100,18 @@ class SettingsDialog(QDialog):
         general = QWidget()
         general_layout = QVBoxLayout(general)
         general_layout.setSpacing(config.SETTINGS_DIALOG_SPACING)
+
+        # 綴じ方向
+        direction_row = QHBoxLayout()
+        direction_label = QLabel("ビューアー綴じ方向")
+        direction_label.setFont(QFont(config.FONT_FAMILY, config.FONT_SIZE_DIALOG_LABEL))
+        direction_row.addWidget(direction_label)
+        self._direction_combo = QComboBox()
+        self._direction_combo.setFont(QFont(config.FONT_FAMILY, config.FONT_SIZE_DIALOG_INPUT))
+        self._direction_combo.addItem("右綴じで表示する", config.VIEWER_DIRECTION_DATA_RTL)
+        self._direction_combo.addItem("左綴じで表示する", config.VIEWER_DIRECTION_DATA_LTR)
+        direction_row.addWidget(self._direction_combo)
+        general_layout.addLayout(direction_row)
 
         # 外部ビュアー
         lbl = QLabel("外部ビュアー (未設定なら既定のアプリで開く)")
@@ -173,6 +186,8 @@ class SettingsDialog(QDialog):
             lambda f: self._apply_font(f.family())
         )
         font_row.addWidget(self._font_combo)
+        # 綴じ方向コンボをフォントコンボと同じサイズポリシーに揃える（フォント行の QFontComboBox 基準）
+        self._direction_combo.setSizePolicy(self._font_combo.sizePolicy())
 
         general_layout.addLayout(font_row)
 
@@ -255,14 +270,18 @@ class SettingsDialog(QDialog):
 
         layout.addWidget(tabs)
 
-        # OK / キャンセル（検知終了後のフォーカス逃がし用に保持・QSSでスタイル適用するため objectName を設定）
+        # 保存 / キャンセル（プロパティ系ダイアログと同じ BTN_SAVE_STYLE / BTN_CANCEL_STYLE）
         btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         btn_box.accepted.connect(self._save)
         btn_box.rejected.connect(self.reject)
-        btn_box.button(QDialogButtonBox.Ok).setObjectName("DialogOkButton")
-        btn_box.button(QDialogButtonBox.Cancel).setObjectName("DialogCancelButton")
+        btn_ok = btn_box.button(QDialogButtonBox.Ok)
+        btn_cancel = btn_box.button(QDialogButtonBox.Cancel)
+        btn_ok.setText(config.SETTINGS_DIALOG_BTN_SAVE_TEXT)
+        btn_cancel.setText(config.SETTINGS_DIALOG_BTN_CANCEL_TEXT)
+        btn_ok.setStyleSheet(BTN_SAVE_STYLE)
+        btn_cancel.setStyleSheet(BTN_CANCEL_STYLE)
         layout.addWidget(btn_box)
-        self._shortcut_ok_button = btn_box.button(QDialogButtonBox.Ok)
+        self._shortcut_ok_button = btn_ok
 
     def _build_card_display_tab(self) -> QWidget:
         import db
@@ -730,6 +749,10 @@ class SettingsDialog(QDialog):
             self._dlsite_viewer_edit.setText(path)
 
     def _load(self):
+        direction = db.get_setting(config.VIEWER_DIRECTION_SETTING_KEY) or config.VIEWER_DIRECTION_DEFAULT
+        idx = self._direction_combo.findData(direction)
+        if idx >= 0:
+            self._direction_combo.setCurrentIndex(idx)
         self._viewer_edit.setText(db.get_setting("external_viewer") or "")
         self._dmm_viewer_edit.setText(db.get_setting("dmm_viewer") or "")
         self._dlsite_viewer_edit.setText(db.get_setting("dlsite_viewer") or "")
@@ -788,6 +811,7 @@ class SettingsDialog(QDialog):
         db.set_setting("external_viewer", external)
         db.set_setting("dmm_viewer", dmm)
         db.set_setting("dlsite_viewer", dlsite)
+        db.set_setting(config.VIEWER_DIRECTION_SETTING_KEY, self._direction_combo.currentData())
         for key, disp in self._shortcut_displays.items():
             val = (disp.text() or "").strip()
             db.set_setting(f"shortcut_{key}", val if val else "")

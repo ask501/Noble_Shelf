@@ -75,6 +75,12 @@ def init_db():
                 value TEXT
             )
         """)
+        # ── hidden_paths テーブル（ライブラリ整合性チェックの非表示管理） ──
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS hidden_paths (
+                path TEXT PRIMARY KEY
+            )
+        """)
 
         # ── book_meta テーブル（作者・タイプ・シリーズ・作品ID・除外フラグなど）────
         c.execute("""
@@ -465,6 +471,43 @@ def set_setting(key, value):
             (key, str(value) if value is not None else None)
         )
         conn.commit()
+    finally:
+        conn.close()
+
+
+def add_hidden_path(path: str):
+    """非表示パスを追加する。"""
+    if not path or not str(path).strip():
+        return
+    conn = get_conn()
+    try:
+        conn.execute(
+            "INSERT OR IGNORE INTO hidden_paths(path) VALUES(?)",
+            (path,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def remove_hidden_path(path: str):
+    """非表示パスを削除する。"""
+    if not path or not str(path).strip():
+        return
+    conn = get_conn()
+    try:
+        conn.execute("DELETE FROM hidden_paths WHERE path=?", (path,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_hidden_paths() -> list[str]:
+    """非表示パス一覧を返す。"""
+    conn = get_conn()
+    try:
+        rows = conn.execute("SELECT path FROM hidden_paths").fetchall()
+        return [r["path"] for r in rows]
     finally:
         conn.close()
 

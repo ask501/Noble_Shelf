@@ -8,7 +8,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QVBoxLayout,
     QSplitter,
-    QFileDialog,
     QStatusBar,
     QSlider,
     QLabel,
@@ -30,6 +29,7 @@ import time
 
 import config
 import db
+from library_folder_dialog import LibraryFolderDialog
 from version import VERSION
 from grid import BookGridView
 from scanner import scan_library
@@ -156,6 +156,8 @@ class MainWindow(QMainWindow):
     # ── メニューバー ──────────────────────────────────────
     def _setup_menubar(self):
         setup_menubar(self)
+        if hasattr(self, "_act_tool_library_check"):
+            self._act_tool_library_check.triggered.connect(self._open_library_check_dialog)
 
     def _on_open_settings(self):
         from PySide6.QtWidgets import QDialog
@@ -166,6 +168,16 @@ class MainWindow(QMainWindow):
             refresh_shortcuts(self)
         # 設定ダイアログを閉じたらカード表示設定を反映
         self._grid.apply_display_settings()
+
+    def _open_library_check_dialog(self) -> None:
+        library_folder = (db.get_setting("library_folder") or "").strip()
+        if not library_folder or not os.path.isdir(library_folder):
+            QMessageBox.information(self, config.APP_TITLE, "ライブラリフォルダが未設定です。")
+            return
+        from ui.library_check_dialog import LibraryCheckDialog
+
+        dlg = LibraryCheckDialog(library_folder, self)
+        dlg.exec()
 
     # ── ファイルメニュー ────────────────────────────────────
     def _get_selected_books(self) -> list[dict]:
@@ -759,17 +771,19 @@ class MainWindow(QMainWindow):
         self._grid.apply_display_settings()
 
     def _select_library_folder(self):
-        folder = QFileDialog.getExistingDirectory(
-            self, "ライブラリフォルダを選択", ""
-        )
-        if folder:
-            db.set_setting("library_folder", folder)
-            # 設定されたらオーバーレイを隠し、グリッドを表示してスキャン
-            if hasattr(self, "_empty_hint"):
-                self._empty_hint.hide()
-            if hasattr(self, "_grid"):
-                self._grid.show()
-            self._start_scan(folder)
+        dlg = LibraryFolderDialog(self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        folder = dlg.selected_path
+        if not folder:
+            return
+        db.set_setting("library_folder", folder)
+        # 設定されたらオーバーレイを隠し、グリッドを表示してスキャン
+        if hasattr(self, "_empty_hint"):
+            self._empty_hint.hide()
+        if hasattr(self, "_grid"):
+            self._grid.show()
+        self._start_scan(folder)
 
     def _on_click_setup_library(self):
         """中央ボタンからライブラリフォルダ設定を開く"""
@@ -1464,11 +1478,18 @@ class MainWindow(QMainWindow):
         repaired_pdf = 0
         try:
             rows = db.get_all_books()
+            library_folder = os.path.normcase(
+                os.path.normpath((db.get_setting("library_folder") or "").strip())
+            )
             for row in rows:
                 path = row[3] or ""
                 cover = row[4] or ""
                 ext = os.path.splitext(path)[1].lower() if path else ""
                 if ext == ".pdf":
+                    if library_folder and os.path.normcase(
+                        os.path.normpath(os.path.dirname(path))
+                    ) != library_folder:
+                        continue
                     if not cover or not os.path.isfile(cover):
                         new_cover, pages = _get_pdf_cover_and_pages(path)
                         if new_cover and db.update_book_cover_path(path, new_cover):
@@ -1491,7 +1512,18 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "PDFサムネ修復", f"一覧の取得に失敗しました:\n{e}")
             return
-        pdf_rows = [(r[3], r[4]) for r in rows if r[3] and os.path.splitext(r[3])[1].lower() == ".pdf"]
+        library_folder = os.path.normcase(
+            os.path.normpath((db.get_setting("library_folder") or "").strip())
+        )
+        pdf_rows = [
+            (r[3], r[4]) for r in rows
+            if r[3]
+            and os.path.splitext(r[3])[1].lower() == ".pdf"
+            and (
+                not library_folder
+                or os.path.normcase(os.path.normpath(os.path.dirname(r[3]))) == library_folder
+            )
+        ]
         need_repair = [(path, cover) for path, cover in pdf_rows if not cover or not os.path.isfile(cover)]
         if not need_repair:
             QMessageBox.information(self, "PDFサムネ修復", "修復が必要なPDFはありません。")

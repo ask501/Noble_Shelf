@@ -7,6 +7,7 @@ debug_tools.py - 開発・デバッグ用ユーティリティ
 from PySide6.QtWidgets import QDialog, QVBoxLayout
 
 from first_run import LibrarySetupOverlay
+from library_folder_dialog import LibraryFolderDialog
 import config
 
 
@@ -25,8 +26,13 @@ def show_first_run_overlay(parent=None) -> None:
     overlay = LibrarySetupOverlay()
     layout.addWidget(overlay)
 
-    # オーバーレイ側のボタンクリック時は単にダイアログを閉じるだけ
-    overlay.setupClicked.connect(dlg.accept)
+    def _on_setup_clicked() -> None:
+        picker = LibraryFolderDialog(dlg)
+        if picker.exec() != QDialog.DialogCode.Accepted:
+            return
+        dlg.accept()
+
+    overlay.setupClicked.connect(_on_setup_clicked)
 
     dlg.exec()
 

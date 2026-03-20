@@ -31,11 +31,11 @@ class ScannerSignals(QObject):
 class ScannerWorker(QRunnable):
     """
     ライブラリフォルダを差分スキャンしてDBを更新するワーカー。
-    ルール（旧仕様踏襲）:
+    ルール:
       - サブフォルダ1階層のみ
       - フォルダ名 "サークル - タイトル" 形式でパース
       - 画像ファイルがないフォルダはスキップ
-      - 消えたフォルダはDBから削除（PDFなど特殊パスは除外）
+      - 消えたフォルダはDBから削除
     """
 
     def __init__(self, library_folder: str):
@@ -114,28 +114,9 @@ class ScannerWorker(QRunnable):
             )
 
             if not images:
-                pdfs = sorted(
-                    f for f in child_entries
-                    if f.lower().endswith(".pdf")
-                )
-                store_files = sorted(
-                    f for f in child_entries
-                    if os.path.splitext(f)[1].lower() in (".dmmb", ".dmme", ".dmmr", ".dlst")
-                )
-                if not pdfs and not store_files:
-                    continue
-                if pdfs:
-                    # PDFはファイルパスで既にD&D時に登録済みのためスキップ
-                    # （_register_subfolder_fileがファイルパスで登録している）
-                    found_paths.add(path)
-                    self.signals.progress.emit(i + 1, total)
-                    continue
-                if store_files:
-                    found_paths.add(path)
-                    self.signals.progress.emit(i + 1, total)
-                    continue
-            else:
-                cover_path = os.path.join(path, images[0])
+                self.signals.progress.emit(i + 1, total)
+                continue
+            cover_path = os.path.join(path, images[0])
 
             # 表示名は [サークル名]作品名。parse_display_name で分解（旧形式 サークル - 作品 も読める）
             circle, title = db.parse_display_name(name)

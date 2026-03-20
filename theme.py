@@ -296,39 +296,6 @@ QPushButton:pressed {{
     color: {COLOR_WHITE};
 }}
 
-/* 設定ダイアログ OK / キャンセル（QDialogButtonBox、objectName で識別） */
-QDialogButtonBox QPushButton#DialogOkButton {{
-    background-color: {COLOR_BTN_SAVE};
-    color: {COLOR_WHITE};
-    border: 1px solid {COLOR_BTN_SAVE_BORDER};
-    border-radius: 6px;
-    padding: 6px 16px;
-    font-size: 12px;
-}}
-QDialogButtonBox QPushButton#DialogOkButton:hover {{
-    background-color: {COLOR_BTN_SAVE_BORDER};
-    border-color: {COLOR_BTN_SAVE_BORDER};
-}}
-QDialogButtonBox QPushButton#DialogOkButton:pressed {{
-    background-color: {COLOR_BTN_SAVE};
-}}
-
-QDialogButtonBox QPushButton#DialogCancelButton {{
-    background-color: {COLOR_BTN_CANCEL};
-    color: {COLOR_WHITE};
-    border: 1px solid {COLOR_BTN_CANCEL_BORDER};
-    border-radius: 6px;
-    padding: 6px 16px;
-    font-size: 12px;
-}}
-QDialogButtonBox QPushButton#DialogCancelButton:hover {{
-    background-color: {COLOR_BTN_CANCEL_BORDER};
-    border-color: {COLOR_BTN_CANCEL_BORDER};
-}}
-QDialogButtonBox QPushButton#DialogCancelButton:pressed {{
-    background-color: {COLOR_BTN_CANCEL};
-}}
-
 /* 入力欄 */
 QLineEdit {{
     background-color: {COLOR_BG_WIDGET};

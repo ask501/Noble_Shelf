@@ -268,6 +268,9 @@ THUMB_CROP_LAYOUT_MARGINS = (12, 12, 12, 12)
 THUMB_CROP_LAYOUT_SPACING = 8
 THUMB_CROP_FIT_DELAY_MS = 50
 THUMB_CROP_DOWNLOAD_TIMEOUT_SEC = 15
+# library_check_dialog.py: ライブラリ整合性チェックダイアログ（見た目維持）
+LIBRARY_CHECK_DIALOG_MIN_SIZE = (500, 280)
+LIBRARY_CHECK_DIALOG_SIZE = (700, 520)
 # JPEG保存品質（見た目/容量維持）
 THUMB_CROP_JPEG_QUALITY = 90
 # 切り抜きビュー：フィット時のスケール下限・上限（ホイールズームと整合）
@@ -287,15 +290,19 @@ DROP_ZIP_PROGRESS_MIN_DURATION_MS = 0
 PDF_COVER_SCALE = 1.5
 
 # first_run.py: 初回起動オーバーレイ（見た目維持）
-FIRST_RUN_SETUP_BTN_SIZE = (180, 80)
+FIRST_RUN_SETUP_BTN_SIZE = (280, 80)
 FIRST_RUN_SETUP_BTN_RADIUS = 16
 FIRST_RUN_SETUP_BTN_PADDING = (8, 16)  # y, x
 FIRST_RUN_SETUP_BTN_PRESSED_OPACITY = 0.9
 
 # debug_tools.py: 初回起動オーバーレイ確認ダイアログ（見た目維持）
 DEBUG_FIRST_RUN_DIALOG_TITLE = "初回起動オーバーレイ（デバッグ）"
-DEBUG_FIRST_RUN_DIALOG_SIZE = (400, 300)
+DEBUG_FIRST_RUN_DIALOG_SIZE = (500, 300)
 DEBUG_FIRST_RUN_DIALOG_MARGINS = (16, 16, 16, 16)
+
+# library_folder_dialog.py: ライブラリフォルダ設定ダイアログ
+LIBRARY_FOLDER_DIALOG_TITLE = "ライブラリフォルダを設定"
+LIBRARY_FOLDER_DIALOG_SIZE = (500, 120)
 
 # app.py: 最近開いたブックのポップアップ件数
 RECENT_BOOKS_MENU_LIMIT = 10
@@ -464,6 +471,9 @@ SETTINGS_DIALOG_DEFAULT_SIZE = (520, 520)   # resize(w, h)
 # レイアウト（ダイアログ全体）
 SETTINGS_DIALOG_MARGINS = (16, 16, 16, 16)  # left, top, right, bottom
 SETTINGS_DIALOG_SPACING = 12
+# 下部の QDialogButtonBox（保存・キャンセル）ラベル
+SETTINGS_DIALOG_BTN_SAVE_TEXT = "保存"
+SETTINGS_DIALOG_BTN_CANCEL_TEXT = "キャンセル"
 # 一般タブ：参照ボタン幅
 SETTINGS_BROWSE_BTN_WIDTH = 72
 # ショートカットタブ：説明テキストのフォントサイズ(px)
@@ -521,6 +531,11 @@ RENAME_DIALOG_MARGINS = (16, 16, 16, 16)    # left, top, right, bottom
 RENAME_DIALOG_SPACING = 8
 
 # ── ビューワー（viewer.py） ─────────────────────────────────
+# DBキー・綴じ方向（settings_dialog と viewer で共有。未設定時は右綴じ＝右→左）
+VIEWER_DIRECTION_SETTING_KEY = "viewer_direction"
+VIEWER_DIRECTION_DEFAULT = "rtl"
+VIEWER_DIRECTION_DATA_RTL = "rtl"
+VIEWER_DIRECTION_DATA_LTR = "ltr"
 # 初期ウィンドウサイズ（最大化前の基準）
 VIEWER_INIT_WIDTH = 900
 VIEWER_INIT_HEIGHT = 700
