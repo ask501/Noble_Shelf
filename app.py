@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer, Signal, QPoint, QEvent, QUrl, QMimeData
 from PySide6.QtGui import QAction, QKeySequence
 import os
+import random
 import time
 
 import config
@@ -35,6 +36,7 @@ from grid import BookGridView
 from scanner import scan_library
 from sidebar import SidebarWidget
 from searchbar import SearchBar, filter_books, build_haystack_cache
+from toolbar import ToolBar
 from drop_handler import handle_drop, _get_pdf_cover_and_pages
 from filter_popover import FilterPopover
 from theme import THEME_COLORS, apply_dark_titlebar, APP_BAR_SEPARATOR_RGBA, COLOR_WHITE
@@ -79,6 +81,8 @@ class MainWindow(QMainWindow):
 
         db.init_db()
         self._all_books: list[dict] = []
+        # グリッドに表示中の一覧（フィルタ・ソート適用後）。ランダムオープン等で使用
+        self._books: list[dict] = []
         self._sidebar_filter: tuple[str, str] | None = None  # (mode, value)
         # ソート状態: デフォルトは「作品名・昇順」
         self._sort_key: str = "title"
@@ -156,6 +160,18 @@ class MainWindow(QMainWindow):
     # ── メニューバー ──────────────────────────────────────
     def _setup_menubar(self):
         setup_menubar(self)
+        # 表示メニューに「ツールバー」チェック（menubar.setup_menubar 後に挿入）
+        for _mb_action in self.menuBar().actions():
+            _sub = _mb_action.menu()
+            if _sub is not None and _mb_action.text() == "表示(&V)":
+                self._act_toolbar = QAction("ツールバー", self)
+                self._act_toolbar.setCheckable(True)
+                self._act_toolbar.setChecked(True)
+                self._act_toolbar.triggered.connect(
+                    lambda checked: self._set_main_toolbar_visible(checked, save=True)
+                )
+                _sub.insertAction(self._act_searchbar, self._act_toolbar)
+                break
         if hasattr(self, "_act_tool_library_check"):
             self._act_tool_library_check.triggered.connect(self._open_library_check_dialog)
 
@@ -538,16 +554,36 @@ class MainWindow(QMainWindow):
         outer.setContentsMargins(*config.LAYOUT_MARGINS_ZERO)
         outer.setSpacing(config.LAYOUT_SPACING_ZERO)
 
-        # 検索バー（初期非表示）
+        # メニュー直下：1行目 ToolBar、2行目 SearchBar（それぞれ独立した QWidget）
+        self._toolbar_row = QWidget()
+        toolbar_row_layout = QHBoxLayout(self._toolbar_row)
+        toolbar_row_layout.setContentsMargins(*config.LAYOUT_MARGINS_ZERO)
+        toolbar_row_layout.setSpacing(config.LAYOUT_SPACING_ZERO)
+
+        self._main_toolbar = ToolBar()
+        toolbar_row_layout.addWidget(self._main_toolbar)
+        self._main_toolbar.setVisible(False)
+
+        self._searchbar_row = QWidget()
+        searchbar_row_layout = QHBoxLayout(self._searchbar_row)
+        searchbar_row_layout.setContentsMargins(*config.LAYOUT_MARGINS_ZERO)
+        searchbar_row_layout.setSpacing(config.LAYOUT_SPACING_ZERO)
+
         self._searchbar = SearchBar()
         self._searchbar.searchChanged.connect(self._on_search_changed)
         self._searchbar.cleared.connect(self._on_search_cleared)
-        self._searchbar.setVisible(False)
-        outer.addWidget(self._searchbar)
+        # 行いっぱいに広げ、SearchBar 内の stretch でカプセルを中央寄せ（狭い中央列だと左寄りに見える）
+        searchbar_row_layout.addWidget(self._searchbar, stretch=1)
+
+        outer.addWidget(self._toolbar_row)
+        outer.addWidget(self._searchbar_row)
+
+        # ツールバー検索アイコン：SearchBar 行の表示トグル（初期はボタン checked=True＝表示）
+        self._main_toolbar.searchToggled.connect(self._searchbar_row.setVisible)
+        self._main_toolbar.randomRequested.connect(self._on_random_requested)
 
         # スプリッター（サイドバー | グリッド＋ソートバー）
         splitter = QSplitter(Qt.Horizontal)
-        splitter.setHandleWidth(config.MAIN_SPLITTER_HANDLE_WIDTH)
 
         self._sidebar = SidebarWidget()
         self._sidebar.filterChanged.connect(self._on_filter_changed)
@@ -558,6 +594,9 @@ class MainWindow(QMainWindow):
         self._sidebar.titleSelected.connect(self._on_title_selected)
         self._sidebar.contextMenuRequested.connect(self._on_sidebar_context_menu_requested)
         splitter.addWidget(self._sidebar)
+
+        # ツールバーサイドバーアイコン：サイドバー表示トグル（初期はボタン checked=True＝表示）
+        self._main_toolbar.sidebarToggled.connect(self._sidebar.setVisible)
 
         # 右側コンテナ: 上にソートバー（ゴーストバー）、下にグリッド
         grid_container = QWidget()
@@ -665,7 +704,7 @@ class MainWindow(QMainWindow):
                 config.WINDOW_WIDTH - config.MAIN_SPLITTER_SIDEBAR_INIT_WIDTH,
             ]
         )
-        outer.addWidget(splitter)
+        outer.addWidget(splitter, stretch=1)
         self._splitter = splitter
 
         # 初期ソートバー表示
@@ -1092,7 +1131,8 @@ class MainWindow(QMainWindow):
         elif hasattr(self, "_filtered_count"):
             delattr(self, "_filtered_count")
 
-        # グリッドへの反映
+        # グリッドへの反映（表示中リストを保持）
+        self._books = books
         self._grid.load_books(books)
         # サイドバー: フィルター指定時はプルダウンを隠し「フィルター」＋結果一覧に切替
         if hasattr(self, "_sidebar"):
@@ -1101,6 +1141,15 @@ class MainWindow(QMainWindow):
             else:
                 self._sidebar.set_filter_result_mode(False, None)
                 self._sidebar.set_title_items(sidebar_books)
+
+    def _on_random_requested(self) -> None:
+        """ツールバーランダム：表示中グリッドから1冊をビューアで開く。"""
+        candidates = [b for b in (self._books or []) if b.get("path")]
+        if not candidates:
+            return
+        from context_menu import open_book
+
+        open_book(random.choice(candidates)["path"], self, modal=False)
 
     # ── ソート関連 ───────────────────────────────────────
 
@@ -1825,8 +1874,10 @@ class MainWindow(QMainWindow):
         show_menubar = db.get_setting("ui_show_menubar", "1")
         self._set_menubar_visible(show_menubar != "0", save=False)
 
-        # 検索バー（デフォルトは非表示）
-        show_search = db.get_setting("ui_show_searchbar", "0")
+        # ツールバー（ハンバーガー・グリッド）と検索バーは別設定・未設定時は表示
+        show_tool = db.get_setting("ui_show_toolbar", "1")
+        self._set_main_toolbar_visible(show_tool == "1", save=False)
+        show_search = db.get_setting("ui_show_searchbar", "1")
         self._set_searchbar_visible(show_search == "1", save=False)
 
         # サイドバー
@@ -1845,24 +1896,42 @@ class MainWindow(QMainWindow):
         if save:
             db.set_setting("ui_show_menubar", "1" if visible else "0")
 
+    def _set_main_toolbar_visible(self, visible: bool, save: bool):
+        """表示メニュー「ツールバー」：ハンバーガー・グリッドのみ。"""
+        self._main_toolbar.apply_visibility(visible)
+        if hasattr(self, "_act_toolbar"):
+            self._act_toolbar.setChecked(visible)
+        if save:
+            db.set_setting("ui_show_toolbar", "1" if visible else "0")
+
     def _set_searchbar_visible(self, visible: bool, save: bool):
-        self._searchbar.setVisible(visible)
+        """表示メニュー「検索バー」／Ctrl+F：検索入力のみ。"""
+        self._searchbar_row.setVisible(visible)
         if visible:
             self._searchbar.focus_input()
         else:
             self._searchbar.clear_search()
         if hasattr(self, "_act_searchbar"):
             self._act_searchbar.setChecked(visible)
+        if hasattr(self, "_main_toolbar"):
+            _sb = getattr(self._main_toolbar, "_btn_search", None)
+            if _sb is not None:
+                _sb.blockSignals(True)
+                _sb.setChecked(visible)
+                _sb.blockSignals(False)
         if save:
             db.set_setting("ui_show_searchbar", "1" if visible else "0")
 
     def _set_sidebar_visible(self, visible: bool, save: bool):
-        if visible:
-            self._sidebar.show()
-        else:
-            self._sidebar.hide()
+        self._sidebar.setVisible(visible)
         if hasattr(self, "_act_sidebar"):
             self._act_sidebar.setChecked(visible)
+        if hasattr(self, "_main_toolbar"):
+            _bs = getattr(self._main_toolbar, "_btn_sidebar", None)
+            if _bs is not None:
+                _bs.blockSignals(True)
+                _bs.setChecked(visible)
+                _bs.blockSignals(False)
         if save:
             db.set_setting("ui_show_sidebar", "1" if visible else "0")
 

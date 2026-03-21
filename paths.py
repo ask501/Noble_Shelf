@@ -14,6 +14,21 @@ if getattr(sys, "frozen", False):
     _app_base = os.path.join(os.path.dirname(sys.executable), "_internal")
 APP_BASE = _app_base
 
+# ── UIアイコン（ツールバー・バッジ等） ─────────────────
+ICON_DMM_BADGE = os.path.join(APP_BASE, "assets", "dmm_badge.png")
+ICON_DLSITE_BADGE = os.path.join(APP_BASE, "assets", "dlsite_badge.png")
+ICON_HAMBURGER = os.path.join(APP_BASE, "assets", "hamburger-button.png")
+ICON_GRID = os.path.join(APP_BASE, "assets", "grid_white.png")
+ICON_FILTER = os.path.join(APP_BASE, "assets", "filter.png")
+ICON_SIDEBAR = os.path.join(APP_BASE, "assets", "sidebar.png")
+ICON_RANDOM = os.path.join(APP_BASE, "assets", "random.png")
+ICON_SEARCH = os.path.join(APP_BASE, "assets", "search.png")
+ICON_AUTO_SCROLL = os.path.join(APP_BASE, "assets", "auto_scroll.png")
+
+# ── アプリアイコン（ウィンドウ・exe） ──────────────────
+APP_ICON = os.path.join(APP_BASE, "assets", "icon.png")
+APP_ICON_ICO = os.path.join(APP_BASE, "assets", "desktop_icon.ico")
+
 # ユーザーデータ用ベース（%APPDATA%\NobleShelf）
 APP_DATA_DIR = os.path.join(os.environ.get("APPDATA", APP_BASE), "NobleShelf")
 os.makedirs(APP_DATA_DIR, exist_ok=True)

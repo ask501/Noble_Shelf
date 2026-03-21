@@ -5,17 +5,35 @@ searchbar.py - 検索バー（PySide6版）
 - 将来: チップUI・フィールド指定・スマートモード
 """
 from __future__ import annotations
+import os
 import unicodedata
 
 from PySide6.QtWidgets import (
-    QWidget, QFrame, QHBoxLayout, QLineEdit, QPushButton
+    QWidget,
+    QFrame,
+    QHBoxLayout,
+    QLineEdit,
+    QPushButton,
+    QSizePolicy,
+    QStyle,
+    QStyleOptionButton,
 )
-from PySide6.QtCore import Qt, Signal, QTimer
-from PySide6.QtGui import QKeyEvent
+from PySide6.QtCore import Qt, QRectF, QSize, Signal, QTimer
+from PySide6.QtGui import (
+    QBrush,
+    QColor,
+    QIcon,
+    QKeyEvent,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QTransform,
+)
 
 import db
 import config
-from theme import THEME_COLORS, COLOR_WHITE
+import paths
+from theme import THEME_COLORS
 
 
 def _nfkc(s: str) -> str:
@@ -27,6 +45,108 @@ class _SearchInput(QLineEdit):
     pass
 
 
+class _SearchCapsuleFrame(QFrame):
+    """検索カプセル外枠。QSS の border-radius が効かない環境向けに角丸を自前描画する。"""
+
+    def __init__(self, radius_px: int, border_px: int, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._radius = float(radius_px)
+        self._border_px = float(border_px)
+        self.setObjectName("SearchCapsule")
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setStyleSheet("")
+
+    def _capsule_outer_path(self) -> QPainterPath:
+        """カプセル外周（塗り・線・右ボタンの setClipPath と同一パス）。"""
+        w, h = self.width(), self.height()
+        path = QPainterPath()
+        if w <= 0 or h <= 0:
+            return path
+        rf = QRectF(0, 0, float(w), float(h))
+        rw = min(self._radius, rf.width() / 2.0, rf.height() / 2.0)
+        path.addRoundedRect(rf, rw, rw)
+        return path
+
+    def paintEvent(self, event):
+        path = self._capsule_outer_path()
+        if path.isEmpty():
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        bw = self._border_px
+
+        # 塗り・枠線とも _capsule_outer_path と同一パス
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(QColor(THEME_COLORS["bg_widget"])))
+        painter.fillPath(path, QBrush(QColor(THEME_COLORS["bg_widget"])))
+
+        pen = QPen(QColor(THEME_COLORS["border"]))
+        pen.setWidthF(bw)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.strokePath(path, pen)
+
+
+class _SearchCapsuleRightButton(QPushButton):
+    """
+    右端がカプセル外周に沿う検索ボタン。
+    QWidget.setMask(QRegion) は多角形近似のため角がギザつく → 親マスクは使わず、
+    paint 時に同一 QPainterPath で setClipPath する（アンチエイリアス付き）。
+    """
+
+    def __init__(self, capsule: _SearchCapsuleFrame):
+        super().__init__(capsule)
+        self._capsule = capsule
+        self.setAutoFillBackground(False)
+        self.setStyleSheet("")
+
+    def enterEvent(self, event):
+        super().enterEvent(event)
+        self.update()
+
+    def leaveEvent(self, event):
+        super().leaveEvent(event)
+        self.update()
+
+    def mousePressEvent(self, event):
+        super().mousePressEvent(event)
+        self.update()
+
+    def mouseReleaseEvent(self, event):
+        super().mouseReleaseEvent(event)
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        cap_path = self._capsule._capsule_outer_path()
+        if not cap_path.isEmpty():
+            local = QTransform.fromTranslate(
+                -float(self.x()), -float(self.y())
+            ).map(cap_path)
+            painter.setClipPath(
+                local, Qt.ClipOperation.IntersectClip
+            )
+
+        opt = QStyleOptionButton()
+        self.initStyleOption(opt)
+        st = opt.state
+        if st & QStyle.StateFlag.State_Sunken:
+            bg_key = "accent_hover"
+        elif st & QStyle.StateFlag.State_MouseOver:
+            bg_key = "accent"
+        else:
+            bg_key = "hover"
+        painter.fillRect(self.rect(), QColor(THEME_COLORS[bg_key]))
+
+        if not self.icon().isNull():
+            cr = self.style().subElementRect(
+                QStyle.SubElement.SE_PushButtonContents, opt, self
+            )
+            self.icon().paint(painter, cr, Qt.AlignmentFlag.AlignCenter)
+
+
 class SearchBar(QWidget):
     """検索バー本体"""
 
@@ -36,7 +156,12 @@ class SearchBar(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedHeight(config.SEARCHBAR_HEIGHT)
-        self.setStyleSheet(f"background: {THEME_COLORS['bg_panel']}; border-bottom: 1px solid {THEME_COLORS['sep']};")
+        # 親レイアウトで横方向に領域を確保し、内部の stretch でカプセルを中央寄せする
+        self.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+        # 背景は app.py のメインツールバー側で塗る（透明のまま）
+        self.setStyleSheet("")
         self._debounce_timer = QTimer()
         self._debounce_timer.setSingleShot(True)
         self._debounce_timer.setInterval(config.SEARCHBAR_DEBOUNCE_MS)    # 入力後に検索発火
@@ -45,40 +170,45 @@ class SearchBar(QWidget):
 
     def _setup_ui(self):
         outer = QHBoxLayout(self)
-        # スペースは検索フィールドの外に配置（中は詰める）
         outer.setContentsMargins(*config.SEARCHBAR_OUTER_MARGINS)
         outer.setSpacing(config.LAYOUT_SPACING_ZERO)
 
         cap_h = config.SEARCHBAR_HEIGHT - config.SEARCHBAR_CAPSULE_HEIGHT_INSET
         radius = config.SEARCHBAR_CAPSULE_RADIUS
-        # 検索バーと検索ボタンをひとつの角丸枠で囲む（QFrameで枠を確実に表示）
-        capsule = QFrame()
-        capsule.setObjectName("SearchCapsule")
+        _bw = config.BORDER_WIDTH
+        _inner_h = cap_h - 2 * _bw
+        _inner_r = max(0, radius - _bw)
+
+        capsule = _SearchCapsuleFrame(radius, _bw)
         capsule.setFixedHeight(cap_h)
-        capsule.setFixedWidth(config.SEARCH_INPUT_MAX_WIDTH + config.SEARCHBAR_CAPSULE_BTN_WIDTH)
-        capsule.setFrameShape(QFrame.NoFrame)
-        capsule.setStyleSheet(f"""
-            #SearchCapsule {{
-                background: {THEME_COLORS['bg_widget']};
-                border: 1px solid {THEME_COLORS['border']};
-                border-radius: {radius}px;
-            }}
-        """)
+        capsule.setMinimumWidth(config.SEARCHBAR_CAPSULE_MIN_WIDTH)
+        capsule.setMaximumWidth(config.SEARCHBAR_MAX_WIDTH)
+        capsule.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+
         cap_layout = QHBoxLayout(capsule)
-        cap_layout.setContentsMargins(*config.LAYOUT_MARGINS_ZERO)
+        # 枠線・角丸の内側に子を収める（子の矩形が外周角を潰さない）
+        cap_layout.setContentsMargins(_bw, _bw, _bw, _bw)
         cap_layout.setSpacing(config.LAYOUT_SPACING_ZERO)
 
-        # テキスト入力（configで幅指定・枠はカプセルで表示）
         self._input = _SearchInput()
-        self._input.setMaximumWidth(config.SEARCH_INPUT_MAX_WIDTH)
+        self._input.setFixedHeight(_inner_h)
+        self._input.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
         self._input.setPlaceholderText("検索")
+        self._input.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        # 左はカプセル角丸に合わせる。背景は透明でカプセル塗りを透かす。
         self._input.setStyleSheet(f"""
             QLineEdit {{
-                background: {THEME_COLORS['bg_widget']};
+                background-color: transparent;
                 color: {THEME_COLORS['text_main']};
                 border: none;
-                border-top-left-radius: {radius - 1}px;
-                border-bottom-left-radius: {radius - 1}px;
+                border-top-left-radius: {_inner_r}px;
+                border-bottom-left-radius: {_inner_r}px;
+                border-top-right-radius: 0;
+                border-bottom-right-radius: 0;
                 padding: {config.SEARCHBAR_INPUT_PADDING_Y}px {config.SEARCHBAR_INPUT_PADDING_X}px;
                 font-size: {config.FONT_SIZE_SEARCH_INPUT}px;
             }}
@@ -88,34 +218,44 @@ class SearchBar(QWidget):
         """)
         self._input.textChanged.connect(self._on_text_changed)
         self._input.returnPressed.connect(self._emit_search)
-        cap_layout.addWidget(self._input)
 
-        # 検索ボタン（右側・縦線で区切り・枠の右端の角丸）
-        self._btn_search = QPushButton("🔍")
-        self._btn_search.setFixedSize(config.SEARCHBAR_CAPSULE_BTN_WIDTH, cap_h)
+        self._btn_search = _SearchCapsuleRightButton(capsule)
+        self._btn_search.setFixedSize(
+            config.SEARCHBAR_CAPSULE_BTN_WIDTH, _inner_h
+        )
         self._btn_search.setToolTip("検索を実行")
         self._btn_search.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._btn_search.setStyleSheet(f"""
-            QPushButton {{
-                background: {THEME_COLORS['hover']};
-                color: {THEME_COLORS['text_main']};
-                border: none;
-                border-left: 1px solid {THEME_COLORS['border']};
-                border-top-right-radius: {radius - 1}px;
-                border-bottom-right-radius: {radius - 1}px;
-                padding: 0;
-                margin: 0;
-                font-size: {config.FONT_SIZE_SEARCHBAR_BTN}px;
-            }}
-            QPushButton:hover {{
-                background: {THEME_COLORS['accent']};
-                color: {COLOR_WHITE};
-            }}
-        """)
+        _search_btn_icon_path = paths.ICON_SEARCH
+        if os.path.isfile(_search_btn_icon_path):
+            self._btn_search.setIcon(QIcon(_search_btn_icon_path))
+            self._btn_search.setIconSize(
+                QSize(
+                    config.SEARCHBAR_SEARCH_BTN_ICON_SIZE,
+                    config.SEARCHBAR_SEARCH_BTN_ICON_SIZE,
+                )
+            )
+        # 入力とボタンの間は直線の縦線（border-left だとカプセル角丸と相まって「(🔍」に見えやすい）
+        _div_w = config.SEARCHBAR_BTN_DIVIDER_WIDTH
+        divider = QWidget()
+        divider.setFixedWidth(_div_w)
+        divider.setFixedHeight(_inner_h)
+        divider.setSizePolicy(
+            QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
+        )
+        divider.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        divider.setStyleSheet(
+            f"background-color: {THEME_COLORS['border']}; border: none;"
+        )
+
+        # 背景・角丸は _SearchCapsuleRightButton.paintEvent（setClipPath）で描画
         self._btn_search.clicked.connect(self._emit_search)
+
+        cap_layout.addWidget(self._input, stretch=1)
+        cap_layout.addWidget(divider)
         cap_layout.addWidget(self._btn_search)
 
-        outer.addWidget(capsule, alignment=Qt.AlignmentFlag.AlignHCenter)
+        outer.addWidget(capsule, stretch=1)
+        outer.setAlignment(capsule, Qt.AlignmentFlag.AlignHCenter)
 
     def _on_text_changed(self, _text: str):
         self._debounce_timer.start()

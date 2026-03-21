@@ -18,6 +18,7 @@ from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
 import config
 import db
+import paths
 from .roles import *  # noqa: F403
 from theme import (
     THEME_COLORS,
@@ -66,8 +67,8 @@ class BookCardDelegate(QStyledItemDelegate):
         super().__init__(parent)
         self._card_w = CARD_W
         self._card_h = CARD_H
-        self._badge_dmm_pix = _load_badge_icon(getattr(config, "BADGE_ICON_DMM_PATH", ""))
-        self._badge_dlsite_pix = _load_badge_icon(getattr(config, "BADGE_ICON_DLSITE_PATH", ""))
+        self._badge_dmm_pix = _load_badge_icon(paths.ICON_DMM_BADGE)
+        self._badge_dlsite_pix = _load_badge_icon(paths.ICON_DLSITE_BADGE)
         self._font_title = QFont(config.FONT_FAMILY, config.FONT_SIZE_CARD_TITLE)
         self._font_badge = QFont(config.FONT_FAMILY, config.FONT_SIZE_CARD_BADGE, QFont.Bold)
         self._font_circle = QFont(config.FONT_FAMILY, config.FONT_SIZE_CARD_CIRCLE)

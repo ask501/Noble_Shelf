@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import os
-
 from PySide6.QtCore import QPoint, QTimer, Qt
 from PySide6.QtGui import QPainter, QPixmap
 from PySide6.QtWidgets import QListWidget
 from PySide6.QtWidgets import QAbstractItemView, QListWidget
 
 import config
+import paths
 
 
 def _apply_dead_zone(value: int | float, zone: int) -> float:
@@ -35,7 +34,7 @@ class AutoScrollMixin:
         self._auto_scroll_timer.timeout.connect(self._on_auto_scroll_tick)
 
         self._auto_scroll_pixmap = None
-        icon_path = os.path.join(config.APP_BASE, "assets", "auto_scroll.png")
+        icon_path = paths.ICON_AUTO_SCROLL
         pix = QPixmap(icon_path)
         if not pix.isNull():
             self._auto_scroll_pixmap = pix.scaled(

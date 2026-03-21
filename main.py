@@ -12,6 +12,7 @@ from app import MainWindow
 from theme import APP_QSS, THEME_COLORS
 import config
 import db
+import paths
 
 
 def _apply_dark_titlebar(window):
@@ -54,7 +55,7 @@ def main(on_startup=None):
     app.setStyleSheet(APP_QSS)
     app.setFont(QFont(saved_font, pt))
     # ウィンドウ用アイコン（タイトルバー・タスクバー）
-    icon = QIcon(config.WINDOW_ICON_PATH) if (config.WINDOW_ICON_PATH and os.path.isfile(config.WINDOW_ICON_PATH)) else QIcon()
+    icon = QIcon(paths.APP_ICON) if (paths.APP_ICON and os.path.isfile(paths.APP_ICON)) else QIcon()
     if not icon.isNull():
         app.setWindowIcon(icon)
     window = MainWindow()

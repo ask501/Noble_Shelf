@@ -1,7 +1,5 @@
 # config.py - アプリ全体で共有する定数・設定の一元管理
 # 全モジュールはここを参照し、マジックナンバーを排除する。
-import os
-import sys
 from paths import APP_BASE, CACHE_DIR, COVER_CACHE_DIR
 
 # ── UIスタイル共通定数 ────────────────────────────────────
@@ -10,17 +8,6 @@ BORDER_WIDTH  = 1       # ボーダー幅(px)
 
 # ── アプリ名（全ウィンドウのタイトルに使用）─────────────────
 APP_TITLE = "Noble Shelf"
-
-# ── ウィンドウ・キャッシュ ─────────────────────────────────
-# アイコン（いずれも無くても起動はする）
-# ウィンドウ用: タイトルバー・タスクバーに表示（PNG可）
-WINDOW_ICON_PATH = os.path.join(APP_BASE, "assets", "icon.png")
-# デスクトップ用: ショートカットや .exe に使う（.ico 推奨。PyInstaller の --icon やショートカットの「アイコンの変更」で指定）
-DESKTOP_ICON_PATH = os.path.join(APP_BASE, "assets", "desktop_icon.ico")
-
-# グリッド右上バッジ用: DMMブックス / DLSite ビュアー形式でページ数の代わりに表示（無ければ従来の XXP 表示）
-BADGE_ICON_DMM_PATH    = os.path.join(APP_BASE, "assets", "dmm_badge.png")
-BADGE_ICON_DLSITE_PATH = os.path.join(APP_BASE, "assets", "dlsite_badge.png")
 
 WINDOW_WIDTH = 1600
 WINDOW_HEIGHT = 900
@@ -62,9 +49,9 @@ FONT_SIZE_BTN_STAR        = FONT_SIZE_XL        # 星評価ボタン（コンテ
 FONT_SIZE_RATING_UI       = FONT_SIZE_XL        # プロパティパネル内の星評価ボタン（QSS）
 FONT_SIZE_SORT_LABEL      = FONT_SIZE_GHOSTBAR  # ゴーストバーのソートラベル
 FONT_SIZE_SORT_BTN        = FONT_SIZE_DEFAULT   # ゴーストバーのボタン（昇順・フィルター・クリア）
-FONT_SIZE_SEARCH_INPUT    = FONT_SIZE_DEFAULT   # 検索バー入力欄（setFont用）
+FONT_SIZE_SEARCH_INPUT    = FONT_SIZE_LG   # 検索バー入力欄（setFont用）
 FONT_SIZE_SEARCHBAR       = FONT_SIZE_MD        # 検索バー入力欄（QSS font-size）
-FONT_SIZE_SEARCHBAR_BTN   = FONT_SIZE_LG        # 検索バー検索ボタン（QSS）
+FONT_SIZE_SEARCHBAR_BTN   = FONT_SIZE_LG        # 検索バー検索ボタン用（現状はアイコンのみ・QSS 未使用）
 FONT_SIZE_STATUS_BAR      = FONT_SIZE_DEFAULT   # ステータスバー
 FONT_SIZE_VIEWER_UI       = FONT_SIZE_XS        # ビューワー：ツールバーボタン・ページラベル（QSS）
 FONT_SIZE_VIEWER_SEEK     = FONT_SIZE_DEFAULT   # ビューワー：シークバーラベル（QSS）
@@ -95,18 +82,38 @@ SIDEBAR_BADGE_MARGIN = 8          # バッジとテキストの間隔(px)
 SIDEBAR_TEXT_RIGHT_INSET_NO_BADGE = 4
 SIDEBAR_DELEGATE_BG_INSET = 1     # 選択背景のrect調整(inset)px
 SIDEBAR_VIEWPORT_FALLBACK_WIDTH = 200
-SEARCHBAR_HEIGHT       = 40
-SEARCH_INPUT_MAX_WIDTH = 400   # 検索入力欄の最大幅(px)。検索バー幅はそのまま
+SEARCHBAR_HEIGHT       = 44
+SEARCHBAR_MAX_WIDTH    = 600   # searchbar.py: 角丸カプセルの最大幅(px)
+# searchbar.py: 角丸カプセルの最小幅(px)。未設定だと QLineEdit の min が小さく全体が極端に細くなる
+SEARCHBAR_CAPSULE_MIN_WIDTH = 600
+SEARCH_INPUT_MAX_WIDTH = 800   # 検索入力欄の最大幅(px)。検索バー幅はそのまま
 
 # searchbar.py（検索バー）: レイアウト/寸法（見た目維持のため直書き値を定数化）
 SEARCHBAR_OUTER_MARGINS = (8, 4, 8, 4)   # left, top, right, bottom
 SEARCHBAR_CAPSULE_HEIGHT_INSET = 8       # SEARCHBAR_HEIGHT から引く値（上下余白合計）
 SEARCHBAR_CAPSULE_RADIUS = 14            # 角丸半径(px)
 SEARCHBAR_CAPSULE_BTN_WIDTH = 44         # 右側の検索ボタン幅(px)
+# searchbar.py: 入力欄と検索ボタン間の縦区切り線の幅(px)。直線の「｜」に見せる
+SEARCHBAR_BTN_DIVIDER_WIDTH = 1
+# searchbar.py: 検索実行ボタンの QIcon 一辺(px)。ボタン高さより小さくして見切れを防ぐ
+SEARCHBAR_SEARCH_BTN_ICON_SIZE = 20
 SEARCHBAR_INPUT_PADDING_Y = 6
 SEARCHBAR_INPUT_PADDING_X = 12
 # searchbar.py: 入力→検索発火までの遅延(ms)（見た目/体感維持）
 SEARCHBAR_DEBOUNCE_MS = 50
+
+# app.py: メニューバー直下のメインツールバー（ハンバーガー・検索・グリッド）
+MAIN_TOOLBAR_HEIGHT = SEARCHBAR_HEIGHT
+# toolbar.py: 行の上下に空ける余白(px)。ボタン一辺 = 行高 - 2*この値（大きいとアイコン・ホバーが見切れにくい）
+MAIN_TOOLBAR_BTN_VERTICAL_INSET = 4
+# toolbar.py: ハンバーガー/グリッド QPushButton の正方形一辺(px)
+MAIN_TOOLBAR_BTN_SIZE = MAIN_TOOLBAR_HEIGHT - 2 * MAIN_TOOLBAR_BTN_VERTICAL_INSET
+MAIN_TOOLBAR_MARGINS = SEARCHBAR_OUTER_MARGINS
+MAIN_TOOLBAR_SPACING = 4
+# toolbar.py: setIconSize 用。MAIN_TOOLBAR_BTN_SIZE 以下を推奨（はみ出し・クリップ対策）
+MAIN_TOOLBAR_ICON_SIZE = 26
+# toolbar.py: ランダムボタン押下時の accent フラッシュ表示時間(ms)
+MAIN_TOOLBAR_RANDOM_BTN_FLASH_MS = 200
 
 # メインウィンドウ・タイトルバー（app.py）
 TITLE_BAR_DBLCLICK_HEIGHT = 50  # この高さ未満のダブルクリックで最大化
