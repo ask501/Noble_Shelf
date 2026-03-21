@@ -15,7 +15,16 @@ import sys
 import unicodedata
 from datetime import datetime
 from paths import DB_FILE, BACKUP_DIR
+import cache
+
 MAX_BACKUPS = 10
+
+# フィルターパネル用 get_all_*_with_count のキャッシュキー（cache.py）
+CACHE_KEY_TAGS_WITH_COUNT = "tags_with_count"
+CACHE_KEY_CIRCLES_WITH_COUNT = "circles_with_count"
+CACHE_KEY_CHARACTERS_WITH_COUNT = "characters_with_count"
+CACHE_KEY_AUTHORS_WITH_COUNT = "authors_with_count"
+CACHE_KEY_SERIES_WITH_COUNT = "series_with_count"
 
 
 # ══════════════════════════════════════════════════════
@@ -654,6 +663,7 @@ def upsert_book(name, circle, title, path, cover_path, mtime=None, is_dlst=0, pa
             set_book_meta(path, pages=pages)
     finally:
         conn.close()
+    cache.invalidate()
 
 
 def bulk_upsert_books(records):
@@ -682,6 +692,7 @@ def bulk_upsert_books(records):
         conn.commit()
     finally:
         conn.close()
+    cache.invalidate()
 
 
 def delete_book(path):
@@ -692,6 +703,7 @@ def delete_book(path):
         conn.commit()
     finally:
         conn.close()
+    cache.invalidate()
 
 
 def bulk_delete_books(paths):
@@ -709,6 +721,7 @@ def bulk_delete_books(paths):
         conn.commit()
     finally:
         conn.close()
+    cache.invalidate()
 
 
 def rename_book(old_path, new_path, new_name, new_circle, new_title, new_cover_path):
@@ -753,6 +766,7 @@ def rename_book(old_path, new_path, new_name, new_circle, new_title, new_cover_p
         conn.commit()
     finally:
         conn.close()
+    cache.invalidate()
 
 
 def repair_wrong_paths(library_folder: str, on_progress=None):
@@ -991,6 +1005,7 @@ def bulk_rename_to_current_format(library_folder: str, on_progress=None):
                     renamed += 1
         except Exception as e:
             failed.append((path, new_name, str(e)))
+    cache.invalidate()
     return (renamed, None, failed)
 
 
@@ -1018,6 +1033,7 @@ def update_book_display(path: str, circle: str | None = None, title: str | None 
             (new_name, new_circle, new_title, path),
         )
         conn.commit()
+        cache.invalidate()
     finally:
         conn.close()
 
@@ -1726,6 +1742,7 @@ def set_book_meta(
         conn.commit()
     finally:
         conn.close()
+    cache.invalidate()
 
 
 def set_cover_custom(path, cover_path):
@@ -1984,6 +2001,10 @@ def get_all_tags():
 
 def get_all_tags_with_count():
     """(タグ, 作品数) のリストを作品数の多い順で返す（booksテーブルに存在するもののみ）"""
+    return cache.get(CACHE_KEY_TAGS_WITH_COUNT, _fetch_tags_with_count)
+
+
+def _fetch_tags_with_count():
     conn = get_conn()
     try:
         rows = conn.execute(
@@ -1999,6 +2020,10 @@ def get_all_tags_with_count():
 
 def get_all_circles_with_count():
     """(サークル名, 作品数) のリストを作品数の多い順で返す"""
+    return cache.get(CACHE_KEY_CIRCLES_WITH_COUNT, _fetch_circles_with_count)
+
+
+def _fetch_circles_with_count():
     conn = get_conn()
     try:
         rows = conn.execute(
@@ -2025,6 +2050,10 @@ def get_all_characters():
 
 def get_all_characters_with_count():
     """(キャラクター, 作品数) のリストを作品数の多い順で返す（booksテーブルに存在するもののみ）"""
+    return cache.get(CACHE_KEY_CHARACTERS_WITH_COUNT, _fetch_characters_with_count)
+
+
+def _fetch_characters_with_count():
     conn = get_conn()
     try:
         rows = conn.execute(
@@ -2052,6 +2081,10 @@ def get_all_authors():
 
 def get_all_authors_with_count():
     """(作者, 作品数) のリストを作品数の多い順で返す（booksテーブルに存在するもののみ）"""
+    return cache.get(CACHE_KEY_AUTHORS_WITH_COUNT, _fetch_authors_with_count)
+
+
+def _fetch_authors_with_count():
     conn = get_conn()
     try:
         rows = conn.execute(
@@ -2128,6 +2161,10 @@ def get_all_circles():
 
 def get_all_series_with_count():
     """(シリーズ, 作品数) のリストを作品数の多い順で返す"""
+    return cache.get(CACHE_KEY_SERIES_WITH_COUNT, _fetch_series_with_count)
+
+
+def _fetch_series_with_count():
     conn = get_conn()
     try:
         rows = conn.execute(

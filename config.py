@@ -567,11 +567,39 @@ VIEWER_SLIDER_HANDLE_MARGIN_Y = -5
 INITIAL_SCAN_SUPPRESS_DIALOG_SEC = 3.0
 
 # ── フィルターポップオーバー（ゴーストバー🔧）────────────────────────
-FILTER_POPOVER_WIDTH = 380        # ポップオーバー幅(px)
+# filter_popover.py: 即時反映パネルのヘッダー・コンボ先頭項目
+FILTER_PANEL_TITLE = "フィルター"
+FILTER_PANEL_NONE_LABEL = "指定なし"
+# 条件行コンボ横の「×」ラベル（ヘッダ閉じるボタン廃止後も行削除で使用）
+FILTER_PANEL_CLOSE_SYMBOL = "×"
+# filter_popover.py: 条件行コンボ横の「×」（1件だけ削除）ツールチップ
+FILTER_POPOVER_COMBO_CLEAR_TOOLTIP = "この条件を削除"
+# filter_popover.py: 条件の結合（項目間 AND / OR）トグルラベル
+FILTER_POPOVER_LOGIC_AND_LABEL = "すべて一致"
+FILTER_POPOVER_LOGIC_OR_LABEL = "どれか一致"
+# filter_popover.py: パネル下部の条件一括クリアボタンラベル
+FILTER_POPOVER_CLEAR_LABEL = "クリア"
+
+FILTER_POPOVER_WIDTH = 320        # ポップオーバー幅(px)
 FILTER_POPOVER_ROW_HEIGHT = 26    # 1行の高さ(px)。コンボ・入力欄・追加/クリアボタンの基準（表示時は左コンボに同期）
 FILTER_POPOVER_LIST_HEIGHT = 120   # 条件リストの高さ(px)
 FILTER_POPOVER_MARGINS = 8         # レイアウト余白(px)
 FILTER_POPOVER_SPACING = 6        # レイアウト間隔(px)
+# filter_popover.py: 作者/サークル等のセクション（見出し〜コンボ群）同士の余白(px)
+FILTER_POPOVER_SECTION_SPACING = 12
+# filter_popover.py: QComboBox QSS の上下 padding（文字・枠の見切れ防止）
+FILTER_POPOVER_COMBO_PADDING_Y = 3
+# filter_popover.py: QComboBox 外観の高さ(px)。QSS min-height・setMinimumHeight・行の×ボタンと一致
+FILTER_POPOVER_COMBO_OUTER_HEIGHT = (
+    FILTER_POPOVER_ROW_HEIGHT + 2 * FILTER_POPOVER_COMBO_PADDING_Y
+)
+# filter_popover.py: QComboBox テキスト左右余白(px)。狭い FILTER_POPOVER_WIDTH 向け
+FILTER_POPOVER_COMBO_PADDING_LEFT = 6
+FILTER_POPOVER_COMBO_PADDING_RIGHT = 4
+# filter_popover.py: QComboBox 右端▼領域の幅(px)（高さと同じにするとテキストが狭く途切れやすい）
+FILTER_POPOVER_COMBO_DROPDOWN_WIDTH = 22
+# filter_popover.py: QComboBox 最小幅の目安文字数（候補が長くても横に暴れない）
+FILTER_POPOVER_COMBO_MIN_VISIBLE_CHARS = 12
 FILTER_POPOVER_ROW_SPACING = 4     # 条件追加行内の間隔(px)
 FILTER_POPOVER_RADIO_INDICATOR = 12   # ラジオボタンインジケータの幅・高さ(px)
 FILTER_POPOVER_BORDER_RADIUS = 6  # ダイアログ・ボタン角丸(px)
@@ -585,6 +613,8 @@ FILTER_POPOVER_SHOW_SYNC_DELAY_MS = 50      # showEvent 後にボタン高さ同
 # filter_popover.py: 下部ボタンのQSS padding（上下, 左右）
 FILTER_POPOVER_ACTION_BTN_PADDING_Y = 2
 FILTER_POPOVER_ACTION_BTN_PADDING_X = 8
+# filter_popover.py: 下部 AND/OR トグルボタンの高さ(px)
+FILTER_POPOVER_LOGIC_TOGGLE_HEIGHT = 32
 
 # ── フォルダ名・表示名の命名規則 ─────────────────────────────
 # 形式: [サークル名]作品名（サークルなしのときは作品名のみ）

@@ -176,6 +176,8 @@ THEME_COLORS = {
     "bg_widget":      COLOR_BG_WIDGET,
     "accent":         COLOR_ACCENT,
     "accent_hover":   COLOR_ACCENT_HOVER,
+    # アクセント色の塗り上の文字（フィルタ論理トグル ON 等）
+    "fg_on_accent":   COLOR_WHITE,
     "text_main":      COLOR_TEXT_MAIN,
     "text_sub":       COLOR_TEXT_SUB,
     "menu_disabled":  COLOR_MENU_DISABLED,
@@ -202,6 +204,8 @@ THEME_COLORS = {
     "btn_save_border": COLOR_BTN_SAVE_BORDER,
     "btn_cancel":     COLOR_BTN_CANCEL,
     "btn_cancel_border": COLOR_BTN_CANCEL_BORDER,
+    # キャンセル系ボタン上の文字色（BTN_CANCEL_STYLE と同じ白）
+    "btn_cancel_fg":  COLOR_WHITE,
 }
 
 # ドロップダウン矢印文字（ここを変えれば全箇所に反映）

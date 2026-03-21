@@ -1,65 +1,83 @@
 from __future__ import annotations
 
-from typing import Callable
+from collections import defaultdict
+from typing import Callable, Optional
 
 from PySide6.QtWidgets import (
-    QDialog,
+    QWidget,
     QVBoxLayout,
     QHBoxLayout,
     QLabel,
     QComboBox,
     QPushButton,
-    QListWidget,
-    QListWidgetItem,
-    QRadioButton,
     QButtonGroup,
+    QSizePolicy,
+    QScrollArea,
+    QFrame,
 )
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QApplication
-from PySide6.QtGui import QFont
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QFont, QWheelEvent
 
 import config
 import db
-from theme import (
-    THEME_COLORS,
-    COLOR_WHITE,
-    COLOR_BTN_SAVE,
-    COLOR_BTN_SAVE_BORDER,
-    COLOR_BTN_CANCEL,
-    COLOR_BTN_CANCEL_BORDER,
+from theme import THEME_COLORS
+
+# フィールドキー → パネル上の見出しラベル（文言のみ）
+_FIELD_LABELS: dict[str, str] = {
+    "author": "作者",
+    "circle": "サークル",
+    "series": "シリーズ",
+    "character": "キャラクター",
+    "tag": "タグ",
+}
+
+_FIELD_ORDER: tuple[str, ...] = (
+    "author",
+    "circle",
+    "series",
+    "character",
+    "tag",
 )
 
 
-class FilterPopover(QDialog):
-    """ゴーストバーのフィルター設定用ポップオーバー"""
+class _NoWheelComboBox(QComboBox):
+    """ホイールで選択が変わらないようにし、スクロールは親へ任せる。"""
+
+    def wheelEvent(self, event: QWheelEvent) -> None:
+        event.ignore()
+
+
+class FilterPopover(QWidget):
+    """メインウィンドウ右側の即時反映フィルターパネル（項目ごと動的ドロップダウン）。"""
 
     def __init__(
         self,
         parent,
         on_apply: Callable[[list[dict], str], None],
         on_clear: Callable[[], None],
-        on_remove: Callable[[int], None] | None = None,
+        on_clear_only: Optional[Callable[[], None]] = None,
     ):
         super().__init__(parent)
-        # Popup: ウィンドウ外をクリック or フォーカスが外れると自動で閉じる
-        self.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
         self.setObjectName("FilterPopover")
         self.setFixedWidth(config.FILTER_POPOVER_WIDTH)
+        self.setSizePolicy(
+            QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding
+        )
 
         self._on_apply = on_apply
         self._on_clear = on_clear
-        self._on_remove = on_remove
-        self._conditions: list[dict] = []
+        self._on_clear_only = on_clear_only
+        # 項目別：コンボを上から順に保持
+        self._section_layouts: dict[str, QVBoxLayout] = {}
+        self._combo_rows: dict[str, list[QComboBox]] = {
+            k: [] for k in _FIELD_ORDER
+        }
+        # フィルタ結合: 項目間 and / or（_emit_apply で on_apply に渡す）
+        self._logic: str = "and"
 
         self._build_ui()
 
-    def _build_ui(self):
-        # 【高さの洗い出し】高さを決めている箇所は以下のみ。個別に別の値を入れないこと。
-        # - row_h = config.FILTER_POPOVER_ROW_HEIGHT（コンボ・ボタン共通の基準）
-        # - _field_combo / _value_combo : setFixedHeight(row_h)
-        # - _btn_add : setFixedSize(row_h, row_h) → 表示後 _sync_button_height_to_combo で左コンボ高さに統一
-        # - _list : setFixedHeight(config.FILTER_POPOVER_LIST_HEIGHT)
-        # - _btn_apply / _btn_clear : setFixedHeight(row_h) → 表示後 _sync で左コンボ高さに統一
+    def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(
             config.FILTER_POPOVER_MARGINS,
@@ -67,289 +85,481 @@ class FilterPopover(QDialog):
             config.FILTER_POPOVER_MARGINS,
             config.FILTER_POPOVER_MARGINS,
         )
-        layout.setSpacing(config.FILTER_POPOVER_SPACING)
+        layout.setSpacing(config.LAYOUT_SPACING_ZERO)
 
-        row_h = config.FILTER_POPOVER_ROW_HEIGHT
-
-        # 条件追加行
-        row = QHBoxLayout()
-        row.setSpacing(config.FILTER_POPOVER_ROW_SPACING)
-
-        self._field_combo = QComboBox()
-        self._field_combo.setFixedHeight(row_h)
-        self._field_combo.setFont(QFont(config.FONT_FAMILY, config.FONT_SIZE_DIALOG_INPUT))
-        self._field_combo.addItem("作者", "author")
-        self._field_combo.addItem("サークル", "circle")
-        self._field_combo.addItem("シリーズ", "series")
-        self._field_combo.addItem("キャラクター", "character")
-        self._field_combo.addItem("タグ", "tag")
-        row.addWidget(self._field_combo, 0, Qt.AlignmentFlag.AlignVCenter)
-
-        # 入力フィールド兼プルダウン（editable QComboBox）
-        self._value_combo = QComboBox()
-        self._value_combo.setFixedHeight(row_h)
-        self._value_combo.setEditable(True)
-        row.addWidget(self._value_combo, 1, Qt.AlignmentFlag.AlignVCenter)
-
-        # 入力欄のIMEやプレースホルダ設定
-        line_edit = self._value_combo.lineEdit()
-        if line_edit is not None:
-            line_edit.setPlaceholderText("値を入力")
-            line_edit.setInputMethodHints(Qt.ImhNone)
-
-        # 上段の「+」ボタン（コンボ2つの右隣）。テーマの決定ボタン色・縦中央でコンボと揃える
-        self._btn_add = QPushButton("+")
-        self._btn_add.setFixedSize(row_h, row_h)
-        self._btn_add.setStyleSheet(
-            f"""
-            QPushButton {{
-                background: {COLOR_BTN_SAVE}; color: {COLOR_WHITE};
-                border: 1px solid {COLOR_BTN_SAVE_BORDER}; border-radius: {config.FILTER_POPOVER_BORDER_RADIUS}px;
-                padding: 0;
-            }}
-            QPushButton:hover {{ background: {COLOR_BTN_SAVE_BORDER}; }}
-            """
+        # 上部: AND / OR 切り替え
+        header = QWidget()
+        header_lo = QHBoxLayout(header)
+        header_lo.setContentsMargins(
+            0,
+            0,
+            0,
+            config.FILTER_POPOVER_SECTION_SPACING,
         )
-        self._btn_add.clicked.connect(self._on_add_condition)
-        row.addWidget(self._btn_add, 0, Qt.AlignmentFlag.AlignVCenter)
-
-        layout.addLayout(row)
-
-        # 項目変更でプルダウンを更新
-        self._field_combo.currentIndexChanged.connect(self._on_field_changed)
-
-        # 一致条件（ラジオボタン）
-        radio_row = QHBoxLayout()
-        radio_row.setSpacing(config.FILTER_POPOVER_ROW_SPACING * 2)
-        lbl = QLabel("一致条件:")
-        radio_row.addWidget(lbl)
-        self._radio_all = QRadioButton("すべて一致")
-        self._radio_any = QRadioButton("どれか一致")
-        self._radio_all.setChecked(True)
-        group = QButtonGroup(self)
-        group.addButton(self._radio_all)
-        group.addButton(self._radio_any)
-        radio_row.addWidget(self._radio_all)
-        radio_row.addWidget(self._radio_any)
-        radio_row.addStretch()
-        layout.addLayout(radio_row)
-
-        # 条件リスト
-        self._list = QListWidget()
-        self._list.setFixedHeight(config.FILTER_POPOVER_LIST_HEIGHT)
-        layout.addWidget(self._list)
-
-        # 下部ボタン（上段のコンボ・入力欄と同じ高さに揃える）
-        btn_row = QHBoxLayout()
-        btn_row.addStretch()
-
-        self._btn_apply = QPushButton("適用")
-        self._btn_apply.setFixedSize(config.FILTER_POPOVER_APPLY_BTN_WIDTH, row_h)
-        self._btn_apply.setStyleSheet(
-            f"""
-            QPushButton {{
-                background: {COLOR_BTN_SAVE}; color: {COLOR_WHITE};
-                border: 1px solid {COLOR_BTN_SAVE_BORDER}; border-radius: {config.FILTER_POPOVER_BORDER_RADIUS}px;
-                padding: {config.FILTER_POPOVER_ACTION_BTN_PADDING_Y}px {config.FILTER_POPOVER_ACTION_BTN_PADDING_X}px;
-            }}
-            QPushButton:hover {{ background: {COLOR_BTN_SAVE_BORDER}; }}
-            """
+        header_lo.setSpacing(config.FILTER_POPOVER_ROW_SPACING)
+        self._btn_logic_and = QPushButton(config.FILTER_POPOVER_LOGIC_AND_LABEL)
+        self._btn_logic_or = QPushButton(config.FILTER_POPOVER_LOGIC_OR_LABEL)
+        self._btn_logic_and.setObjectName("FilterLogicToggleButton")
+        self._btn_logic_or.setObjectName("FilterLogicToggleButton")
+        self._btn_logic_and.setCheckable(True)
+        self._btn_logic_or.setCheckable(True)
+        self._btn_logic_and.setChecked(True)
+        self._btn_logic_and.setFixedHeight(config.FILTER_POPOVER_LOGIC_TOGGLE_HEIGHT)
+        self._btn_logic_or.setFixedHeight(config.FILTER_POPOVER_LOGIC_TOGGLE_HEIGHT)
+        self._btn_logic_and.setFont(
+            QFont(config.FONT_FAMILY, config.FONT_SIZE_BTN_ACTION)
         )
-        self._btn_apply.clicked.connect(self._on_apply_clicked)
-        btn_row.addWidget(self._btn_apply)
+        self._btn_logic_or.setFont(
+            QFont(config.FONT_FAMILY, config.FONT_SIZE_BTN_ACTION)
+        )
+        self._logic_button_group = QButtonGroup(self)
+        self._logic_button_group.setExclusive(True)
+        self._logic_button_group.addButton(self._btn_logic_and, 0)
+        self._logic_button_group.addButton(self._btn_logic_or, 1)
+        self._logic_button_group.idClicked.connect(self._on_logic_id_clicked)
+        header_lo.addWidget(self._btn_logic_and, stretch=1)
+        header_lo.addWidget(self._btn_logic_or, stretch=1)
+        layout.addWidget(header)
 
-        self._btn_clear = QPushButton("クリア")
-        self._btn_clear.setFixedSize(config.FILTER_POPOVER_CLEAR_BTN_WIDTH, row_h)
-        self._btn_clear.setStyleSheet(
-            f"""
-            QPushButton {{
-                background: {COLOR_BTN_CANCEL}; color: {COLOR_WHITE};
-                border: 1px solid {COLOR_BTN_CANCEL_BORDER}; border-radius: {config.FILTER_POPOVER_BORDER_RADIUS}px;
-                padding: {config.FILTER_POPOVER_ACTION_BTN_PADDING_Y}px {config.FILTER_POPOVER_ACTION_BTN_PADDING_X}px;
-            }}
-            QPushButton:hover {{ background: {COLOR_BTN_CANCEL_BORDER}; }}
-            """
+        scroll = QScrollArea()
+        scroll.setObjectName("FilterPanelScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+
+        inner = QWidget()
+        inner.setObjectName("FilterPanelScrollContents")
+        inner.setMinimumWidth(0)
+        inner_lo = QVBoxLayout(inner)
+        inner_lo.setContentsMargins(0, 0, 0, 0)
+        inner_lo.setSpacing(config.FILTER_POPOVER_SPACING)
+
+        title = QLabel(config.FILTER_PANEL_TITLE)
+        title.setFont(
+            QFont(config.FONT_FAMILY, config.FONT_SIZE_DIALOG_LABEL)
+        )
+        inner_lo.addWidget(title)
+
+        for i, field_key in enumerate(_FIELD_ORDER):
+            if i > 0:
+                inner_lo.addSpacing(config.FILTER_POPOVER_SECTION_SPACING)
+            lbl = QLabel(_FIELD_LABELS.get(field_key, field_key))
+            lbl.setFont(
+                QFont(config.FONT_FAMILY, config.FONT_SIZE_DIALOG_LABEL)
+            )
+            inner_lo.addWidget(lbl)
+
+            section = QWidget()
+            sec_lo = QVBoxLayout(section)
+            sec_lo.setContentsMargins(0, 0, 0, 0)
+            sec_lo.setSpacing(config.FILTER_POPOVER_ROW_SPACING)
+            self._section_layouts[field_key] = sec_lo
+            inner_lo.addWidget(section)
+            self._append_empty_combo(field_key)
+
+        inner_lo.addStretch()
+        scroll.setWidget(inner)
+        layout.addWidget(scroll, stretch=1)
+
+        # 下部: 条件一括クリア
+        footer = QWidget()
+        footer_lo = QHBoxLayout(footer)
+        footer_lo.setContentsMargins(
+            0,
+            config.FILTER_POPOVER_SECTION_SPACING,
+            0,
+            0,
+        )
+        footer_lo.setSpacing(config.FILTER_POPOVER_ROW_SPACING)
+        self._btn_clear = QPushButton(config.FILTER_POPOVER_CLEAR_LABEL)
+        self._btn_clear.setObjectName("FilterClearButton")
+        self._btn_clear.setFixedHeight(config.FILTER_POPOVER_LOGIC_TOGGLE_HEIGHT)
+        self._btn_clear.setFont(
+            QFont(config.FONT_FAMILY, config.FONT_SIZE_BTN_ACTION)
         )
         self._btn_clear.clicked.connect(self._on_clear_clicked)
-        btn_row.addWidget(self._btn_clear)
+        footer_lo.addWidget(self._btn_clear, stretch=1)
+        layout.addWidget(footer)
 
-        layout.addLayout(btn_row)
-
-        # 条件リストクリックで個別削除
-        self._list.itemClicked.connect(self._on_list_item_clicked)
-
-        # スタイル（QPushButton の高さはコードで統一。上段「+」は padding を詰めてコンボと視覚的に揃える）
         self.setStyleSheet(
             f"""
-            QDialog#FilterPopover {{
+            QWidget#FilterPopover {{
                 background-color: {THEME_COLORS["bg_panel"]};
                 color: {THEME_COLORS["text_main"]};
                 border: 1px solid {THEME_COLORS["border"]};
                 border-radius: {config.FILTER_POPOVER_BORDER_RADIUS}px;
             }}
-            QDialog#FilterPopover QPushButton {{
-                padding: 0;
+            QScrollArea#FilterPanelScroll {{
+                background-color: transparent;
+                border: none;
             }}
-            QListWidget {{
+            QWidget#FilterPanelScrollContents {{
+                background-color: transparent;
+            }}
+            QWidget#FilterPopover QComboBox {{
                 background-color: {THEME_COLORS["bg_widget"]};
+                color: {THEME_COLORS["text_main"]};
                 border: 1px solid {THEME_COLORS["border"]};
                 border-radius: {config.FILTER_POPOVER_LIST_RADIUS}px;
+                padding-top: {config.FILTER_POPOVER_COMBO_PADDING_Y}px;
+                padding-bottom: {config.FILTER_POPOVER_COMBO_PADDING_Y}px;
+                padding-left: {config.FILTER_POPOVER_COMBO_PADDING_LEFT}px;
+                padding-right: {config.FILTER_POPOVER_COMBO_PADDING_RIGHT}px;
+                min-width: 0;
+                min-height: {config.FILTER_POPOVER_COMBO_OUTER_HEIGHT}px;
             }}
-            QRadioButton {{
-                background-color: transparent;
+            QWidget#FilterPopover QComboBox:hover {{
+                border-color: {THEME_COLORS["accent"]};
             }}
-            QRadioButton::indicator {{
-                width: {config.FILTER_POPOVER_RADIO_INDICATOR}px;
-                height: {config.FILTER_POPOVER_RADIO_INDICATOR}px;
-                border-radius: {config.FILTER_POPOVER_RADIO_INDICATOR // 2}px;
-                border: 1px solid {THEME_COLORS["text_main"]};
-                background-color: transparent;
+            QWidget#FilterPopover QComboBox::drop-down {{
+                border: none;
+                width: {config.FILTER_POPOVER_COMBO_DROPDOWN_WIDTH}px;
             }}
-            QRadioButton::indicator:checked {{
-                background-color: {THEME_COLORS["text_main"]};
+            QWidget#FilterPopover QPushButton#FilterComboClearButton {{
+                background: {THEME_COLORS["btn_cancel"]};
+                color: {THEME_COLORS["btn_cancel_fg"]};
+                border: 1px solid {THEME_COLORS["btn_cancel_border"]};
+                border-radius: {config.FILTER_POPOVER_BORDER_RADIUS}px;
+                padding: 0;
+            }}
+            QWidget#FilterPopover QPushButton#FilterComboClearButton:hover {{
+                background: {THEME_COLORS["btn_cancel_border"]};
+                color: {THEME_COLORS["btn_cancel_fg"]};
+            }}
+            QWidget#FilterPopover QPushButton#FilterLogicToggleButton {{
+                background-color: {THEME_COLORS["bg_widget"]};
+                color: {THEME_COLORS["text_main"]};
+                border: 1px solid {THEME_COLORS["border"]};
+                border-radius: {config.FILTER_POPOVER_BORDER_RADIUS}px;
+                padding: {config.FILTER_POPOVER_ACTION_BTN_PADDING_Y}px
+                    {config.FILTER_POPOVER_ACTION_BTN_PADDING_X}px;
+            }}
+            QWidget#FilterPopover QPushButton#FilterLogicToggleButton:checked {{
+                background-color: {THEME_COLORS["accent"]};
+                border-color: {THEME_COLORS["accent"]};
+                color: {THEME_COLORS["fg_on_accent"]};
+            }}
+            QWidget#FilterPopover QPushButton#FilterClearButton {{
+                background: {THEME_COLORS["btn_cancel"]};
+                color: {THEME_COLORS["btn_cancel_fg"]};
+                border: 1px solid {THEME_COLORS["btn_cancel_border"]};
+                border-radius: {config.FILTER_POPOVER_BORDER_RADIUS}px;
+                padding: {config.FILTER_POPOVER_ACTION_BTN_PADDING_Y}px
+                    {config.FILTER_POPOVER_ACTION_BTN_PADDING_X}px;
+            }}
+            QWidget#FilterPopover QPushButton#FilterClearButton:hover {{
+                background: {THEME_COLORS["btn_cancel_border"]};
+                color: {THEME_COLORS["btn_cancel_fg"]};
             }}
             """
         )
 
-        # 初期のプルダウン内容をロード
-        self._reload_value_combo()
-
-    def focusOutEvent(self, event):
-        """フォーカスが外れたら閉じる（他ウィジェットへ移ったか、ウィンドウ外クリック）"""
-        super().focusOutEvent(event)
-        # イベント処理後にフォーカスがまだポップオーバー内かどうかで判定
-        QTimer.singleShot(config.FILTER_POPOVER_FOCUS_CHECK_DELAY_MS, self._check_focus_and_close)
-
-    def _check_focus_and_close(self):
-        if not self.isVisible():
-            return
-        fw = QApplication.focusWidget()
-        if fw is None:
-            self.hide()
-            return
-        # フォーカスがこのダイアログまたはその子でないなら閉じる
-        if not self.isAncestorOf(fw) and fw != self:
-            self.hide()
-
-    def showEvent(self, event):
-        """表示時に値入力欄を空にする。左コンボの高さを参照して下部ボタン高さを同期する。"""
-        super().showEvent(event)
-        if hasattr(self, "_value_combo"):
-            self._value_combo.setCurrentIndex(-1)
-            self._value_combo.setCurrentText("")
-        # 左コンボの実際の高さに「+」「追加」「クリア」を揃える（レイアウト適用後に実行）
-        QTimer.singleShot(config.FILTER_POPOVER_SHOW_SYNC_DELAY_MS, self._sync_button_height_to_combo)
-
-    def _sync_button_height_to_combo(self):
-        """左コンボの高さを参照し、上段の「+」ボタンと下部の追加・クリアボタンの高さを同じにする。
-        高さはここで一元で設定（個別に setFixedHeight している箇所と表示時ここで揃える）。
-        """
-        if not hasattr(self, "_field_combo"):
-            return
-        h = self._field_combo.height()
-        if h <= 0:
-            h = self._field_combo.sizeHint().height()
-        if h <= 0:
-            h = config.FILTER_POPOVER_ROW_HEIGHT
-        # 上段：コンボ2つの右隣の「+」ボタン（挿入ボタン）
-        if hasattr(self, "_btn_add"):
-            self._btn_add.setFixedSize(h, h)
-        # 下部：追加・クリアボタン
-        if hasattr(self, "_btn_apply"):
-            self._btn_apply.setFixedHeight(h)
-        if hasattr(self, "_btn_clear"):
-            self._btn_clear.setFixedHeight(h)
-
-    def _on_add_condition(self):
-        field = self._field_combo.currentData() or ""
-        value = self._value_combo.currentText().strip()
-        if not field or not value:
-            return
-        self._conditions.append({"field": field, "value": value})
-        self._value_combo.setCurrentText("")
-        self._refresh_list()
-
-    def _refresh_list(self):
-        self._list.clear()
-        label_map = {
-            "author": "作者",
-            "circle": "サークル",
-            "series": "シリーズ",
-            "character": "キャラクター",
-            "tag": "タグ",
-        }
-        for cond in self._conditions:
-            field = cond.get("field")
-            value = cond.get("value")
-            label = label_map.get(field, field)
-            item = QListWidgetItem(f"{label}: {value}  [×]")
-            self._list.addItem(item)
-
-    def _on_apply_clicked(self):
-        logic = "and" if self._radio_all.isChecked() else "or"
-        if self._on_apply:
-            self._on_apply(self._conditions, logic)
-        self.hide()
-
-    def _on_clear_clicked(self):
-        self._conditions.clear()
-        self._refresh_list()
-        if self._on_clear:
-            self._on_clear()
-        self.hide()
-
-    # ── プルダウン連携 ──────────────────────────────────
-    def _on_field_changed(self, index: int):
-        self._reload_value_combo()
-
-    def _reload_value_combo(self):
-        """左側の項目に応じて既存値プルダウンを切り替える"""
-        if not hasattr(self, "_value_combo"):
-            return
-        field = self._field_combo.currentData() or ""
-        self._value_combo.blockSignals(True)
-        self._value_combo.clear()
+    def _fetch_items(self, field: str) -> list[str]:
+        items: list[str] = []
         try:
-            items: list[str] = []
             if field == "author":
-                items = [name for name, _cnt in db.get_all_authors_with_count()]
+                items = [n for n, _c in db.get_all_authors_with_count() if n]
             elif field == "circle":
-                rows = db.get_all_circles_with_count()
-                items = [name for name, _cnt in rows]
+                items = [n for n, _c in db.get_all_circles_with_count() if n]
             elif field == "series":
-                rows = db.get_all_series_with_count()
-                items = [name for name, _cnt in rows]
+                items = [n for n, _c in db.get_all_series_with_count() if n]
             elif field == "character":
-                rows = db.get_all_characters_with_count()
-                items = [name for name, _cnt in rows]
+                items = [n for n, _c in db.get_all_characters_with_count() if n]
             elif field == "tag":
-                rows = db.get_all_tags_with_count()
-                items = [name for name, _cnt in rows]
-
-            for name in items:
-                if name:
-                    self._value_combo.addItem(name)
+                items = [n for n, _c in db.get_all_tags_with_count() if n]
         except Exception:
             pass
+        return items
+
+    def _populate_combo(self, combo: QComboBox, field: str) -> None:
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem(config.FILTER_PANEL_NONE_LABEL, None)
+        for name in self._fetch_items(field):
+            combo.addItem(name, name)
+        combo.blockSignals(False)
+
+    def _create_combo(self, field: str) -> QComboBox:
+        cb = _NoWheelComboBox()
+        cb.setMinimumHeight(config.FILTER_POPOVER_COMBO_OUTER_HEIGHT)
+        cb.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
+        cb.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        cb.setMinimumContentsLength(
+            config.FILTER_POPOVER_COMBO_MIN_VISIBLE_CHARS
+        )
+        cb.setFont(QFont(config.FONT_FAMILY, config.FONT_SIZE_DIALOG_INPUT))
+        cb.setEditable(False)
+        cb.view().setAutoScroll(False)
+        self._populate_combo(cb, field)
+        cb.currentIndexChanged.connect(
+            lambda _i, fk=field: self._on_field_combo_changed(fk)
+        )
+        return cb
+
+    def _wrap_combo_with_clear(self, field: str, combo: QComboBox) -> QWidget:
+        """コンボと×（1行削除）を横並びにした行ウィジェット。"""
+        row = QWidget()
+        row_lo = QHBoxLayout(row)
+        row_lo.setContentsMargins(0, 0, 0, 0)
+        row_lo.setSpacing(config.FILTER_POPOVER_ROW_SPACING)
+        row_lo.addWidget(combo, stretch=1)
+        btn_clear = QPushButton(config.FILTER_PANEL_CLOSE_SYMBOL)
+        btn_clear.setObjectName("FilterComboClearButton")
+        btn_clear.setFixedSize(
+            config.FILTER_POPOVER_COMBO_OUTER_HEIGHT,
+            config.FILTER_POPOVER_COMBO_OUTER_HEIGHT,
+        )
+        btn_clear.setToolTip(config.FILTER_POPOVER_COMBO_CLEAR_TOOLTIP)
+        btn_clear.setVisible(combo.currentIndex() > 0)
+        row_lo.addWidget(btn_clear, 0, Qt.AlignmentFlag.AlignVCenter)
+        btn_clear.clicked.connect(
+            lambda _checked=False, fk=field, c=combo: self._on_combo_clear_clicked(
+                fk, c
+            )
+        )
+        return row
+
+    def _clear_button_for_combo_row(self, combo: QComboBox) -> QPushButton | None:
+        """コンボ行レイアウト内の×ボタンを取得（[コンボ][×] の順で配置している前提）。"""
+        row = combo.parentWidget()
+        if row is None:
+            return None
+        lay = row.layout()
+        if lay is None or lay.count() < 2:
+            return None
+        item = lay.itemAt(1)
+        if item is None:
+            return None
+        w = item.widget()
+        return w if isinstance(w, QPushButton) else None
+
+    def _refresh_clear_buttons(self, field: str) -> None:
+        """選択済み（currentIndex > 0）の行だけ×を表示する。"""
+        for c in self._combo_rows[field]:
+            btn = self._clear_button_for_combo_row(c)
+            if btn is not None:
+                btn.setVisible(c.currentIndex() > 0)
+
+    def _on_combo_clear_clicked(self, field: str, combo: QComboBox) -> None:
+        if combo not in self._combo_rows[field]:
+            return
+        self._block_field_signals(field, True)
+        try:
+            self._remove_combo(field, combo)
+            self._normalize_field(field)
+            self._refresh_clear_buttons(field)
         finally:
-            self._value_combo.blockSignals(False)
-            # 初期値は入れない。選択または入力したときだけ値が入る
-            self._value_combo.setCurrentIndex(-1)
-            self._value_combo.setCurrentText("")
+            self._block_field_signals(field, False)
+        self._emit_apply()
 
-    def reset(self):
-        """条件リストと選択項目をすべてクリア"""
-        self._conditions = []
-        self._refresh_list()
-        # 入力フィールド（editable combo）のテキストもクリア
-        self._value_combo.setCurrentText("")
+    def _append_empty_combo(self, field: str) -> QComboBox:
+        lo = self._section_layouts[field]
+        cb = self._create_combo(field)
+        cb.blockSignals(True)
+        cb.setCurrentIndex(0)
+        cb.blockSignals(False)
+        row = self._wrap_combo_with_clear(field, cb)
+        lo.addWidget(row)
+        self._combo_rows[field].append(cb)
+        return cb
 
-    def _on_list_item_clicked(self, item: QListWidgetItem):
-        """条件リスト内の項目クリックでその条件を削除"""
-        row = self._list.row(item)
-        if 0 <= row < len(self._conditions):
-            self._conditions.pop(row)
-            self._refresh_list()
-            if self._on_remove:
-                self._on_remove(row)
+    def _remove_combo(self, field: str, combo: QComboBox) -> None:
+        if combo not in self._combo_rows[field]:
+            return
+        self._combo_rows[field].remove(combo)
+        row = combo.parentWidget()
+        if row is not None:
+            self._section_layouts[field].removeWidget(row)
+            row.deleteLater()
+        else:
+            self._section_layouts[field].removeWidget(combo)
+            combo.deleteLater()
 
+    def _block_field_signals(self, field: str, block: bool) -> None:
+        for c in self._combo_rows[field]:
+            c.blockSignals(block)
+
+    def _on_field_combo_changed(self, field: str) -> None:
+        self._block_field_signals(field, True)
+        try:
+            self._normalize_field(field)
+            self._refresh_clear_buttons(field)
+        finally:
+            self._block_field_signals(field, False)
+        self._emit_apply()
+
+    def _normalize_field(self, field: str) -> None:
+        """末尾の重複「指定なし」を削除し、値があるときは末尾に空枠1つを保証する。"""
+        rows = self._combo_rows[field]
+        if not rows:
+            self._append_empty_combo(field)
+            return
+
+        # 末尾が「指定なし」が2つ以上続く場合は1つまで削る
+        while (
+            len(rows) >= 2
+            and rows[-1].currentIndex() == 0
+            and rows[-2].currentIndex() == 0
+        ):
+            self._remove_combo(field, rows[-1])
+            rows = self._combo_rows[field]
+
+        has_value = any(c.currentIndex() > 0 for c in rows)
+
+        if has_value:
+            if rows[-1].currentIndex() != 0:
+                self._append_empty_combo(field)
+        else:
+            while len(rows) > 1:
+                self._remove_combo(field, rows[-1])
+                rows = self._combo_rows[field]
+
+    def _emit_apply(self) -> None:
+        conditions: list[dict] = []
+        for field in _FIELD_ORDER:
+            seen: set[str] = set()
+            for cb in self._combo_rows[field]:
+                if cb.currentIndex() <= 0:
+                    continue
+                value = (cb.currentText() or "").strip()
+                if not value or value in seen:
+                    continue
+                seen.add(value)
+                conditions.append({"field": field, "value": value})
+        if self._on_apply:
+            self._on_apply(conditions, self._logic)
+
+    def _on_logic_id_clicked(self, button_id: int) -> None:
+        """AND/OR トグル。変更時のみ即時フィルタを反映する。"""
+        new_logic = "and" if button_id == 0 else "or"
+        if new_logic == self._logic:
+            return
+        self._logic = new_logic
+        self._emit_apply()
+
+    def _on_clear_clicked(self) -> None:
+        """パネル下部クリア: UI リセット後に親へ反映（on_clear_only 優先）。"""
+        self.reset()
+        if self._on_clear_only:
+            self._on_clear_only()
+        elif self._on_clear:
+            self._on_clear()
+
+    def reset(self) -> None:
+        self._btn_logic_and.blockSignals(True)
+        self._btn_logic_or.blockSignals(True)
+        try:
+            self._logic = "and"
+            self._btn_logic_and.setChecked(True)
+            self._btn_logic_or.setChecked(False)
+        finally:
+            self._btn_logic_and.blockSignals(False)
+            self._btn_logic_or.blockSignals(False)
+        for field in _FIELD_ORDER:
+            self._block_field_signals(field, True)
+            try:
+                while len(self._combo_rows[field]) > 1:
+                    self._remove_combo(field, self._combo_rows[field][-1])
+                if self._combo_rows[field]:
+                    self._combo_rows[field][0].setCurrentIndex(0)
+                self._refresh_clear_buttons(field)
+            finally:
+                self._block_field_signals(field, False)
+
+    def _repopulate_combo_preserve(self, combo: QComboBox, field: str) -> None:
+        prev = ""
+        if combo.currentIndex() > 0:
+            prev = combo.currentText().strip()
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem(config.FILTER_PANEL_NONE_LABEL, None)
+        for name in self._fetch_items(field):
+            combo.addItem(name, name)
+        if prev:
+            idx = combo.findText(prev, Qt.MatchFlag.MatchExactly)
+            if idx >= 0:
+                combo.setCurrentIndex(idx)
+            else:
+                combo.addItem(prev, prev)
+                combo.setCurrentIndex(combo.count() - 1)
+        else:
+            combo.setCurrentIndex(0)
+        combo.blockSignals(False)
+
+    def repopulate_all_combos(self) -> None:
+        """全フィールドのコンボ候補を DB 最新で再構築し、親へフィルタを再適用する。"""
+        for field in _FIELD_ORDER:
+            self._block_field_signals(field, True)
+            try:
+                for cb in list(self._combo_rows[field]):
+                    self._repopulate_combo_preserve(cb, field)
+                self._normalize_field(field)
+                self._refresh_clear_buttons(field)
+            finally:
+                self._block_field_signals(field, False)
+        self._emit_apply()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._emit_apply()
+
+    def sync_from_parent(self, active: list[dict], logic: str = "and") -> None:
+        logic_norm = (logic or "and").strip().lower()
+        if logic_norm not in ("and", "or"):
+            logic_norm = "and"
+        self._btn_logic_and.blockSignals(True)
+        self._btn_logic_or.blockSignals(True)
+        try:
+            self._logic = logic_norm
+            self._btn_logic_and.setChecked(logic_norm == "and")
+            self._btn_logic_or.setChecked(logic_norm == "or")
+        finally:
+            self._btn_logic_and.blockSignals(False)
+            self._btn_logic_or.blockSignals(False)
+
+        grouped: dict[str, list[str]] = defaultdict(list)
+        seen_pair: set[tuple[str, str]] = set()
+        for c in active:
+            f = (c.get("field") or "").strip()
+            v = (c.get("value") or "").strip()
+            if not f or not v or f not in self._combo_rows:
+                continue
+            key = (f, v)
+            if key in seen_pair:
+                continue
+            seen_pair.add(key)
+            grouped[f].append(v)
+
+        for field in _FIELD_ORDER:
+            self._block_field_signals(field, True)
+            try:
+                while self._combo_rows[field]:
+                    self._remove_combo(field, self._combo_rows[field][-1])
+                lo = self._section_layouts[field]
+                vals = grouped.get(field, [])
+                for v in vals:
+                    cb = self._create_combo(field)
+                    row = self._wrap_combo_with_clear(field, cb)
+                    lo.addWidget(row)
+                    self._combo_rows[field].append(cb)
+                    cb.blockSignals(True)
+                    idx = cb.findText(v, Qt.MatchFlag.MatchExactly)
+                    if idx < 0:
+                        cb.addItem(v, v)
+                        idx = cb.count() - 1
+                    cb.setCurrentIndex(idx)
+                    cb.blockSignals(False)
+                self._append_empty_combo(field)
+                self._normalize_field(field)
+                self._refresh_clear_buttons(field)
+            finally:
+                self._block_field_signals(field, False)

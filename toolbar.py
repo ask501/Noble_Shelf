@@ -70,6 +70,7 @@ class ToolBar(QWidget):
 
     searchToggled = Signal(bool)  # True=SearchBar 行を表示, False=非表示
     sidebarToggled = Signal(bool)  # True=サイドバー表示, False=非表示
+    filterToggled = Signal(bool)  # True=フィルターパネル表示, False=非表示
     randomRequested = Signal()
 
     def __init__(self, parent=None):
@@ -121,7 +122,10 @@ class ToolBar(QWidget):
             self._btn_filter.setIconSize(
                 QSize(config.MAIN_TOOLBAR_ICON_SIZE, config.MAIN_TOOLBAR_ICON_SIZE)
             )
-        self._btn_filter.setStyleSheet(_toolbar_icon_button_qss())
+        self._btn_filter.setCheckable(True)
+        self._btn_filter.setChecked(False)
+        self._btn_filter.setStyleSheet(_toolbar_accent_toggle_button_qss())
+        self._btn_filter.toggled.connect(self.filterToggled.emit)
 
         self._btn_sidebar = QPushButton()
         self._btn_sidebar.setFixedSize(

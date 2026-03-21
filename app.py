@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QRadioButton,
     QButtonGroup,
 )
-from PySide6.QtCore import Qt, QTimer, Signal, QPoint, QEvent, QUrl, QMimeData
+from PySide6.QtCore import Qt, QTimer, Signal, QEvent, QUrl, QMimeData
 from PySide6.QtGui import QAction, QKeySequence
 import os
 import random
@@ -92,7 +92,7 @@ class MainWindow(QMainWindow):
         # ゴーストバーのアクティブフィルター
         self._active_filters: list[dict] = []
         self._filter_logic: str = "and"
-        self._filter_popover: FilterPopover | None = None
+        self._filter_panel: FilterPopover | None = None  # _setup_central のスプリッターで生成
         # メニュー「DLSiteのファイルのみ」「FANZA/DMMのファイルのみ」（重複可＝両方ONで両方表示）
         self._filter_dlsite_only: bool = False
         self._filter_fanza_only: bool = False
@@ -696,16 +696,29 @@ class MainWindow(QMainWindow):
 
         splitter.addWidget(grid_container)
 
+        self._filter_panel = FilterPopover(
+            self,
+            on_apply=self._on_filter_popover_apply,
+            on_clear=self._on_filter_popover_clear,
+            on_clear_only=self._on_filter_popover_clear_only,
+        )
+        self._filter_panel.setVisible(False)
+        splitter.addWidget(self._filter_panel)
+
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
+        splitter.setStretchFactor(2, 0)
         splitter.setSizes(
             [
                 config.MAIN_SPLITTER_SIDEBAR_INIT_WIDTH,
                 config.WINDOW_WIDTH - config.MAIN_SPLITTER_SIDEBAR_INIT_WIDTH,
+                0,  # 右パネル初期非表示（配分 0）
             ]
         )
         outer.addWidget(splitter, stretch=1)
         self._splitter = splitter
+
+        self._main_toolbar.filterToggled.connect(self._on_filter_toggled)
 
         # 初期ソートバー表示
         self._update_sort_bar()
@@ -1025,6 +1038,13 @@ class MainWindow(QMainWindow):
         # （全件スキャンは行わない）
         self._apply_filters()
 
+        if (
+            hasattr(self, "_filter_panel")
+            and self._filter_panel is not None
+            and self._filter_panel.isVisible()
+        ):
+            self._filter_panel.repopulate_all_combos()
+
         # コンテキストメニュー展開時に保存したスクロール位置があれば、レイアウト確定後に復元
         # rangeChanged で「max が十分になった瞬間」に復元（最速）。フォールバックで遅延復元も行う
         if v_scroll is not None and h_scroll is not None:
@@ -1240,6 +1260,10 @@ class MainWindow(QMainWindow):
             self._active_filters.pop(index)
             self._update_filter_badges()
             self._apply_filters()
+            if self._filter_panel is not None and self._filter_panel.isVisible():
+                self._filter_panel.sync_from_parent(
+                    self._active_filters, self._filter_logic
+                )
 
     def _on_sort_order_toggled(self):
         """昇順↔降順トグルボタン"""
@@ -1266,10 +1290,9 @@ class MainWindow(QMainWindow):
             self._act_filter_fanza.setChecked(False)
         if hasattr(self, "_act_filter_no_cover"):
             self._act_filter_no_cover.setChecked(False)
-        # フィルターポップオーバーのUIリセット
-        if hasattr(self, "_filter_popover") and self._filter_popover:
-            # reset() が存在する場合のみ呼び出し（古いバージョン互換）
-            reset_fn = getattr(self._filter_popover, "reset", None)
+        # フィルターパネルの UI リセット
+        if hasattr(self, "_filter_panel") and self._filter_panel:
+            reset_fn = getattr(self._filter_panel, "reset", None)
             if callable(reset_fn):
                 reset_fn()
         # サイドバーコンボを先頭（作品名）に戻す
@@ -1280,25 +1303,41 @@ class MainWindow(QMainWindow):
         self._update_filter_badges()
         self._apply_filters()
 
-    def _on_filter_button_clicked(self):
-        """フィルター🔧ボタン押下時にポップオーバーを表示"""
-        if self._filter_popover is None:
-            self._filter_popover = FilterPopover(
-                parent=self,
-                on_apply=self._on_filter_popover_apply,
-                on_clear=self._on_filter_popover_clear,
-                on_remove=self._on_filter_popover_remove,
-            )
-        if self._filter_popover.isVisible():
-            self._filter_popover.hide()
+    def _on_filter_toggled(self, visible: bool) -> None:
+        """ツールバーフィルター：パネル表示とスプリッター幅を同期する。"""
+        if self._filter_panel is None or not hasattr(self, "_splitter"):
             return
-        # ボタン直下に表示
-        btn_pos = self._filter_btn.mapToGlobal(QPoint(0, self._filter_btn.height()))
-        self._filter_popover.move(btn_pos)
-        self._filter_popover.show()
+        # showEvent 内の _emit_apply より先に論理・条件を同期する（順序逆だと AND に戻る等の不整合）
+        if visible:
+            self._filter_panel.sync_from_parent(
+                self._active_filters, self._filter_logic
+            )
+        self._filter_panel.setVisible(visible)
+        sizes = list(self._splitter.sizes())
+        if len(sizes) < 3:
+            return
+        if visible:
+            sizes[1] = max(0, sizes[1] - config.FILTER_POPOVER_WIDTH)
+            sizes[2] = config.FILTER_POPOVER_WIDTH
+        else:
+            sizes[1] = sizes[1] + sizes[2]
+            sizes[2] = 0
+        self._splitter.setSizes(sizes)
+
+    def _on_filter_button_clicked(self):
+        """ゴーストバー フィルター：右パネル表示をツールバーアイコンと同期してトグル"""
+        if self._filter_panel is None:
+            return
+        vis = not self._filter_panel.isVisible()
+        self._on_filter_toggled(vis)
+        _bf = getattr(self._main_toolbar, "_btn_filter", None)
+        if _bf is not None:
+            _bf.blockSignals(True)
+            _bf.setChecked(vis)
+            _bf.blockSignals(False)
 
     def _on_filter_popover_apply(self, conditions: list[dict], logic: str):
-        """ポップオーバーからフィルター条件が適用されたとき"""
+        """フィルターパネルから条件が変わったたびに即時反映（結合は logic に従う）。"""
         cleaned = []
         for c in conditions:
             field = (c.get("field") or "").strip()
@@ -1307,29 +1346,39 @@ class MainWindow(QMainWindow):
                 continue
             cleaned.append({"field": field, "value": value})
         self._active_filters = cleaned
-        self._filter_logic = logic if logic in ("and", "or") else "and"
+        logic_norm = (logic or "and").strip().lower()
+        self._filter_logic = logic_norm if logic_norm in ("and", "or") else "and"
         self._update_filter_badges()
         self._apply_filters()
         self._update_sort_bar()
 
-    def _on_filter_popover_clear(self):
-        """ポップオーバーからフィルター条件がクリアされたとき"""
+    def _on_filter_popover_clear_only(self):
+        """フィルター条件と論理のみクリア（パネルは開いたまま）。"""
         self._active_filters = []
         self._filter_logic = "and"
         self._update_sort_bar()
         self._update_filter_badges()
         self._apply_filters()
 
-    def _on_filter_popover_remove(self, index: int):
-        """フィルターポップオーバーのバッジ×で1件削除"""
-        if 0 <= index < len(self._active_filters):
-            self._active_filters.pop(index)
-            self._update_filter_badges()
-            self._apply_filters()
-            self._update_sort_bar()
+    def _on_filter_popover_clear(self):
+        """パネル [×]：条件クリア＆パネルを閉じる"""
+        self._active_filters = []
+        self._filter_logic = "and"
+        self._update_sort_bar()
+        self._update_filter_badges()
+        self._apply_filters()
+        self._on_filter_toggled(False)
+        _bf = getattr(self._main_toolbar, "_btn_filter", None)
+        if _bf is not None:
+            _bf.blockSignals(True)
+            _bf.setChecked(False)
+            _bf.blockSignals(False)
 
     def _apply_active_filters(self, books: list[dict]) -> list[dict]:
-        """ゴーストバーのフィルター条件を適用"""
+        """ゴーストバーのフィルター条件を適用。
+        - AND: 全条件（field+value）をフラットに列挙し、すべて一致が必要。
+        - OR: 各条件（field, value）のいずれかが一致すれば採用。
+        """
         if not self._active_filters:
             return books
 
@@ -1340,14 +1389,7 @@ class MainWindow(QMainWindow):
             except Exception:
                 self._meta_cache = {}
 
-        logic = self._filter_logic if self._filter_logic in ("and", "or") else "and"
-
-        def match_condition(book: dict, cond: dict) -> bool:
-            field = cond.get("field")
-            value = (cond.get("value") or "").strip()
-            if not value:
-                return True
-
+        def match_condition(book: dict, field: str, value: str) -> bool:
             path = book.get("path", "") or ""
             meta = self._meta_cache.get(path) if path else {}
 
@@ -1376,18 +1418,37 @@ class MainWindow(QMainWindow):
                 return value in tags
             return True
 
+        logic_raw = getattr(self, "_filter_logic", "and") or "and"
+        logic = logic_raw.strip().lower()
+        if logic not in ("and", "or"):
+            logic = "and"
+        if logic == "or":
+            filtered_or: list[dict] = []
+            for b in books:
+                matched = False
+                for c in self._active_filters:
+                    field = (c.get("field") or "").strip()
+                    value = (c.get("value") or "").strip()
+                    if field and value and match_condition(b, field, value):
+                        matched = True
+                        break
+                if matched:
+                    filtered_or.append(b)
+            return filtered_or
+
+        # AND: 全条件（field+value）がすべて一致
         filtered: list[dict] = []
         for b in books:
-            results = [match_condition(b, c) for c in self._active_filters]
-            if not results:
+            if all(
+                match_condition(
+                    b,
+                    (c.get("field") or "").strip(),
+                    (c.get("value") or "").strip(),
+                )
+                for c in self._active_filters
+                if (c.get("field") or "").strip() and (c.get("value") or "").strip()
+            ):
                 filtered.append(b)
-                continue
-            if logic == "and":
-                if all(results):
-                    filtered.append(b)
-            else:
-                if any(results):
-                    filtered.append(b)
         return filtered
 
     def _on_sort_mode_changed(self, mode: str):
