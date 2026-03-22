@@ -22,8 +22,8 @@ from PySide6.QtWidgets import (
 
 import config
 import db
-from properties._utils import BTN_CANCEL_STYLE, BTN_SAVE_STYLE, _meta_source_for_apply
-from properties.meta_apply_dialog import MetaApplyDialog
+from ui.dialogs.properties._utils import BTN_CANCEL_STYLE, BTN_SAVE_STYLE, _meta_source_for_apply
+from ui.dialogs.properties.meta_apply_dialog import MetaApplyDialog
 from theme import SITE_COLORS, apply_dark_titlebar, META_SEARCH_SITE_DEFAULT, META_SEARCH_ITEM_DIM_FG
 
 

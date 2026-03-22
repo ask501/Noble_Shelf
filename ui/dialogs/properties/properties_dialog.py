@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
 
 import config
 import db
-from properties._utils import (
+from ui.dialogs.properties._utils import (
     BTN_CANCEL_STYLE,
     BTN_FETCH_STYLE,
     BTN_SAVE_STYLE,
@@ -35,8 +35,8 @@ from properties._utils import (
     _needs_kana_conversion,
     _parse_multi,
 )
-from properties.meta_apply_dialog import MetaApplyDialog
-from properties.meta_search_dialog import MetaSearchDialog
+from ui.dialogs.properties.meta_apply_dialog import MetaApplyDialog
+from ui.dialogs.properties.meta_search_dialog import MetaSearchDialog
 from theme import (
     THEME_COLORS,
     apply_dark_titlebar,

@@ -113,8 +113,8 @@ class BookListModel(QAbstractListModel):
 
         # ページ数（あればキャッシュ）
         m_pages = meta.get("pages") or 0
-        if isinstance(m_pages, int) and m_pages > 0:
-            b.setdefault("pages", m_pages)
+        if m_pages > 0:
+            b["pages"] = m_pages
 
         # メタ取得済みフラグ
         has_meta = bool(

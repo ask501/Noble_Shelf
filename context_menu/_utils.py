@@ -120,7 +120,7 @@ def _show_viewer_not_set_dialog(parent, label: str):
     msg.addButton(QMessageBox.Close)
     msg.exec()
     if msg.clickedButton() == btn_settings:
-        from settings_dialog import SettingsDialog
+        from ui.dialogs.settings import SettingsDialog
 
         dlg = SettingsDialog(parent)
         dlg.exec()
@@ -139,7 +139,7 @@ def _show_wrong_viewer_dialog(parent, label: str, allowed_names: tuple[str, ...]
     msg.addButton(QMessageBox.Close)
     msg.exec()
     if msg.clickedButton() == btn_settings:
-        from settings_dialog import SettingsDialog
+        from ui.dialogs.settings import SettingsDialog
 
         dlg = SettingsDialog(parent)
         dlg.exec()

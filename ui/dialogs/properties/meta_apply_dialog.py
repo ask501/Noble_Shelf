@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 import config
-from properties._utils import BTN_CANCEL_STYLE, BTN_SAVE_STYLE
+from ui.dialogs.properties._utils import BTN_CANCEL_STYLE, BTN_SAVE_STYLE
 from theme import (
     apply_dark_titlebar,
     COLOR_WHITE,

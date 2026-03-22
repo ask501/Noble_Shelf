@@ -281,7 +281,7 @@ class BookmarkletWindow(QWidget):
             return
         import os
 
-        from properties import MetaApplyDialog
+        from ui.dialogs.properties import MetaApplyDialog
 
         # 現在のメタをDBから取得
         current = db.get_book_meta(found_path) or {}

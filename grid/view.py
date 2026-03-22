@@ -141,6 +141,13 @@ class BookGridView(AutoScrollMixin, QListView):
             self.bookOpened.emit(path)
             if not open_book(path, parent_win, modal=False):
                 break
+        # recent_books 更新後、履歴モードのサイドバー一覧を同期
+        if (
+            hasattr(parent_win, "_sidebar")
+            and parent_win._sidebar
+            and parent_win._sidebar._mode == "history"
+        ):
+            parent_win._sidebar.refresh()
 
     def _book_from_index(self, index: QModelIndex) -> Optional[dict]:
         if not index.isValid():

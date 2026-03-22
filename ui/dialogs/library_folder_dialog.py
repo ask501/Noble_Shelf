@@ -24,10 +24,11 @@ def _default_library_path() -> str:
 class LibraryFolderDialog(QDialog):
     """テキスト入力と参照でライブラリフォルダを選ぶ／新規作成するダイアログ。"""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, current_path: str = ""):
         super().__init__(parent)
         apply_dark_titlebar(self)
         self._selected_path: str = ""
+        self._current_path = current_path
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -48,7 +49,9 @@ class LibraryFolderDialog(QDialog):
 
         row = QHBoxLayout()
         row.setSpacing(config.RENAME_DIALOG_SPACING)
-        self._line_edit = QLineEdit(_default_library_path())
+        self._line_edit = QLineEdit(
+            self._current_path if self._current_path else _default_library_path()
+        )
         self._line_edit.setMinimumHeight(config.DIALOG_BUTTON_HEIGHT)
         self._browse_btn = QPushButton("参照...")
         self._browse_btn.setFixedHeight(config.DIALOG_BUTTON_HEIGHT)
@@ -79,16 +82,17 @@ class LibraryFolderDialog(QDialog):
         return os.path.normpath(os.path.expanduser(t))
 
     def _on_browse(self) -> None:
-        start = self._normalize_path(self._line_edit.text())
-        if os.path.isdir(start):
-            browse_start = start
-        else:
-            parent_dir = os.path.dirname(start) if start else ""
-            browse_start = (
-                parent_dir
-                if parent_dir and os.path.isdir(parent_dir)
-                else _default_library_path()
-            )
+        # 入力欄 → ダイアログ表示時の保存パス → 既定の順で、存在するフォルダを起点にする
+        browse_start = _default_library_path()
+        for raw in (self._line_edit.text(), self._current_path):
+            normalized = self._normalize_path(raw)
+            if normalized and os.path.isdir(normalized):
+                browse_start = normalized
+                break
+            parent_dir = os.path.dirname(normalized) if normalized else ""
+            if parent_dir and os.path.isdir(parent_dir):
+                browse_start = parent_dir
+                break
         chosen = QFileDialog.getExistingDirectory(
             self,
             "ライブラリフォルダを選択",

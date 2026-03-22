@@ -45,8 +45,10 @@ def _get_pdf_cover_and_pages(pdf_path: str) -> tuple[str, int]:
             pix = doc[0].get_pixmap(matrix=fitz.Matrix(config.PDF_COVER_SCALE, config.PDF_COVER_SCALE))
             pix.save(cover_path)
         doc.close()
-    except Exception:
-        pass
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc()
     return (cover_path if os.path.exists(cover_path) else ""), pages
 
 

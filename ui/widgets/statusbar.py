@@ -8,7 +8,6 @@ from version import VERSION
 
 
 def setup_statusbar(window, sb: QStatusBar) -> QSlider:
-    sb.setStyleSheet("QStatusBar::item { border: none; }")
     """
     ステータスバーを構築してスライダーを返す。
     window: MainWindow

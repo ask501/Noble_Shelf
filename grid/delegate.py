@@ -215,47 +215,47 @@ class BookCardDelegate(QStyledItemDelegate):
                 painter.drawText(badge_rect, Qt.AlignCenter, "✓")
 
         # ── 右上: ページ数バッジ or ストアアイコン ──
-        if self._show_pages_badge:
-            path = (index.data(ROLE_PATH) or "") or ""  # noqa: F405
-            ext = os.path.splitext(path)[1].lower() if path else ""
-            use_icon = None
-            if self._show_store_icon:
-                if ext in STORE_FILE_EXTS_DMM and self._badge_dmm_pix and not self._badge_dmm_pix.isNull():
-                    use_icon = self._badge_dmm_pix
-                elif ext == STORE_FILE_EXT_DLSITE and self._badge_dlsite_pix and not self._badge_dlsite_pix.isNull():
-                    use_icon = self._badge_dlsite_pix
+        path = (index.data(ROLE_PATH) or "") or ""  # noqa: F405
+        ext = os.path.splitext(path)[1].lower() if path else ""
 
-            if use_icon is not None:
-                icon_h = BADGE_ICON_HEIGHT
-                orig_w = use_icon.width()
-                orig_h = use_icon.height()
-                icon_w = int(icon_h * orig_w / orig_h) if orig_h > 0 else icon_h
-                pad = BADGE_ICON_PAD
-                bw, bh = icon_w + pad * 2, icon_h + pad * 2
-                badge_rect = QRect(cx + self._card_w - bw - CARD_BADGE_OFFSET_X, cy + CARD_BADGE_OFFSET_Y, bw, bh)
-                bg_rect = badge_rect.adjusted(-BADGE_BG_OVERLAY, -BADGE_BG_OVERLAY, BADGE_BG_OVERLAY, BADGE_BG_OVERLAY)
-                bg = QColor(0, 0, 0, CARD_BADGE_OVERLAY_ALPHA)
-                painter.setBrush(QBrush(bg))
-                painter.setPen(Qt.NoPen)
-                painter.drawRoundedRect(bg_rect, config.CARD_BADGE_RADIUS, config.CARD_BADGE_RADIUS)
-                scaled = use_icon.scaled(QSize(icon_w, icon_h), Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                ix = badge_rect.x() + pad + (icon_w - scaled.width()) // 2
-                iy = badge_rect.y() + pad + (icon_h - scaled.height()) // 2
-                painter.drawPixmap(ix, iy, scaled)
-            else:
-                pages = index.data(ROLE_PAGES) or 0  # noqa: F405
-                badge_text = f"{pages}P" if pages > 0 else "--"
-                painter.setFont(self._font_badge)
-                fm = QFontMetrics(painter.font())
-                bw = fm.horizontalAdvance(badge_text) + BADGE_PAD * 2
-                badge_rect = QRect(cx + self._card_w - bw - CARD_BADGE_OFFSET_X, cy + CARD_BADGE_OFFSET_Y, bw, BADGE_H)
-                bg_rect = badge_rect.adjusted(-BADGE_BG_OVERLAY, -BADGE_BG_OVERLAY, BADGE_BG_OVERLAY, BADGE_BG_OVERLAY)
-                bg = QColor(0, 0, 0, CARD_BADGE_OVERLAY_ALPHA)
-                painter.setBrush(QBrush(bg))
-                painter.setPen(Qt.NoPen)
-                painter.drawRoundedRect(bg_rect, config.CARD_BADGE_RADIUS, config.CARD_BADGE_RADIUS)
-                painter.setPen(QPen(Qt.white))
-                painter.drawText(badge_rect, Qt.AlignCenter, badge_text)
+        use_icon = None
+        if self._show_store_icon:
+            if ext in STORE_FILE_EXTS_DMM and self._badge_dmm_pix and not self._badge_dmm_pix.isNull():
+                use_icon = self._badge_dmm_pix
+            elif ext == STORE_FILE_EXT_DLSITE and self._badge_dlsite_pix and not self._badge_dlsite_pix.isNull():
+                use_icon = self._badge_dlsite_pix
+
+        if use_icon is not None:
+            icon_h = BADGE_ICON_HEIGHT
+            orig_w = use_icon.width()
+            orig_h = use_icon.height()
+            icon_w = int(icon_h * orig_w / orig_h) if orig_h > 0 else icon_h
+            pad = BADGE_ICON_PAD
+            bw, bh = icon_w + pad * 2, icon_h + pad * 2
+            badge_rect = QRect(cx + self._card_w - bw - CARD_BADGE_OFFSET_X, cy + CARD_BADGE_OFFSET_Y, bw, bh)
+            bg_rect = badge_rect.adjusted(-BADGE_BG_OVERLAY, -BADGE_BG_OVERLAY, BADGE_BG_OVERLAY, BADGE_BG_OVERLAY)
+            bg = QColor(0, 0, 0, CARD_BADGE_OVERLAY_ALPHA)
+            painter.setBrush(QBrush(bg))
+            painter.setPen(Qt.NoPen)
+            painter.drawRoundedRect(bg_rect, config.CARD_BADGE_RADIUS, config.CARD_BADGE_RADIUS)
+            scaled = use_icon.scaled(QSize(icon_w, icon_h), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            ix = badge_rect.x() + pad + (icon_w - scaled.width()) // 2
+            iy = badge_rect.y() + pad + (icon_h - scaled.height()) // 2
+            painter.drawPixmap(ix, iy, scaled)
+        elif self._show_pages_badge:
+            pages = index.data(ROLE_PAGES) or 0  # noqa: F405
+            badge_text = f"{pages}P" if pages > 0 else "--"
+            painter.setFont(self._font_badge)
+            fm = QFontMetrics(painter.font())
+            bw = fm.horizontalAdvance(badge_text) + BADGE_PAD * 2
+            badge_rect = QRect(cx + self._card_w - bw - CARD_BADGE_OFFSET_X, cy + CARD_BADGE_OFFSET_Y, bw, BADGE_H)
+            bg_rect = badge_rect.adjusted(-BADGE_BG_OVERLAY, -BADGE_BG_OVERLAY, BADGE_BG_OVERLAY, BADGE_BG_OVERLAY)
+            bg = QColor(0, 0, 0, CARD_BADGE_OVERLAY_ALPHA)
+            painter.setBrush(QBrush(bg))
+            painter.setPen(Qt.NoPen)
+            painter.drawRoundedRect(bg_rect, config.CARD_BADGE_RADIUS, config.CARD_BADGE_RADIUS)
+            painter.setPen(QPen(Qt.white))
+            painter.drawText(badge_rect, Qt.AlignCenter, badge_text)
 
         # ── 左下: 星レーティング ──
         if self._show_star:

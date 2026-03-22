@@ -155,7 +155,7 @@ class ToolBar(QWidget):
             config.MAIN_TOOLBAR_BTN_SIZE, config.MAIN_TOOLBAR_BTN_SIZE
         )
         self._btn_ghostbar.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._btn_ghostbar.setToolTip("ゴーストバー（ソートバー）を表示/非表示")
+        self._btn_ghostbar.setToolTip(config.MAIN_TOOLBAR_TITLE_BAR_TOGGLE_TOOLTIP)
         _title_path = paths.ICON_TOOLBAR_TITLE
         if os.path.isfile(_title_path):
             self._btn_ghostbar.setIcon(QIcon(_title_path))

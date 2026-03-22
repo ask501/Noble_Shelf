@@ -274,7 +274,6 @@ APP_QSS = f"""
 QWidget {{
     background-color: {COLOR_BG_BASE};
     color: {COLOR_TEXT_MAIN};
-    font-size: 12px;
 }}
 
 QMainWindow {{
@@ -481,9 +480,9 @@ QComboBox::drop-down:hover {{
     background: {COLOR_HOVER};
 }}
 QComboBox::down-arrow {{
-    background: {COLOR_ARROW};
-    width: 6px;
-    height: 6px;
+    image: url(assets/mdi--triangle-down.svg);
+    width: 10px;
+    height: 10px;
 }}
 QComboBox QAbstractItemView {{
     background-color: {COLOR_BG_PANEL};

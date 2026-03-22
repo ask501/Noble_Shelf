@@ -39,8 +39,8 @@ from ui.widgets.searchbar import SearchBar, filter_books, build_haystack_cache
 from ui.widgets.toolbar import ToolBar
 from drop_handler import handle_drop, _get_pdf_cover_and_pages
 from ui.dialogs.filter_popover import FilterPopover
-from theme import THEME_COLORS, apply_dark_titlebar, APP_BAR_SEPARATOR_RGBA
-from properties import _auto_kana, _needs_kana_conversion, StoreFileInputDialog
+from theme import THEME_COLORS, COLOR_BORDER, apply_dark_titlebar
+from ui.dialogs.properties import _auto_kana, _needs_kana_conversion, StoreFileInputDialog
 from ui.widgets.menubar import setup_menubar, refresh_shortcuts
 from ui.dialogs.first_run import LibrarySetupOverlay
 from ui.widgets.statusbar import setup_statusbar
@@ -83,10 +83,11 @@ class MainWindow(QMainWindow):
         self._all_books: list[dict] = []
         # グリッドに表示中の一覧（フィルタ・ソート適用後）。ランダムオープン等で使用
         self._books: list[dict] = []
-        self._sidebar_filter: tuple[str, str] | None = None  # (mode, value)
-        # ソート状態: デフォルトは「作品名・昇順」
-        self._sort_key: str = "title"
-        self._sort_desc: bool = False
+        # (mode, value)。value は str または history_all 用の path 集合
+        self._sidebar_filter: tuple[str, str | set[str]] | None = None
+        # ソート状態: デフォルトは「追加順・降順」（config.STARTUP_SORT_DEFAULT_KEY_FALLBACK 等と一致）
+        self._sort_key: str = "added_date"
+        self._sort_desc: bool = True
         # メタデータキャッシュ（ソート/フィルタ用）
         self._meta_cache: dict[str, dict] = {}
         # フィルターパネルで設定したアクティブ条件
@@ -105,7 +106,6 @@ class MainWindow(QMainWindow):
         self._setup_central()
         self._setup_statusbar()
         self.setAcceptDrops(True)
-        self._setup_titlebar_context_menu()
         self._restore_ui_visibility()
         QTimer.singleShot(config.APP_STARTUP_LOAD_DELAY_MS, self._load_library)
 
@@ -177,7 +177,7 @@ class MainWindow(QMainWindow):
 
     def _on_open_settings(self):
         from PySide6.QtWidgets import QDialog
-        from settings_dialog import SettingsDialog
+        from ui.dialogs.settings import SettingsDialog
 
         dlg = SettingsDialog(self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
@@ -258,6 +258,8 @@ class MainWindow(QMainWindow):
             path = b.get("path")
             if path and os.path.exists(path):
                 open_book(path, self, modal=modal)
+        if hasattr(self, "_sidebar") and self._sidebar and self._sidebar._mode == "history":
+            self._sidebar.refresh()
 
     def _file_show_recent_popup(self):
         """最近開いたブックをポップアップメニューで表示"""
@@ -271,11 +273,17 @@ class MainWindow(QMainWindow):
             f"QMenu {{ background: {THEME_COLORS['bg_panel']}; color: {THEME_COLORS['text_main']}; }}"
             f"QMenu::item:disabled {{ color: {THEME_COLORS['menu_disabled']}; }}"
         )
+
+        def _open_recent_menu_item(p: str) -> None:
+            open_book(p, self, modal=False)
+            if hasattr(self, "_sidebar") and self._sidebar and self._sidebar._mode == "history":
+                self._sidebar.refresh()
+
         for name, path in recent:
             if not path or not os.path.exists(path):
                 continue
             act = menu.addAction(name or os.path.basename(path) or path)
-            act.triggered.connect(lambda checked=False, p=path: open_book(p, self, modal=False))
+            act.triggered.connect(lambda checked=False, p=path: _open_recent_menu_item(p))
         if menu.actions():
             from PySide6.QtGui import QCursor
             menu.exec(QCursor.pos())
@@ -619,6 +627,11 @@ class MainWindow(QMainWindow):
         outer.addWidget(self._toolbar_row)
         outer.addWidget(self._searchbar_row)
 
+        sep1 = QWidget()
+        sep1.setFixedHeight(config.SEPARATOR_LINE_HEIGHT)
+        sep1.setStyleSheet(f"background-color: {COLOR_BORDER};")
+        outer.addWidget(sep1)
+
         # ツールバー検索アイコン：検索バー表示＋表示メニュー・DB（ui_show_searchbar）と同期
         self._main_toolbar.searchToggled.connect(
             lambda visible: self._set_searchbar_visible(visible, save=True)
@@ -644,7 +657,7 @@ class MainWindow(QMainWindow):
             lambda visible: self._set_sidebar_visible(visible, save=True)
         )
 
-        # 右側コンテナ: 上にソートバー（ゴーストバー）、下にグリッド
+        # 右側コンテナ: ソートバー（ゴーストバー）＋下線、下にグリッド
         grid_container = QWidget()
         grid_layout = QVBoxLayout(grid_container)
         grid_layout.setContentsMargins(*config.LAYOUT_MARGINS_ZERO)
@@ -687,9 +700,8 @@ class MainWindow(QMainWindow):
         self._sort_bar.setStyleSheet(
             f"""
             QWidget#SortBar {{
-                background-color: {THEME_COLORS["card_bg"]};
+                background-color: {THEME_COLORS["bg_panel"]};
                 color: {THEME_COLORS["text_main"]};
-                border-bottom: 1px solid {APP_BAR_SEPARATOR_RGBA};
             }}
             QLabel#SortLabel {{
                 background-color: transparent;
@@ -709,6 +721,12 @@ class MainWindow(QMainWindow):
             """
         )
         grid_layout.addWidget(self._sort_bar)
+
+        self._sort_bar_sep_bottom = QWidget()
+        self._sort_bar_sep_bottom.setFixedHeight(config.SEPARATOR_LINE_HEIGHT)
+        self._sort_bar_sep_bottom.setStyleSheet(f"background-color: {COLOR_BORDER};")
+        grid_layout.addWidget(self._sort_bar_sep_bottom)
+
         self._main_toolbar.ghostBarToggled.connect(
             lambda visible: self._set_ghostbar_visible(visible, save=True)
         )
@@ -746,6 +764,7 @@ class MainWindow(QMainWindow):
         self._splitter = splitter
 
         self._main_toolbar.filterToggled.connect(self._on_filter_toggled)
+        self._main_toolbar._btn_settings.clicked.connect(self._on_open_settings)
 
         # 初期ソートバー表示
         self._update_sort_bar()
@@ -768,10 +787,17 @@ class MainWindow(QMainWindow):
         sb.setStyleSheet(
             f"""
             QStatusBar {{
-                background-color: {THEME_COLORS["card_bg"]};
+                background: {THEME_COLORS["bg_base"]};
                 color: {THEME_COLORS["text_main"]};
-                border-top: 1px solid {APP_BAR_SEPARATOR_RGBA};
+                border-top: 1px solid {COLOR_BORDER};
                 font-size: {config.FONT_SIZE_STATUS_BAR}px;
+            }}
+            QStatusBar QLabel,
+            QStatusBar QSlider {{
+                background: transparent;
+            }}
+            QStatusBar::item {{
+                border: none;
             }}
             """
         )
@@ -850,7 +876,8 @@ class MainWindow(QMainWindow):
         self._grid.apply_display_settings()
 
     def _select_library_folder(self):
-        dlg = LibraryFolderDialog(self)
+        current = db.get_setting("library_folder") or ""
+        dlg = LibraryFolderDialog(self, current_path=current)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         folder = dlg.selected_path
@@ -1197,6 +1224,8 @@ class MainWindow(QMainWindow):
         from context_menu import open_book
 
         open_book(random.choice(candidates)["path"], self, modal=False)
+        if hasattr(self, "_sidebar") and self._sidebar and self._sidebar._mode == "history":
+            self._sidebar.refresh()
 
     # ── ソート関連 ───────────────────────────────────────
 
@@ -1229,7 +1258,7 @@ class MainWindow(QMainWindow):
                 db.get_setting(config.STARTUP_SORT_DEFAULT_KEY_SETTING_KEY) or ""
             ).strip()
             key = raw_key if raw_key else fb
-            desc = False
+            desc = key in config.SORT_KEYS_DEFAULT_DESC
 
         sb = self._sidebar
         valid = {sb._combo.itemData(i) for i in range(sb._combo.count())}
@@ -1426,7 +1455,14 @@ class MainWindow(QMainWindow):
     def _on_sort_mode_changed(self, mode: str):
         """サイドバーでモードが選ばれたとき"""
         self._sort_key = mode or "title"
-        self._sidebar_filter = None  # モード切替時はフィルターをクリアし作品名昇順で表示
+        self._sort_desc = self._sort_key in config.SORT_KEYS_DEFAULT_DESC
+        if mode == "history":
+            # 履歴に存在する path セットでグリッドを絞り込む
+            rows = db.get_recent_books(limit=config.SIDEBAR_HISTORY_RECENT_LIMIT)
+            history_paths = {r[1] for r in rows}
+            self._sidebar_filter = ("history_all", history_paths)
+        else:
+            self._sidebar_filter = None  # モード切替時はフィルターをクリアし作品名昇順で表示
         self._update_sort_bar()
         self._apply_filters()
         self._sidebar.refresh()
@@ -1779,7 +1815,9 @@ class MainWindow(QMainWindow):
             self._act_filter_no_cover.setChecked(checked)
         self._apply_filters()
 
-    def _apply_sidebar_filter(self, books: list, mode: str, value: str) -> list:
+    def _apply_sidebar_filter(
+        self, books: list, mode: str, value: str | set[str]
+    ) -> list:
         if mode == "circle":
             if value == "__unknown__":
                 return [b for b in books if not (b.get("circle") or "").strip()]
@@ -1817,6 +1855,9 @@ class MainWindow(QMainWindow):
                 elif mode == "tag"     and value in (meta.get("tags") or []):
                     result.append(b)
             return result
+        elif mode == "history_all":
+            # value は path の set
+            return [b for b in books if b["path"] in value]
         elif mode == "history":
             return [b for b in books if b["path"] == value]
         elif mode == "added_date":
@@ -1928,10 +1969,6 @@ class MainWindow(QMainWindow):
     # ── UI表示状態の復元・制御 ────────────────────────────
 
     def _restore_ui_visibility(self):
-        # メニューバー
-        show_menubar = db.get_setting("ui_show_menubar", "1")
-        self._set_menubar_visible(show_menubar != "0", save=False)
-
         # ツールバーと検索バーは別設定・未設定時は表示
         show_tool = db.get_setting("ui_show_toolbar", "1")
         self._set_main_toolbar_visible(show_tool == "1", save=False)
@@ -1949,14 +1986,6 @@ class MainWindow(QMainWindow):
         # 情報バー（ステータスバー）
         show_infobar = db.get_setting("ui_show_infobar", "1")
         self._set_infobar_visible(show_infobar != "0", save=False)
-
-    def _set_menubar_visible(self, visible: bool, save: bool):
-        mb = self.menuBar()
-        mb.setVisible(visible)
-        if hasattr(self, "_act_menubar"):
-            self._act_menubar.setChecked(visible)
-        if save:
-            db.set_setting("ui_show_menubar", "1" if visible else "0")
 
     def _set_main_toolbar_visible(self, visible: bool, save: bool):
         """表示メニュー「ツールバー」：アイコン行の表示。"""
@@ -2000,6 +2029,8 @@ class MainWindow(QMainWindow):
     def _set_ghostbar_visible(self, visible: bool, save: bool) -> None:
         """ゴーストバー（ソートバー）とツールバー title アイコンの同期。"""
         self._sort_bar.setVisible(visible)
+        if hasattr(self, "_sort_bar_sep_bottom"):
+            self._sort_bar_sep_bottom.setVisible(visible)
         if hasattr(self, "_act_ghostbar"):
             self._act_ghostbar.setChecked(visible)
         if hasattr(self, "_main_toolbar"):
@@ -2014,13 +2045,4 @@ class MainWindow(QMainWindow):
             self._act_infobar.setChecked(visible)
         if save:
             db.set_setting("ui_show_infobar", "1" if visible else "0")
-
-    def _setup_titlebar_context_menu(self):
-        # メニューバー非表示時にも復元できるように、ウィンドウのコンテキストメニューに追加
-        self._restore_menubar_action = QAction("メニューバーを表示", self)
-        self._restore_menubar_action.triggered.connect(
-            lambda: self._set_menubar_visible(True, save=True)
-        )
-        self.addAction(self._restore_menubar_action)
-        self.setContextMenuPolicy(Qt.ActionsContextMenu)
 

@@ -35,7 +35,7 @@ from context_menu._utils import (
     open_book,
     resolve_shortcut,
 )
-from properties import PropertyDialog, RenameDialog
+from ui.dialogs.properties import PropertyDialog, RenameDialog
 from theme import THEME_COLORS, CONTEXT_MENU_SEP_COLOR
 
 
@@ -419,7 +419,7 @@ class BookContextMenu(QMenu):
 
     def _on_open_settings(self):
         """設定ダイアログを開く"""
-        from settings_dialog import SettingsDialog
+        from ui.dialogs.settings import SettingsDialog
         dlg = SettingsDialog(self._parent_window)
         dlg.exec()
 

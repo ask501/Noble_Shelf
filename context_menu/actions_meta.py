@@ -3,7 +3,7 @@ from __future__ import annotations
 from PySide6.QtWidgets import QDialog
 
 import db
-from properties import MetaSearchDialog
+from ui.dialogs.properties import MetaSearchDialog
 
 
 def fetch_metadata(book: dict, parent_window) -> None:

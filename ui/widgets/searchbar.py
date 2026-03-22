@@ -42,7 +42,11 @@ def _nfkc(s: str) -> str:
 
 class _SearchInput(QLineEdit):
     """検索バー用QLineEdit"""
-    pass
+
+    def inputMethodEvent(self, event):
+        super().inputMethodEvent(event)
+        # プリエディット中（未確定文字あり）も含めてテキスト変更を通知
+        self.textChanged.emit(self.text() + event.preeditString())
 
 
 class _SearchCapsuleFrame(QFrame):

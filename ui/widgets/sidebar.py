@@ -8,7 +8,7 @@ from __future__ import annotations
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QListWidget, QListWidgetItem, QComboBox, QLabel,
-    QFrame, QSizePolicy, QStyledItemDelegate, QStyleOptionViewItem, QStyle,
+    QSizePolicy, QStyledItemDelegate, QStyleOptionViewItem, QStyle,
     QStackedWidget, QMenu, QApplication,
 )
 from PySide6.QtCore import Qt, Signal, QRect, QSize, QEvent
@@ -17,12 +17,13 @@ from ui.utils.auto_scroll_mixin import AutoScrollListWidget
 
 import db
 import config
-from theme import THEME_COLORS, COLOR_WHITE, COLOR_BADGE_BG
+from theme import THEME_COLORS, COLOR_BORDER, COLOR_WHITE, COLOR_BADGE_BG
 
 # ── モード定義 ────────────────────────────────────────
 def _build_sidebar_modes():
     from plugin_loader import has_enabled_plugins
     modes = [
+        ("added_date", "追加順"),
         ("title", "作品名"),
         ("circle", "サークル"),
         ("author", "作者"),
@@ -34,7 +35,6 @@ def _build_sidebar_modes():
         modes.append(("metadata", "メタデータ"))
     modes.extend([
         ("favorite", "お気に入り"),
-        ("added_date", "追加順"),
         ("history", "履歴"),
     ])
     return modes
@@ -150,10 +150,8 @@ class SidebarWidget(QWidget):
             }}
         """)
 
-        # デフォルトは「作品名・降順」
+        # 初期モード（コンボの選択は _setup_ui で同期）
         self._mode = "title"
-        self._sort_key = "title"
-        self._sort_desc = True
         self._title_books: list[dict] = []
         self._showing_filter_result = False
         self._filter_result_books: list[dict] = []
@@ -201,10 +199,10 @@ class SidebarWidget(QWidget):
         self._header_stack.addWidget(self._filter_result_label)
         header_layout.addWidget(self._header_stack)
 
-        # セパレーター（ゴーストバーの下線位置と揃える）
-        sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet(f"color: {THEME_COLORS['sep']};")
+        # セパレーター（メインのゴーストバー下・グリッド上と同じフラット1px線）
+        sep = QWidget()
+        sep.setFixedHeight(config.SEPARATOR_LINE_HEIGHT)
+        sep.setStyleSheet(f"background-color: {COLOR_BORDER};")
         header_layout.addWidget(sep)
 
         layout.addWidget(header_container)
@@ -311,8 +309,8 @@ class SidebarWidget(QWidget):
             self._list.verticalScrollBar().setValue(scroll_pos)
             return
 
-        # 先頭アイテム: 作品名・追加順は「すべて」、それ以外は「不明」。メタデータ・お気に入りは先頭なし
-        if self._mode not in ("metadata", "favorite"):
+        # 先頭アイテム: 作品名・追加順は「すべて」、それ以外は「不明」。メタデータ・お気に入り・履歴は先頭なし
+        if self._mode not in ("metadata", "favorite", "history"):
             if self._mode in ("title", "added_date"):
                 first_label = "すべて"
                 first_value = None
@@ -396,8 +394,8 @@ class SidebarWidget(QWidget):
                 ]
 
             elif mode == "history":
-                rows = db.get_recent_books(limit=50)
-                return [(r["name"], r["path"], 0) for r in rows if r.get("name")]
+                rows = db.get_recent_books(limit=config.SIDEBAR_HISTORY_RECENT_LIMIT)
+                return [(r[0], r[1], 0) for r in rows if r[0]]
 
             elif mode == "metadata":
                 rows = db.get_meta_source_counts()

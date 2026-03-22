@@ -82,6 +82,8 @@ SIDEBAR_BADGE_MARGIN = 8          # バッジとテキストの間隔(px)
 SIDEBAR_TEXT_RIGHT_INSET_NO_BADGE = 4
 SIDEBAR_DELEGATE_BG_INSET = 1     # 選択背景のrect調整(inset)px
 SIDEBAR_VIEWPORT_FALLBACK_WIDTH = 200
+# sidebar.py: 履歴モードで表示する recent_books の最大件数
+SIDEBAR_HISTORY_RECENT_LIMIT = 50
 SEARCHBAR_HEIGHT       = 44
 SEARCHBAR_MAX_WIDTH    = 600   # searchbar.py: 角丸カプセルの最大幅(px)
 # searchbar.py: 角丸カプセルの最小幅(px)。未設定だと QLineEdit の min が小さく全体が極端に細くなる
@@ -116,6 +118,10 @@ MAIN_TOOLBAR_ICON_SIZE = 26
 MAIN_TOOLBAR_RANDOM_BTN_FLASH_MS = 200
 # toolbar.py: 設定アイコンボタン（処理未接続時のツールチップ文言）
 MAIN_TOOLBAR_SETTINGS_TOOLTIP = "設定（未接続）"
+# menubar.py: 表示メニュー（グリッド上のソート帯の表示トグル）
+VIEW_MENU_TITLE_BAR_LABEL = "タイトルバー"
+# toolbar.py: title.png トグル（上記ソート帯）
+MAIN_TOOLBAR_TITLE_BAR_TOGGLE_TOOLTIP = "タイトルバーを表示/非表示"
 
 # メインウィンドウ・タイトルバー（app.py）
 TITLE_BAR_DBLCLICK_HEIGHT = 50  # この高さ未満のダブルクリックで最大化
@@ -358,6 +364,9 @@ APP_STARTUP_LOAD_DELAY_MS = 0
 LAYOUT_MARGINS_ZERO = (0, 0, 0, 0)
 LAYOUT_SPACING_ZERO = 0
 
+# app.py: メイン中央レイアウトの水平セパレーター線の高さ(px)
+SEPARATOR_LINE_HEIGHT = 1
+
 # app.py: アーカイブ拡張子（cover修復/キャッシュ修復で使用）
 ARCHIVE_EXTS = (".zip", ".cbz", ".7z", ".cb7", ".rar", ".cbr")
 
@@ -478,11 +487,13 @@ PROPERTY_ACTION_BTN_SIZE = (110, 36)  # width, height
 
 # ── 設定ダイアログ（settings_dialog.py）────────────────────────
 # ウィンドウサイズ（見た目維持のため直書き値を定数化）
-SETTINGS_DIALOG_MIN_SIZE = (480, 460)       # setMinimumSize(w, h)
-SETTINGS_DIALOG_DEFAULT_SIZE = (520, 520)   # resize(w, h)
+SETTINGS_DIALOG_MIN_SIZE = (720, 560)       # setMinimumSize(w, h)
+SETTINGS_DIALOG_DEFAULT_SIZE = (780, 650)   # resize(w, h)
 # レイアウト（ダイアログ全体）
 SETTINGS_DIALOG_MARGINS = (16, 16, 16, 16)  # left, top, right, bottom
 SETTINGS_DIALOG_SPACING = 12
+# 一般タブ：ビュアーパス入力（QLineEdit）の最低高さ(px)
+SETTINGS_INPUT_MIN_HEIGHT = 28
 # 下部の QDialogButtonBox（保存・キャンセル）ラベル
 SETTINGS_DIALOG_BTN_SAVE_TEXT = "保存"
 SETTINGS_DIALOG_BTN_CANCEL_TEXT = "キャンセル"
@@ -491,7 +502,9 @@ STARTUP_SORT_RESTORE_CHECKBOX_LABEL = "前回のソート状態を復元する"
 STARTUP_SORT_COMBO_ROW_LABEL = "起動時ソート順:"
 STARTUP_SORT_RESTORE_LAST_SETTING_KEY = "startup_sort_restore_last"
 STARTUP_SORT_DEFAULT_KEY_SETTING_KEY = "startup_sort_default_key"
-STARTUP_SORT_DEFAULT_KEY_FALLBACK = "title"
+STARTUP_SORT_DEFAULT_KEY_FALLBACK = "added_date"
+# 起動時「前回復元OFF」で DB に降順指定がないとき、これらのキーは既定で降順
+SORT_KEYS_DEFAULT_DESC = {"added_date"}
 SORT_LAST_KEY_SETTING_KEY = "sort_last_key"
 SORT_LAST_DESC_SETTING_KEY = "sort_last_desc"
 # 一般タブ：参照ボタン幅

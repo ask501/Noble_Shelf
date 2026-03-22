@@ -179,13 +179,6 @@ def setup_menubar(window):
     # ── 表示メニュー ──
     view_menu = menubar.addMenu("表示(&V)")
 
-    window._act_menubar = QAction("メニューバー", window)
-    window._act_menubar.setCheckable(True)
-    window._act_menubar.triggered.connect(
-        lambda checked: window._set_menubar_visible(checked, save=True)
-    )
-    view_menu.addAction(window._act_menubar)
-
     window._act_searchbar = QAction("検索バー(&S)", window)
     window._act_searchbar.setShortcut("Ctrl+F")
     window._act_searchbar.setCheckable(True)
@@ -201,7 +194,7 @@ def setup_menubar(window):
     )
     view_menu.addAction(window._act_sidebar)
 
-    window._act_ghostbar = QAction("ゴーストバー（ソートバー）", window)
+    window._act_ghostbar = QAction(config.VIEW_MENU_TITLE_BAR_LABEL, window)
     window._act_ghostbar.setCheckable(True)
     window._act_ghostbar.triggered.connect(
         lambda checked: window._set_ghostbar_visible(checked, save=True)

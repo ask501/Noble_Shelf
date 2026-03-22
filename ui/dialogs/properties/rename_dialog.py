@@ -7,7 +7,7 @@ from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QLineEdit, QMessageB
 
 import config
 import db
-from properties._utils import _is_library_root
+from ui.dialogs.properties._utils import _is_library_root
 from theme import THEME_COLORS, apply_dark_titlebar
 
 

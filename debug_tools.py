@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QDialog, QVBoxLayout
 from ui.dialogs.first_run import LibrarySetupOverlay
 from ui.dialogs.library_folder_dialog import LibraryFolderDialog
 import config
+import db
 
 
 def show_first_run_overlay(parent=None) -> None:
@@ -27,7 +28,7 @@ def show_first_run_overlay(parent=None) -> None:
     layout.addWidget(overlay)
 
     def _on_setup_clicked() -> None:
-        picker = LibraryFolderDialog(dlg)
+        picker = LibraryFolderDialog(dlg, current_path=db.get_setting("library_folder") or "")
         if picker.exec() != QDialog.DialogCode.Accepted:
             return
         dlg.accept()
