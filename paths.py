@@ -18,16 +18,24 @@ APP_BASE = _app_base
 ICON_DMM_BADGE = os.path.join(APP_BASE, "assets", "dmm_badge.png")
 ICON_DLSITE_BADGE = os.path.join(APP_BASE, "assets", "dlsite_badge.png")
 ICON_HAMBURGER = os.path.join(APP_BASE, "assets", "hamburger-button.png")
-ICON_GRID = os.path.join(APP_BASE, "assets", "grid_white.png")
 ICON_FILTER = os.path.join(APP_BASE, "assets", "filter.png")
 ICON_SIDEBAR = os.path.join(APP_BASE, "assets", "sidebar.png")
 ICON_RANDOM = os.path.join(APP_BASE, "assets", "random.png")
 ICON_SEARCH = os.path.join(APP_BASE, "assets", "search.png")
 ICON_AUTO_SCROLL = os.path.join(APP_BASE, "assets", "auto_scroll.png")
+# toolbar.py: ブックマークレット用アイコン（現状はツールバー表示のみ・クリック処理は未接続）
+ICON_TOOLBAR_TITLE = os.path.join(APP_BASE, "assets", "title.png")
+ICON_TOOLBAR_BOOKMARKLET = os.path.join(APP_BASE, "assets", "bookmarklet.png")
+# toolbar.py: 設定（歯車）アイコン（表示のみ・処理未接続）
+ICON_TOOLBAR_SETTINGS = os.path.join(APP_BASE, "assets", "toolbar_settings.png")
 
 # ── アプリアイコン（ウィンドウ・exe） ──────────────────
 APP_ICON = os.path.join(APP_BASE, "assets", "icon.png")
 APP_ICON_ICO = os.path.join(APP_BASE, "assets", "desktop_icon.ico")
+# ui/bookmarklet_help_dialog.py: ブックマークレットコピー手順のスクリーンショット
+BOOKMARKLET_HELP_COPY_SCREENSHOT = os.path.join(APP_BASE, "assets", "bookmarklet_help_copy.png")
+# ui/bookmarklet_help_dialog.py: ブラウザにブックマーク登録する手順のスクリーンショット
+BOOKMARKLET_HELP_BROWSER_SCREENSHOT = os.path.join(APP_BASE, "assets", "bookmarklet_help_browser.png")
 
 # ユーザーデータ用ベース（%APPDATA%\NobleShelf）
 APP_DATA_DIR = os.path.join(os.environ.get("APPDATA", APP_BASE), "NobleShelf")

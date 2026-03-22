@@ -48,7 +48,7 @@ FONT_SIZE_BTN_LARGE       = FONT_SIZE_LG        # 主要ボタン（より大き
 FONT_SIZE_BTN_STAR        = FONT_SIZE_XL        # 星評価ボタン（コンテキストメニュー等）
 FONT_SIZE_RATING_UI       = FONT_SIZE_XL        # プロパティパネル内の星評価ボタン（QSS）
 FONT_SIZE_SORT_LABEL      = FONT_SIZE_GHOSTBAR  # ゴーストバーのソートラベル
-FONT_SIZE_SORT_BTN        = FONT_SIZE_DEFAULT   # ゴーストバーのボタン（昇順・フィルター・クリア）
+FONT_SIZE_SORT_BTN        = FONT_SIZE_DEFAULT   # ゴーストバーの昇順/降順ボタン
 FONT_SIZE_SEARCH_INPUT    = FONT_SIZE_LG   # 検索バー入力欄（setFont用）
 FONT_SIZE_SEARCHBAR       = FONT_SIZE_MD        # 検索バー入力欄（QSS font-size）
 FONT_SIZE_SEARCHBAR_BTN   = FONT_SIZE_LG        # 検索バー検索ボタン用（現状はアイコンのみ・QSS 未使用）
@@ -114,6 +114,8 @@ MAIN_TOOLBAR_SPACING = 4
 MAIN_TOOLBAR_ICON_SIZE = 26
 # toolbar.py: ランダムボタン押下時の accent フラッシュ表示時間(ms)
 MAIN_TOOLBAR_RANDOM_BTN_FLASH_MS = 200
+# toolbar.py: 設定アイコンボタン（処理未接続時のツールチップ文言）
+MAIN_TOOLBAR_SETTINGS_TOOLTIP = "設定（未接続）"
 
 # メインウィンドウ・タイトルバー（app.py）
 TITLE_BAR_DBLCLICK_HEIGHT = 50  # この高さ未満のダブルクリックで最大化
@@ -123,7 +125,6 @@ SORT_BAR_BUTTON_HEIGHT = 32
 SORT_BAR_MARGIN_LEFT = 16
 SORT_BAR_MARGIN_RIGHT = 8
 SORT_BAR_SPACING = 12
-SORT_BAR_BADGE_SPACING = 4
 
 # ── カード・サムネイル（グリッド）────────────────────────────
 # スライダー用の幅範囲（情報バーのカードサイズスライダーで使用）
@@ -263,6 +264,16 @@ BOOKMARKLET_THUMB_SIZE = (180, 180)
 BOOKMARKLET_HTTP_TIMEOUT_SEC = 5
 BOOKMARKLET_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 BOOKMARKLET_REFERER_DLSITE = "https://www.dlsite.com/"
+# ui/bookmarklet_help_dialog.py: ブックマークレットヘルプ（ページ送り）
+# ブラウザ登録ページのスクリーンショットが横長のため幅を確保
+BOOKMARKLET_HELP_DIALOG_MIN_SIZE = (560, 380)
+BOOKMARKLET_HELP_DIALOG_SIZE = (680, 560)
+# ページタイトル行のフォントサイズ（本文は FONT_SIZE_CONTEXT_MENU を参照）
+BOOKMARKLET_HELP_PAGE_TITLE_FONT_SIZE = FONT_SIZE_LG
+BOOKMARKLET_HELP_FOOTER_SPACING = 8
+# ヘルプ内スクリーンショットの最大表示幅（ダイアログ幅に合わせ縮小）
+# ヘルプ内スクリーンショットの最大幅（大きすぎるとはみ出しやすいため 620 の約7割）
+BOOKMARKLET_HELP_SCREENSHOT_MAX_WIDTH = 434
 
 # statusbar.py: ステータスバーUI（見た目維持）
 STATUSBAR_SLIDER_WIDTH = 120
@@ -320,12 +331,6 @@ MAIN_SPLITTER_HANDLE_WIDTH = 1
 
 # app.py: Ctrl+ホイールのカードサイズ変更ステップ
 CARD_SIZE_WHEEL_STEP = 10
-
-# app.py: フィルターバッジの寸法（ゴーストバー）
-FILTER_BADGE_HEIGHT = 26
-FILTER_BADGE_RADIUS = 12
-FILTER_BADGE_PADDING_Y = 2
-FILTER_BADGE_PADDING_X = 10
 
 # app.py: ソートバーのボタンQSS寸法
 SORT_BAR_LABEL_PADDING_LEFT = 4
@@ -481,6 +486,14 @@ SETTINGS_DIALOG_SPACING = 12
 # 下部の QDialogButtonBox（保存・キャンセル）ラベル
 SETTINGS_DIALOG_BTN_SAVE_TEXT = "保存"
 SETTINGS_DIALOG_BTN_CANCEL_TEXT = "キャンセル"
+# 起動時ソート（settings_dialog.py / app.py、DB キーは定数のみ参照）
+STARTUP_SORT_RESTORE_CHECKBOX_LABEL = "前回のソート状態を復元する"
+STARTUP_SORT_COMBO_ROW_LABEL = "起動時ソート順:"
+STARTUP_SORT_RESTORE_LAST_SETTING_KEY = "startup_sort_restore_last"
+STARTUP_SORT_DEFAULT_KEY_SETTING_KEY = "startup_sort_default_key"
+STARTUP_SORT_DEFAULT_KEY_FALLBACK = "title"
+SORT_LAST_KEY_SETTING_KEY = "sort_last_key"
+SORT_LAST_DESC_SETTING_KEY = "sort_last_desc"
 # 一般タブ：参照ボタン幅
 SETTINGS_BROWSE_BTN_WIDTH = 72
 # ショートカットタブ：説明テキストのフォントサイズ(px)
@@ -566,7 +579,7 @@ VIEWER_SLIDER_HANDLE_MARGIN_Y = -5
 # 起動直後のスキャンでストアファイル入力ダイアログを出さない時間(秒)
 INITIAL_SCAN_SUPPRESS_DIALOG_SEC = 3.0
 
-# ── フィルターポップオーバー（ゴーストバー🔧）────────────────────────
+# ── フィルターポップオーバー（ツールバーから開く右パネル）──────────────
 # filter_popover.py: 即時反映パネルのヘッダー・コンボ先頭項目
 FILTER_PANEL_TITLE = "フィルター"
 FILTER_PANEL_NONE_LABEL = "指定なし"

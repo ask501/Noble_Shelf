@@ -201,6 +201,13 @@ def setup_menubar(window):
     )
     view_menu.addAction(window._act_sidebar)
 
+    window._act_ghostbar = QAction("ゴーストバー（ソートバー）", window)
+    window._act_ghostbar.setCheckable(True)
+    window._act_ghostbar.triggered.connect(
+        lambda checked: window._set_ghostbar_visible(checked, save=True)
+    )
+    view_menu.addAction(window._act_ghostbar)
+
     window._act_infobar = QAction("情報バー", window)
     window._act_infobar.setCheckable(True)
     window._act_infobar.triggered.connect(

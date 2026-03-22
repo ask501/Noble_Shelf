@@ -1216,58 +1216,6 @@ def restore_backup(backup_path):
 
 
 # ══════════════════════════════════════════════════════
-#  config.pkl からの移行ヘルパー
-# ══════════════════════════════════════════════════════
-
-def migrate_from_pickle(pickle_path="config.pkl"):
-    """
-    config.pklが存在する場合にDBへ移行する。
-    移行済みなら何もしない（settings.migrated_from_pickle フラグで判定）。
-    """
-    if get_setting("migrated_from_pickle") == "1":
-        return False  # 移行済み
-    if not os.path.exists(pickle_path):
-        set_setting("migrated_from_pickle", "1")
-        return False
-
-    import pickle
-    try:
-        with open(pickle_path, "rb") as f:
-            config = pickle.load(f)
-    except Exception:
-        return False
-
-    library_folder = config.get("library_folder")
-    bookmarks      = config.get("bookmarks", {})
-    recent_books   = config.get("recent_books", [])
-
-    if library_folder:
-        set_setting("library_folder", library_folder)
-
-    conn = get_conn()
-    try:
-        for path, rating in bookmarks.items():
-            conn.execute(
-                """INSERT INTO bookmarks(path, rating) VALUES(?,?)
-                   ON CONFLICT(path) DO UPDATE SET rating=excluded.rating""",
-                (path, rating)
-            )
-        # recent_booksは新しい順に挿入（古いほど早い時刻にする）
-        for i, (name, path) in enumerate(reversed(recent_books)):
-            conn.execute(
-                """INSERT INTO recent_books(path, name, opened_at) VALUES(?,?,datetime('now','localtime',?))
-                   ON CONFLICT(path) DO UPDATE SET name=excluded.name, opened_at=excluded.opened_at""",
-                (path, name, f"+{i} seconds")
-            )
-        conn.commit()
-    finally:
-        conn.close()
-
-    set_setting("migrated_from_pickle", "1")
-    return True  # 移行した
-
-
-# ══════════════════════════════════════════════════════
 #  book_meta 読み書き（作者・タイプ・シリーズ）
 # ══════════════════════════════════════════════════════
 

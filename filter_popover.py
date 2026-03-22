@@ -245,16 +245,17 @@ class FilterPopover(QWidget):
                 color: {THEME_COLORS["fg_on_accent"]};
             }}
             QWidget#FilterPopover QPushButton#FilterClearButton {{
-                background: {THEME_COLORS["btn_cancel"]};
-                color: {THEME_COLORS["btn_cancel_fg"]};
-                border: 1px solid {THEME_COLORS["btn_cancel_border"]};
+                background: {THEME_COLORS["filter_clear_btn_bg"]};
+                color: {THEME_COLORS["filter_clear_btn_fg"]};
+                border: 1px solid {THEME_COLORS["filter_clear_btn_border"]};
                 border-radius: {config.FILTER_POPOVER_BORDER_RADIUS}px;
                 padding: {config.FILTER_POPOVER_ACTION_BTN_PADDING_Y}px
                     {config.FILTER_POPOVER_ACTION_BTN_PADDING_X}px;
             }}
             QWidget#FilterPopover QPushButton#FilterClearButton:hover {{
-                background: {THEME_COLORS["btn_cancel_border"]};
-                color: {THEME_COLORS["btn_cancel_fg"]};
+                background: {THEME_COLORS["filter_clear_btn_hover_bg"]};
+                color: {THEME_COLORS["filter_clear_btn_hover_fg"]};
+                border: 1px solid {THEME_COLORS["filter_clear_btn_hover_border"]};
             }}
             """
         )

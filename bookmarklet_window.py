@@ -4,27 +4,37 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QPushButton,
+    QCheckBox,
     QListWidget,
     QListWidgetItem,
     QLabel,
     QMenu,
 )
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QCloseEvent
 import config
-from theme import apply_dark_titlebar, BOOKMARKLET_THUMB_BG, BOOKMARKLET_THUMB_BORDER
+from theme import (
+    apply_dark_titlebar,
+    APP_BAR_SEPARATOR_RGBA,
+    BOOKMARKLET_THUMB_BG,
+    BOOKMARKLET_THUMB_BORDER,
+)
 import db
 
 
 # ステータス定数
-STATUS_PENDING = "pending"   # 🟡 保留中
-STATUS_APPLIED = "applied"   # 🟢 適用済み
-STATUS_ADDED = "added"       # 🔴 自動追加済み
+STATUS_PENDING = "pending"   # 既存（使わなくなるが残す）
+STATUS_APPLIED = "applied"   # 🟢 自動適用済み
+STATUS_ADDED = "added"       # 既存（使わなくなるが残す）
+STATUS_NO_MATCH = "no_match"  # 🔴 一致なし
+STATUS_MATCHED = "matched"  # 🟡 一致あり・手動待ち
 
 STATUS_LABEL = {
-    STATUS_PENDING: "🟡",
-    STATUS_APPLIED: "🟢",
-    STATUS_ADDED: "🔴",
+    "pending": "🟡",
+    "applied": "🟢",
+    "added": "🔴",
+    "no_match": "🔴",
+    "matched": "🟡",
 }
 
 
@@ -40,15 +50,40 @@ class BookmarkletWindow(QWidget):
         self._build_ui()
         self.refresh()
 
-    def _build_ui(self) -> None:
-        layout = QVBoxLayout(self)
+    def closeEvent(self, event: QCloseEvent) -> None:
+        """×で閉じたときツールバーの紫トグルを外す（透明背景に戻す）"""
+        mw = self._main_window
+        if mw is not None and hasattr(mw, "_sync_bookmarklet_toolbar_toggle"):
+            mw._sync_bookmarklet_toolbar_toggle(False)
+        super().closeEvent(event)
 
-        # ── コピーボタン ──
+    def _build_ui(self) -> None:
+        from PySide6.QtWidgets import QFrame
+
+        columns = QHBoxLayout(self)
+
+        # ── 左ペイン ──
+        left = QVBoxLayout()
+
+        copy_row = QHBoxLayout()
         self._btn_copy = QPushButton("ブックマークレットをコピー")
         self._btn_copy.clicked.connect(self._copy_bookmarklet)
-        layout.addWidget(self._btn_copy)
+        copy_row.addWidget(self._btn_copy, stretch=1)
 
-        # ── 削除ボタン行 ──
+        self._btn_help = QPushButton("？")
+        self._btn_help.setFixedWidth(32)
+        self._btn_help.setToolTip("ヘルプを表示")
+        self._btn_help.clicked.connect(self._open_help)
+        copy_row.addWidget(self._btn_help)
+
+        left.addLayout(copy_row)
+
+        self._chk_auto_apply = QCheckBox("完全一致時に自動適用")
+        self._chk_auto_apply.toggled.connect(self._on_auto_apply_toggled)
+        val = db.get_setting("bookmarklet_auto_apply")
+        self._chk_auto_apply.setChecked(val == "1" if val is not None else True)
+        left.addWidget(self._chk_auto_apply)
+
         btn_row = QHBoxLayout()
         self._btn_del_applied = QPushButton("🟢 削除")
         self._btn_del_pending = QPushButton("🟡 削除")
@@ -56,18 +91,23 @@ class BookmarkletWindow(QWidget):
         self._btn_del_all = QPushButton("全削除")
         for btn in (self._btn_del_applied, self._btn_del_pending, self._btn_del_added, self._btn_del_all):
             btn_row.addWidget(btn)
-        layout.addLayout(btn_row)
+        left.addLayout(btn_row)
 
-        # ── 2カラム ──
-        columns = QHBoxLayout()
-        layout.addLayout(columns)
-
-        # 左: キュー一覧
         self._list = QListWidget()
         self._list.setContextMenuPolicy(Qt.CustomContextMenu)
         self._list.customContextMenuRequested.connect(self._on_context_menu)
         self._list.currentItemChanged.connect(self._on_item_selected)
-        columns.addWidget(self._list, stretch=2)
+        left.addWidget(self._list, stretch=1)
+        columns.addLayout(left, stretch=2)
+
+        sep = QFrame()
+        sep.setObjectName("BookmarkletPaneSep")
+        sep.setFrameShape(QFrame.Shape.NoFrame)
+        sep.setFixedWidth(1)
+        sep.setStyleSheet(
+            f"QFrame#BookmarkletPaneSep {{ background-color: {APP_BAR_SEPARATOR_RGBA}; border: none; }}"
+        )
+        columns.addWidget(sep)
 
         # 右: 詳細パネル
         right = QVBoxLayout()
@@ -84,10 +124,6 @@ class BookmarkletWindow(QWidget):
         self._detail.setWordWrap(True)
         self._detail.setTextInteractionFlags(Qt.TextSelectableByMouse)
         right.addWidget(self._detail)
-        self._btn_find = QPushButton("ライブラリで探す")
-        self._btn_find.clicked.connect(self._find_in_library)
-        self._btn_find.setEnabled(False)
-        right.addWidget(self._btn_find)
 
         self._btn_apply = QPushButton("メタデータを適用")
         self._btn_apply.clicked.connect(self._apply_meta)
@@ -100,6 +136,17 @@ class BookmarkletWindow(QWidget):
         self._btn_del_pending.clicked.connect(lambda: self._delete_by_status(STATUS_PENDING))
         self._btn_del_added.clicked.connect(lambda: self._delete_by_status(STATUS_ADDED))
         self._btn_del_all.clicked.connect(self._delete_all)
+
+    def _open_help(self) -> None:
+        from ui.bookmarklet_help_dialog import BookmarkletHelpDialog
+
+        dlg = getattr(self, "_bookmarklet_help_dialog", None)
+        if dlg is None:
+            self._bookmarklet_help_dialog = BookmarkletHelpDialog(self)
+            dlg = self._bookmarklet_help_dialog
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
 
     def _on_item_selected(self, current, previous) -> None:
         """リスト選択時に右パネルを更新する"""
@@ -158,9 +205,18 @@ class BookmarkletWindow(QWidget):
             f"タグ: {tags or '—'}",
         ]
         self._detail.setText("\n".join(lines))
-        self._btn_find.setEnabled(True)
+        # DBからマッチしたパスを自動取得
+        result = db.find_book_by_bookmarklet(
+            dlsite_id=row.get("dlsite_id", ""),
+            title=row.get("title", ""),
+            url=row.get("url", ""),
+        )
+        self._found_path = result["path"] if result else None
         self._btn_apply.setEnabled(True)
         self._current_row = row  # 現在選択中のrowを保持
+
+    def _on_auto_apply_toggled(self, checked: bool) -> None:
+        db.set_setting("bookmarklet_auto_apply", "1" if checked else "0")
 
     def _copy_bookmarklet(self) -> None:
         """圧縮版ブックマークレットJSをクリップボードにコピーする"""
@@ -215,40 +271,35 @@ class BookmarkletWindow(QWidget):
         db.delete_bookmarklet_queue_by_id(row_id)
         self.refresh()
 
-    def _find_in_library(self) -> None:
-        row = getattr(self, "_current_row", None)
-        if not row or not self._main_window:
-            return
-        result = db.find_book_by_bookmarklet(
-            dlsite_id=row.get("dlsite_id", ""),
-            title=row.get("title", ""),
-            url=row.get("url", ""),
-        )
-        if not result:
-            from PySide6.QtWidgets import QMessageBox
-
-            QMessageBox.information(self, "検索結果", "ライブラリに見つかりませんでした。")
-            return
-        # グリッドにスクロール
-        self._main_window._grid.scroll_to_path(result["path"])
-        self._main_window.raise_()
-        self._main_window.activateWindow()
-        # 見つかったのでそのまま適用ボタンを有効化・パスを保持
-        self._found_path = result["path"]
-
     def _apply_meta(self) -> None:
         row = getattr(self, "_current_row", None)
         found_path = getattr(self, "_found_path", None)
         if not row or not found_path:
-            # 先にライブラリで探すよう促す
             from PySide6.QtWidgets import QMessageBox
 
-            QMessageBox.information(self, "未検索", "先に「ライブラリで探す」を実行してください。")
+            QMessageBox.information(self, "未検索", "ライブラリに一致する作品が見つかりませんでした。")
             return
+        import os
+
         from properties import MetaApplyDialog
 
         # 現在のメタをDBから取得
         current = db.get_book_meta(found_path) or {}
+
+        # books テーブルから title / circle を補完（get_all_books: name, circle, title, path, cover, is_dlst）
+        book_row = next((r for r in db.get_all_books() if r[3] == found_path), None)
+        if book_row:
+            current["title"] = book_row[2] or book_row[0] or ""
+            current["circle"] = book_row[1] or ""
+
+        # カバーパスを解決して cover キーに追加（MetaApplyDialog は current["cover"] を参照）
+        book_cover_raw = book_row[4] if book_row else ""
+        resolved_cover = (
+            db.resolve_cover_stored_value(book_cover_raw) if book_cover_raw else ""
+        )
+        current["cover"] = (
+            resolved_cover if (resolved_cover and os.path.isfile(resolved_cover)) else ""
+        )
 
         # fetchedはキューのメタをMetaApplyDialog形式に変換
         fetched = {

@@ -39,7 +39,7 @@ from searchbar import SearchBar, filter_books, build_haystack_cache
 from toolbar import ToolBar
 from drop_handler import handle_drop, _get_pdf_cover_and_pages
 from filter_popover import FilterPopover
-from theme import THEME_COLORS, apply_dark_titlebar, APP_BAR_SEPARATOR_RGBA, COLOR_WHITE
+from theme import THEME_COLORS, apply_dark_titlebar, APP_BAR_SEPARATOR_RGBA
 from properties import _auto_kana, _needs_kana_conversion, StoreFileInputDialog
 from menubar import setup_menubar, refresh_shortcuts
 from first_run import LibrarySetupOverlay
@@ -89,7 +89,7 @@ class MainWindow(QMainWindow):
         self._sort_desc: bool = False
         # メタデータキャッシュ（ソート/フィルタ用）
         self._meta_cache: dict[str, dict] = {}
-        # ゴーストバーのアクティブフィルター
+        # フィルターパネルで設定したアクティブ条件
         self._active_filters: list[dict] = []
         self._filter_logic: str = "and"
         self._filter_panel: FilterPopover | None = None  # _setup_central のスプリッターで生成
@@ -365,6 +365,20 @@ class MainWindow(QMainWindow):
         apply_dark_titlebar(self._bookmarklet_window)
         self._bookmarklet_window.raise_()
         self._bookmarklet_window.activateWindow()
+        self._sync_bookmarklet_toolbar_toggle(True)
+
+    def _sync_bookmarklet_toolbar_toggle(self, checked: bool) -> None:
+        """ツールバー上のブックマークレットボタンをウィンドウ表示状態に合わせる（紫/透明）。"""
+        if hasattr(self, "_main_toolbar"):
+            self._main_toolbar.set_bookmarklet_toggle_checked(checked)
+
+    def _on_bookmarklet_toolbar_toggled(self, visible: bool) -> None:
+        """ブックマークレットツールバートグル：ON でキュー表示、OFF で隠す（×閉じと同じ見た目）。"""
+        if visible:
+            self._open_bookmarklet_window()
+        else:
+            if self._bookmarklet_window is not None:
+                self._bookmarklet_window.hide()
 
     def _start_local_server(self) -> None:
         """ローカルHTTPサーバーを起動する"""
@@ -377,6 +391,22 @@ class MainWindow(QMainWindow):
         ブックマークレットからの受信処理（バックグラウンドスレッドから呼ばれる）。
         メタデータ取得→DB保存→メインスレッドへシグナルemit。
         """
+
+        def _save_cover(cover_url: str, book_path: str) -> str | None:
+            import hashlib
+
+            from thumbnail_crop_dialog import _download_image
+
+            pix = _download_image(cover_url)
+            if pix is None or pix.isNull():
+                return None
+            os.makedirs(config.COVER_CACHE_DIR, exist_ok=True)
+            key = hashlib.md5(book_path.encode()).hexdigest()
+            out_path = os.path.join(config.COVER_CACHE_DIR, f"{key}_fetched.jpg")
+            if pix.save(out_path, "JPEG", quality=90):
+                return out_path
+            return None
+
         try:
             from bookmarklet import fetch_meta
             meta = fetch_meta(url=url, html=html)
@@ -388,87 +418,98 @@ class MainWindow(QMainWindow):
                 title=meta.get("title", ""),
             )
 
+            auto_apply = db.get_setting("bookmarklet_auto_apply") == "1"
+            q_url = url
+            q_site = meta.get("site", "")
+            q_title = meta.get("title", "")
+            q_circle = meta.get("circle", "")
+            q_author = meta.get("author", "")
+            q_dlsite_id = meta.get("dlsite_id", "")
+            q_tags = ",".join(meta.get("tags", []))
+            q_price = meta.get("price")
+            q_release_date = meta.get("release_date", "")
+            q_cover_url = meta.get("cover_url", "")
+            q_store_url = meta.get("store_url", "")
+
             if matched is None:
-                # 一致なし → 従来通りキューに追加（🟡）
+                # 一致なし → no_match
                 db.add_bookmarklet_queue(
-                    url=url,
-                    site=meta.get("site", ""),
-                    title=meta.get("title", ""),
-                    circle=meta.get("circle", ""),
-                    author=meta.get("author", ""),
-                    dlsite_id=meta.get("dlsite_id", ""),
-                    tags=",".join(meta.get("tags", [])),
+                    url=q_url,
+                    site=q_site,
+                    title=q_title,
+                    circle=q_circle,
+                    author=q_author,
+                    dlsite_id=q_dlsite_id,
+                    tags=q_tags,
+                    price=q_price,
+                    release_date=q_release_date,
+                    cover_url=q_cover_url,
+                    store_url=q_store_url,
+                    status="no_match",
+                )
+            elif auto_apply:
+                # 一致あり＋自動適用ON → メタ適用して applied
+                found_path = matched["path"]
+                db.set_book_meta(
+                    found_path,
+                    author=meta.get("author", "") or "",
+                    tags=meta.get("tags") or [],
+                    dlsite_id=meta.get("dlsite_id") or None,
+                    release_date=meta.get("release_date") or None,
                     price=meta.get("price"),
-                    release_date=meta.get("release_date", ""),
-                    cover_url=meta.get("cover_url", ""),
-                    store_url=meta.get("store_url", ""),
-                    status="pending",
+                    store_url=meta.get("store_url") or None,
+                )
+                if (meta.get("title", "") or "").strip():
+                    db.update_book_display(
+                        found_path,
+                        title=meta.get("title") or None,
+                        circle=meta.get("circle") or None,
+                    )
+                cover_url = (meta.get("cover_url", "") or "").strip()
+                if cover_url:
+                    # get_book_cover は無いため、get_all_books の cover 列（custom優先）で既存サムネを判定
+                    existing_cover = ""
+                    for row in db.get_all_books():
+                        if row[3] == found_path:
+                            existing_cover = (row[4] or "").strip()
+                            break
+                    resolved = (
+                        db.resolve_cover_stored_value(existing_cover) if existing_cover else ""
+                    )
+                    if not (resolved and os.path.isfile(resolved)):
+                        saved_path = _save_cover(cover_url, found_path)
+                        if saved_path:
+                            db.update_book_cover_path(found_path, saved_path)
+                db.add_bookmarklet_queue(
+                    url=q_url,
+                    site=q_site,
+                    title=q_title,
+                    circle=q_circle,
+                    author=q_author,
+                    dlsite_id=q_dlsite_id,
+                    tags=q_tags,
+                    price=q_price,
+                    release_date=q_release_date,
+                    cover_url=q_cover_url,
+                    store_url=q_store_url,
+                    status="applied",
                 )
             else:
-                # 一致あり → 空でないフィールド数で分岐
-                non_empty = 0
-                for k in ("title", "circle", "author", "dlsite_id", "release_date", "cover_url"):
-                    if (meta.get(k, "") or "").strip():
-                        non_empty += 1
-                if meta.get("tags") or []:
-                    non_empty += 1
-                if meta.get("price") is not None:
-                    non_empty += 1
-
-                if non_empty <= 1:
-                    # 即時適用（🟢）
-                    found_path = matched["path"]
-
-                    db.set_book_meta(
-                        found_path,
-                        author=meta.get("author", "") or "",
-                        tags=meta.get("tags") or [],
-                        dlsite_id=meta.get("dlsite_id") or None,
-                        release_date=meta.get("release_date") or None,
-                        price=meta.get("price"),
-                        meta_source=meta.get("site") or None,
-                    )
-
-                    if (meta.get("title", "") or "").strip() and (meta.get("circle", "") or "").strip():
-                        db.update_book_display(
-                            found_path,
-                            title=meta.get("title") or None,
-                            circle=meta.get("circle") or None,
-                        )
-
-                    if (meta.get("cover_url", "") or "").strip():
-                        db.update_book_cover_path(found_path, meta.get("cover_url"))
-
-                    db.add_bookmarklet_queue(
-                        url=url,
-                        site=meta.get("site", ""),
-                        title=meta.get("title", ""),
-                        circle=meta.get("circle", ""),
-                        author=meta.get("author", ""),
-                        dlsite_id=meta.get("dlsite_id", ""),
-                        tags=",".join(meta.get("tags", [])),
-                        price=meta.get("price"),
-                        release_date=meta.get("release_date", ""),
-                        cover_url=meta.get("cover_url", ""),
-                        store_url=meta.get("store_url", ""),
-                        status="done",
-                    )
-                else:
-                    # ユーザー確認（🟡）
-                    db.add_bookmarklet_queue(
-                        url=url,
-                        site=meta.get("site", ""),
-                        title=meta.get("title", ""),
-                        circle=meta.get("circle", ""),
-                        author=meta.get("author", ""),
-                        dlsite_id=meta.get("dlsite_id", ""),
-                        tags=",".join(meta.get("tags", [])),
-                        price=meta.get("price"),
-                        release_date=meta.get("release_date", ""),
-                        cover_url=meta.get("cover_url", ""),
-                        store_url=meta.get("store_url", ""),
-                        status="pending",
-                    )
+                # 一致あり＋自動適用OFF → matched で止める
+                db.add_bookmarklet_queue(
+                    url=q_url,
+                    site=q_site,
+                    title=q_title,
+                    circle=q_circle,
+                    author=q_author,
+                    dlsite_id=q_dlsite_id,
+                    tags=q_tags,
+                    price=q_price,
+                    release_date=q_release_date,
+                    cover_url=q_cover_url,
+                    store_url=q_store_url,
+                    status="matched",
+                )
         except Exception:
             pass
         self.bookmarkletReceived.emit()
@@ -578,9 +619,12 @@ class MainWindow(QMainWindow):
         outer.addWidget(self._toolbar_row)
         outer.addWidget(self._searchbar_row)
 
-        # ツールバー検索アイコン：SearchBar 行の表示トグル（初期はボタン checked=True＝表示）
-        self._main_toolbar.searchToggled.connect(self._searchbar_row.setVisible)
+        # ツールバー検索アイコン：検索バー表示＋表示メニュー・DB（ui_show_searchbar）と同期
+        self._main_toolbar.searchToggled.connect(
+            lambda visible: self._set_searchbar_visible(visible, save=True)
+        )
         self._main_toolbar.randomRequested.connect(self._on_random_requested)
+        self._main_toolbar.bookmarkletToggled.connect(self._on_bookmarklet_toolbar_toggled)
 
         # スプリッター（サイドバー | グリッド＋ソートバー）
         splitter = QSplitter(Qt.Horizontal)
@@ -595,8 +639,10 @@ class MainWindow(QMainWindow):
         self._sidebar.contextMenuRequested.connect(self._on_sidebar_context_menu_requested)
         splitter.addWidget(self._sidebar)
 
-        # ツールバーサイドバーアイコン：サイドバー表示トグル（初期はボタン checked=True＝表示）
-        self._main_toolbar.sidebarToggled.connect(self._sidebar.setVisible)
+        # ツールバーサイドバーアイコン：サイドバー表示＋表示メニュー・DB（ui_show_sidebar）と同期
+        self._main_toolbar.sidebarToggled.connect(
+            lambda visible: self._set_sidebar_visible(visible, save=True)
+        )
 
         # 右側コンテナ: 上にソートバー（ゴーストバー）、下にグリッド
         grid_container = QWidget()
@@ -604,7 +650,7 @@ class MainWindow(QMainWindow):
         grid_layout.setContentsMargins(*config.LAYOUT_MARGINS_ZERO)
         grid_layout.setSpacing(config.LAYOUT_SPACING_ZERO)
 
-        # ── ゴーストバー（ソートキーラベル / 昇降順 / フィルター / クリア） ──
+        # ── ゴーストバー（ソートキーラベル / 昇降順） ──
         self._sort_bar = QWidget()
         self._sort_bar.setObjectName("SortBar")
         self._sort_bar.setFixedHeight(config.GHOSTBAR_HEIGHT)
@@ -634,28 +680,6 @@ class MainWindow(QMainWindow):
         self._sort_order_btn.clicked.connect(self._on_sort_order_toggled)
         bar_layout.addWidget(self._sort_order_btn)
 
-        # フィルターボタン（現状はダミー）
-        self._filter_btn = QPushButton("フィルター 🔧")
-        self._filter_btn.setObjectName("FilterButton")
-        self._filter_btn.setFixedHeight(config.SORT_BAR_BUTTON_HEIGHT)
-        self._filter_btn.setFont(font)
-        self._filter_btn.clicked.connect(self._on_filter_button_clicked)
-        bar_layout.addWidget(self._filter_btn)
-
-        # クリアボタン（ソート・フィルター条件をリセット）
-        self._clear_btn = QPushButton("クリア")
-        self._clear_btn.setObjectName("ClearButton")
-        self._clear_btn.setFixedHeight(config.SORT_BAR_BUTTON_HEIGHT)
-        self._clear_btn.setFont(font)
-        self._clear_btn.clicked.connect(self._on_clear_sort_and_filters)
-        bar_layout.addWidget(self._clear_btn)
-
-        # フィルターバッジエリア（条件タグを横並びで表示）
-        self._filter_badge_layout = QHBoxLayout()
-        self._filter_badge_layout.setSpacing(config.SORT_BAR_BADGE_SPACING)
-        self._filter_badge_layout.setContentsMargins(*config.LAYOUT_MARGINS_ZERO)
-        bar_layout.addLayout(self._filter_badge_layout)
-
         # 右側を埋めるストレッチ
         bar_layout.addStretch()
 
@@ -672,19 +696,22 @@ class MainWindow(QMainWindow):
                 color: {THEME_COLORS["text_main"]};
                 padding-left: {config.SORT_BAR_LABEL_PADDING_LEFT}px;
             }}
-            QPushButton#SortOrderButton, QPushButton#FilterButton, QPushButton#ClearButton {{
+            QPushButton#SortOrderButton {{
                 background-color: {THEME_COLORS["bg_widget"]};
                 color: {THEME_COLORS["text_main"]};
                 border: 1px solid {THEME_COLORS["border"]};
                 border-radius: {config.SORT_BAR_BTN_RADIUS}px;
                 padding: {config.SORT_BAR_BTN_PADDING_Y}px {config.SORT_BAR_BTN_PADDING_X}px;
             }}
-            QPushButton#SortOrderButton:hover, QPushButton#FilterButton:hover, QPushButton#ClearButton:hover {{
+            QPushButton#SortOrderButton:hover {{
                 background-color: {THEME_COLORS["hover"]};
             }}
             """
         )
         grid_layout.addWidget(self._sort_bar)
+        self._main_toolbar.ghostBarToggled.connect(
+            lambda visible: self._set_ghostbar_visible(visible, save=True)
+        )
 
         self._grid = BookGridView(app_callbacks=self._make_app_callbacks())
         grid_layout.addWidget(self._grid)
@@ -809,11 +836,11 @@ class MainWindow(QMainWindow):
                 if row[3]
             ]
             self._all_books = books
-            # 起動時は作品名昇順で表示＋サイドバーを作品名に
-            self._sort_key = "title"
-            self._sort_desc = False
             if hasattr(self, "_sidebar"):
-                self._sidebar._combo.setCurrentIndex(0)
+                self._apply_startup_sort_from_settings()
+            else:
+                self._sort_key = "title"
+                self._sort_desc = False
             self._apply_filters()
 
         # 裏でスキャン
@@ -1138,14 +1165,14 @@ class MainWindow(QMainWindow):
         if query.strip():
             books = filter_books(books, query)
 
-        # ゴーストバーのフィルタ条件
+        # フィルターパネルで設定した条件
         if self._active_filters:
             books = self._apply_active_filters(books)
 
         # ソートを適用
         books = self._sort_books(books)
 
-        # フィルター適用時は件数を保持（ゴーストバーで「全 N 件」表示用）
+        # フィルター適用時は件数を保持（ソートバーラベルで「全 N 件」表示用）
         if self._active_filters:
             self._filtered_count = len(books)
         elif hasattr(self, "_filtered_count"):
@@ -1173,9 +1200,58 @@ class MainWindow(QMainWindow):
 
     # ── ソート関連 ───────────────────────────────────────
 
+    def _persist_sort_state_for_next_launch(self) -> None:
+        """次回起動「前回のソート状態を復元」用に DB に保持（キー名は config のみ参照）。"""
+        try:
+            db.set_setting(
+                config.SORT_LAST_KEY_SETTING_KEY,
+                self._sort_key or config.STARTUP_SORT_DEFAULT_KEY_FALLBACK,
+            )
+            db.set_setting(
+                config.SORT_LAST_DESC_SETTING_KEY,
+                "1" if self._sort_desc else "0",
+            )
+        except Exception:
+            pass
+
+    def _apply_startup_sort_from_settings(self) -> None:
+        """起動時ソート（設定ダイアログで保存した DB 値）。サイドバーモード表示を同期する。"""
+        restore = (
+            db.get_setting(config.STARTUP_SORT_RESTORE_LAST_SETTING_KEY, "1") == "1"
+        )
+        fb = config.STARTUP_SORT_DEFAULT_KEY_FALLBACK
+        if restore:
+            raw_key = (db.get_setting(config.SORT_LAST_KEY_SETTING_KEY) or "").strip()
+            key = raw_key if raw_key else fb
+            desc = db.get_setting(config.SORT_LAST_DESC_SETTING_KEY) == "1"
+        else:
+            raw_key = (
+                db.get_setting(config.STARTUP_SORT_DEFAULT_KEY_SETTING_KEY) or ""
+            ).strip()
+            key = raw_key if raw_key else fb
+            desc = False
+
+        sb = self._sidebar
+        valid = {sb._combo.itemData(i) for i in range(sb._combo.count())}
+        if key not in valid:
+            key = fb
+            if key not in valid:
+                key = sb._combo.itemData(0)
+        self._sort_key = key
+        self._sort_desc = desc
+        sb._combo.blockSignals(True)
+        for i in range(sb._combo.count()):
+            if sb._combo.itemData(i) == key:
+                sb._combo.setCurrentIndex(i)
+                sb._mode = key
+                break
+        sb._combo.blockSignals(False)
+        sb.refresh()
+        self._update_sort_bar()
+
     def _update_sort_bar(self):
         """ソートバーのラベルと昇降順ボタンの表示を更新"""
-        # フィルター適用中はゴーストバーラベルを「全 N 件」に（サイドバー選択状態にしない）
+        # フィルター適用中はラベルを「全 N 件」に（サイドバー選択状態にしない）
         if getattr(self, "_active_filters", None):
             count = getattr(self, "_filtered_count", 0)
             label = f"全 {count} 件"
@@ -1203,68 +1279,6 @@ class MainWindow(QMainWindow):
             text = "降順 " if self._sort_desc else "昇順 "
             self._sort_order_btn.setText(f"{text}{arrow}")
 
-    def _update_filter_badges(self):
-        """アクティブフィルターをゴーストバーにバッジ表示"""
-        if not hasattr(self, "_filter_badge_layout"):
-            return
-        # 既存バッジを全削除
-        while self._filter_badge_layout.count():
-            item = self._filter_badge_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-
-        if not self._active_filters:
-            return
-
-        label_map = {
-            "author": "作者",
-            "circle": "サークル",
-            "series": "シリーズ",
-            "character": "キャラクター",
-            "tag": "タグ",
-        }
-
-        from functools import partial
-
-        for i, cond in enumerate(self._active_filters):
-            field = cond.get("field", "")
-            value = cond.get("value", "")
-            if not field or not value:
-                continue
-            name = label_map.get(field, field)
-            badge = QPushButton(f"{name}: {value}  ×")
-            badge.setFixedHeight(config.FILTER_BADGE_HEIGHT)
-            badge.setStyleSheet(
-                f"""
-                QPushButton {{
-                    background-color: {THEME_COLORS["bg_widget"]};
-                    color: {THEME_COLORS["text_main"]};
-                    border: 1px solid {THEME_COLORS["accent"]};
-                    border-radius: {config.FILTER_BADGE_RADIUS}px;
-                    padding: {config.FILTER_BADGE_PADDING_Y}px {config.FILTER_BADGE_PADDING_X}px;
-                    font-size: {config.FONT_SIZE_PROP_HINT}px;
-                }}
-                QPushButton:hover {{
-                    background-color: {THEME_COLORS["delete"]};
-                    color: {COLOR_WHITE};
-                    border-color: {THEME_COLORS["delete"]};
-                }}
-                """
-            )
-            badge.clicked.connect(partial(self._remove_filter_badge, i))
-            self._filter_badge_layout.addWidget(badge)
-
-    def _remove_filter_badge(self, index: int):
-        """バッジの×クリックで該当フィルター削除"""
-        if 0 <= index < len(self._active_filters):
-            self._active_filters.pop(index)
-            self._update_filter_badges()
-            self._apply_filters()
-            if self._filter_panel is not None and self._filter_panel.isVisible():
-                self._filter_panel.sync_from_parent(
-                    self._active_filters, self._filter_logic
-                )
-
     def _on_sort_order_toggled(self):
         """昇順↔降順トグルボタン"""
         self._sort_desc = not self._sort_desc
@@ -1272,36 +1286,7 @@ class MainWindow(QMainWindow):
         self._apply_filters()
         # 昇降順トグル時もサイドバーの表示順を最新状態に反映
         self._sidebar.refresh()
-
-    def _on_clear_sort_and_filters(self):
-        """ソート・フィルター条件をリセット（フィルター系は後で実装）"""
-        # ソート状態リセット
-        self._sort_key = "title"
-        self._sort_desc = False  # 昇順
-        # フィルター条件リセット
-        self._active_filters = []
-        self._filter_logic = "and"
-        self._filter_dlsite_only = False
-        self._filter_fanza_only = False
-        self._filter_no_cover_only = False
-        if hasattr(self, "_act_filter_dlsite"):
-            self._act_filter_dlsite.setChecked(False)
-        if hasattr(self, "_act_filter_fanza"):
-            self._act_filter_fanza.setChecked(False)
-        if hasattr(self, "_act_filter_no_cover"):
-            self._act_filter_no_cover.setChecked(False)
-        # フィルターパネルの UI リセット
-        if hasattr(self, "_filter_panel") and self._filter_panel:
-            reset_fn = getattr(self._filter_panel, "reset", None)
-            if callable(reset_fn):
-                reset_fn()
-        # サイドバーコンボを先頭（作品名）に戻す
-        if hasattr(self, "_sidebar"):
-            self._sidebar._combo.setCurrentIndex(0)
-        # バー表示とグリッド反映の更新
-        self._update_sort_bar()
-        self._update_filter_badges()
-        self._apply_filters()
+        self._persist_sort_state_for_next_launch()
 
     def _on_filter_toggled(self, visible: bool) -> None:
         """ツールバーフィルター：パネル表示とスプリッター幅を同期する。"""
@@ -1324,18 +1309,6 @@ class MainWindow(QMainWindow):
             sizes[2] = 0
         self._splitter.setSizes(sizes)
 
-    def _on_filter_button_clicked(self):
-        """ゴーストバー フィルター：右パネル表示をツールバーアイコンと同期してトグル"""
-        if self._filter_panel is None:
-            return
-        vis = not self._filter_panel.isVisible()
-        self._on_filter_toggled(vis)
-        _bf = getattr(self._main_toolbar, "_btn_filter", None)
-        if _bf is not None:
-            _bf.blockSignals(True)
-            _bf.setChecked(vis)
-            _bf.blockSignals(False)
-
     def _on_filter_popover_apply(self, conditions: list[dict], logic: str):
         """フィルターパネルから条件が変わったたびに即時反映（結合は logic に従う）。"""
         cleaned = []
@@ -1348,7 +1321,6 @@ class MainWindow(QMainWindow):
         self._active_filters = cleaned
         logic_norm = (logic or "and").strip().lower()
         self._filter_logic = logic_norm if logic_norm in ("and", "or") else "and"
-        self._update_filter_badges()
         self._apply_filters()
         self._update_sort_bar()
 
@@ -1357,7 +1329,6 @@ class MainWindow(QMainWindow):
         self._active_filters = []
         self._filter_logic = "and"
         self._update_sort_bar()
-        self._update_filter_badges()
         self._apply_filters()
 
     def _on_filter_popover_clear(self):
@@ -1365,7 +1336,6 @@ class MainWindow(QMainWindow):
         self._active_filters = []
         self._filter_logic = "and"
         self._update_sort_bar()
-        self._update_filter_badges()
         self._apply_filters()
         self._on_filter_toggled(False)
         _bf = getattr(self._main_toolbar, "_btn_filter", None)
@@ -1375,7 +1345,7 @@ class MainWindow(QMainWindow):
             _bf.blockSignals(False)
 
     def _apply_active_filters(self, books: list[dict]) -> list[dict]:
-        """ゴーストバーのフィルター条件を適用。
+        """フィルターパネルで設定した条件を適用。
         - AND: 全条件（field+value）をフラットに列挙し、すべて一致が必要。
         - OR: 各条件（field, value）のいずれかが一致すれば採用。
         """
@@ -1458,6 +1428,7 @@ class MainWindow(QMainWindow):
         self._update_sort_bar()
         self._apply_filters()
         self._sidebar.refresh()
+        self._persist_sort_state_for_next_launch()
 
     def _sort_books(self, books: list[dict]) -> list[dict]:
         """現在のソートキー/順序に基づいて books を並べ替える"""
@@ -1678,6 +1649,30 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "情報", "対象となる書籍がありません。")
             return
 
+        # get_all_books にはふりがなが含まれないため、全件パスでメタを見て既存ふりがなの有無だけ判定する
+        has_existing_kana = False
+        for row in rows:
+            _path = row[3]
+            try:
+                _meta = db.get_book_meta(_path) or {}
+            except Exception:
+                continue
+            _tk = (_meta.get("title_kana") or "").strip()
+            _ck = (_meta.get("circle_kana") or "").strip()
+            if _tk or _ck:
+                has_existing_kana = True
+                break
+
+        if has_existing_kana:
+            reply = QMessageBox.question(
+                self,
+                "ふりがなの上書き確認",
+                "既存のふりがなをすべて上書きします。手動で入力したふりがなも消えます。続けますか？",
+                QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+            )
+            if reply != QMessageBox.StandardButton.Ok:
+                return
+
         progress = QProgressDialog("ふりがな一括取得中...", None, 0, total, self)
         progress.setWindowModality(Qt.WindowModal)
         progress.setMinimumDuration(config.PROGRESS_DIALOG_MIN_DURATION_MS)
@@ -1702,8 +1697,8 @@ class MainWindow(QMainWindow):
             cur_tk = meta.get("title_kana", "") or ""
             cur_ck = meta.get("circle_kana", "") or ""
 
-            need_title = (not cur_tk or _needs_kana_conversion(cur_tk)) and title_src
-            need_circle = (not cur_ck or _needs_kana_conversion(cur_ck)) and circle_src
+            need_title = bool(title_src)
+            need_circle = bool(circle_src)
 
             if not (need_title or need_circle):
                 continue
@@ -1935,7 +1930,7 @@ class MainWindow(QMainWindow):
         show_menubar = db.get_setting("ui_show_menubar", "1")
         self._set_menubar_visible(show_menubar != "0", save=False)
 
-        # ツールバー（ハンバーガー・グリッド）と検索バーは別設定・未設定時は表示
+        # ツールバーと検索バーは別設定・未設定時は表示
         show_tool = db.get_setting("ui_show_toolbar", "1")
         self._set_main_toolbar_visible(show_tool == "1", save=False)
         show_search = db.get_setting("ui_show_searchbar", "1")
@@ -1944,6 +1939,10 @@ class MainWindow(QMainWindow):
         # サイドバー
         show_sidebar = db.get_setting("ui_show_sidebar", "1")
         self._set_sidebar_visible(show_sidebar != "0", save=False)
+
+        # ゴーストバー（ソートバー）
+        show_ghostbar = db.get_setting("ui_show_ghostbar", "1")
+        self._set_ghostbar_visible(show_ghostbar != "0", save=False)
 
         # 情報バー（ステータスバー）
         show_infobar = db.get_setting("ui_show_infobar", "1")
@@ -1958,7 +1957,7 @@ class MainWindow(QMainWindow):
             db.set_setting("ui_show_menubar", "1" if visible else "0")
 
     def _set_main_toolbar_visible(self, visible: bool, save: bool):
-        """表示メニュー「ツールバー」：ハンバーガー・グリッドのみ。"""
+        """表示メニュー「ツールバー」：アイコン行の表示。"""
         self._main_toolbar.apply_visibility(visible)
         if hasattr(self, "_act_toolbar"):
             self._act_toolbar.setChecked(visible)
@@ -1995,6 +1994,16 @@ class MainWindow(QMainWindow):
                 _bs.blockSignals(False)
         if save:
             db.set_setting("ui_show_sidebar", "1" if visible else "0")
+
+    def _set_ghostbar_visible(self, visible: bool, save: bool) -> None:
+        """ゴーストバー（ソートバー）とツールバー title アイコンの同期。"""
+        self._sort_bar.setVisible(visible)
+        if hasattr(self, "_act_ghostbar"):
+            self._act_ghostbar.setChecked(visible)
+        if hasattr(self, "_main_toolbar"):
+            self._main_toolbar.set_ghostbar_toggle_checked(visible)
+        if save:
+            db.set_setting("ui_show_ghostbar", "1" if visible else "0")
 
     def _set_infobar_visible(self, visible: bool, save: bool):
         if hasattr(self, "_statusbar"):

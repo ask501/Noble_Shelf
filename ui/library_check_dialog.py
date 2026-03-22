@@ -58,11 +58,15 @@ class LibraryCheckDialog(QDialog):
         self._refresh_list()
 
     def _refresh_list(self) -> None:
-        while self._rows.count():
-            item = self._rows.takeAt(0)
-            w = item.widget()
-            if w is not None:
-                w.deleteLater()
+        # 古いコンテナを破棄して新規作成
+        old = self._scroll.takeWidget()
+        if old is not None:
+            old.deleteLater()
+        self._container = QWidget()
+        self._rows = QVBoxLayout(self._container)
+        self._rows.setContentsMargins(*config.LAYOUT_MARGINS_ZERO)
+        self._rows.setSpacing(config.THUMB_CROP_LAYOUT_SPACING)
+        self._scroll.setWidget(self._container)
 
         show_hidden = self._chk_show_hidden.isChecked()
         visible = [
@@ -88,7 +92,12 @@ class LibraryCheckDialog(QDialog):
         name = item["name"] + ("/" if item["is_dir"] else "")
         lbl = QLabel(name)
         if item.get("hidden") and show_hidden:
-            lbl.setStyleSheet(f"color: {THEME_COLORS['text_muted']};")
+            # text_muted / text_disabled は未定義のため text_sub → menu_disabled（theme.THEME_COLORS）
+            _muted = THEME_COLORS.get(
+                "text_muted",
+                THEME_COLORS.get("text_sub", THEME_COLORS["menu_disabled"]),
+            )
+            lbl.setStyleSheet(f"color: {_muted};")
         lay.addWidget(lbl, 1)
 
         btn_register = QPushButton("登録")

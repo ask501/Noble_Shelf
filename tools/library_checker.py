@@ -26,9 +26,10 @@ def scan_unregistered(library_path: str, db) -> list[dict]:
             full_path = os.path.normpath(os.path.abspath(entry.path))
             norm_path = os.path.normcase(full_path)
             is_hidden = norm_path in hidden_paths
-            # 未登録のみ表示。ただし hidden_paths にあるものは表示対象に残す。
-            if norm_path in registered_paths and not is_hidden:
-                continue
+            # 登録済みは通常スキップ。hidden_paths のものは registered でも results に含める。
+            if norm_path in registered_paths:
+                if not is_hidden:
+                    continue
             results.append(
                 {
                     "path": full_path,

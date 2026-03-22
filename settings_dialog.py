@@ -26,8 +26,11 @@ import os
 
 import db
 import config
+from sidebar import SIDEBAR_MODES
 from theme import (
     apply_dark_titlebar,
+    SETTINGS_STARTUP_SORT_COMBO_QSS,
+    SETTINGS_STARTUP_SORT_LABEL_QSS,
     SETTINGS_SHORTCUT_HINT_STYLE,
     SETTINGS_SHORTCUT_DISPLAY_STYLE_NORMAL,
     SETTINGS_SHORTCUT_DISPLAY_STYLE_CAPTURE,
@@ -89,6 +92,12 @@ class SettingsDialog(QDialog):
         if getattr(self, "_active_shortcut_id", None) is not None:
             self._end_shortcut_capture(cancel=True)
         super().reject()
+
+    def _on_startup_sort_restore_changed(self, _state: int) -> None:
+        """前回復元ON時は起動時ソートコンボを無効（グレーアウト）。"""
+        on = self._chk_startup_sort_restore.isChecked()
+        self._combo_startup_sort.setEnabled(not on)
+        self._lbl_startup_sort.setEnabled(not on)
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -202,6 +211,36 @@ class SettingsDialog(QDialog):
         repair_paths_btn.setFont(QFont(config.FONT_FAMILY, config.FONT_SIZE_BTN_DEFAULT))
         repair_paths_btn.clicked.connect(self._on_repair_paths)
         general_layout.addWidget(repair_paths_btn)
+
+        # 起動時ソート
+        self._chk_startup_sort_restore = QCheckBox(config.STARTUP_SORT_RESTORE_CHECKBOX_LABEL)
+        self._chk_startup_sort_restore.setFont(
+            QFont(config.FONT_FAMILY, config.FONT_SIZE_DIALOG_LABEL)
+        )
+        self._chk_startup_sort_restore.stateChanged.connect(
+            self._on_startup_sort_restore_changed
+        )
+        general_layout.addWidget(self._chk_startup_sort_restore)
+
+        startup_sort_row = QHBoxLayout()
+        self._lbl_startup_sort = QLabel(config.STARTUP_SORT_COMBO_ROW_LABEL)
+        self._lbl_startup_sort.setObjectName("SettingsStartupSortLabel")
+        self._lbl_startup_sort.setFont(
+            QFont(config.FONT_FAMILY, config.FONT_SIZE_DIALOG_LABEL)
+        )
+        self._lbl_startup_sort.setStyleSheet(SETTINGS_STARTUP_SORT_LABEL_QSS)
+        startup_sort_row.addWidget(self._lbl_startup_sort)
+        self._combo_startup_sort = QComboBox()
+        self._combo_startup_sort.setObjectName("SettingsStartupSortCombo")
+        self._combo_startup_sort.setFont(
+            QFont(config.FONT_FAMILY, config.FONT_SIZE_DIALOG_INPUT)
+        )
+        for _sk, _sl in SIDEBAR_MODES:
+            self._combo_startup_sort.addItem(_sl, _sk)
+        self._combo_startup_sort.setStyleSheet(SETTINGS_STARTUP_SORT_COMBO_QSS)
+        startup_sort_row.addWidget(self._combo_startup_sort)
+        startup_sort_row.addStretch()
+        general_layout.addLayout(startup_sort_row)
 
         general_layout.addStretch()
         tabs.addTab(general, "一般")
@@ -762,6 +801,19 @@ class SettingsDialog(QDialog):
                 val = config.DEFAULT_SHORTCUTS.get(key, "")
             disp.setText((val or "").strip())
 
+        rr = db.get_setting(config.STARTUP_SORT_RESTORE_LAST_SETTING_KEY)
+        self._chk_startup_sort_restore.setChecked(
+            rr != "0" if rr is not None else True
+        )
+        saved_default = (
+            db.get_setting(config.STARTUP_SORT_DEFAULT_KEY_SETTING_KEY)
+            or config.STARTUP_SORT_DEFAULT_KEY_FALLBACK
+        )
+        idx = self._combo_startup_sort.findData(saved_default)
+        if idx >= 0:
+            self._combo_startup_sort.setCurrentIndex(idx)
+        self._on_startup_sort_restore_changed(0)
+
     def _is_valid_viewer_path(self, path: str) -> bool:
         """パスが空、または実在するファイル（.lnk の場合はリンク先が実在）なら True。"""
         p = (path or "").strip()
@@ -824,6 +876,17 @@ class SettingsDialog(QDialog):
         db.set_setting(config.CARD_SETTING_SUB_INFO,    self._combo_sub_info.currentData())
         db.set_setting("backup_max_count", str(self._backup_count_spin.value()))
         db.set_setting("disable_auto_update", "1" if self._disable_update_check.isChecked() else "0")
+
+        db.set_setting(
+            config.STARTUP_SORT_RESTORE_LAST_SETTING_KEY,
+            "1" if self._chk_startup_sort_restore.isChecked() else "0",
+        )
+        _sdk = self._combo_startup_sort.currentData()
+        db.set_setting(
+            config.STARTUP_SORT_DEFAULT_KEY_SETTING_KEY,
+            (_sdk if _sdk is not None else "")
+            or config.STARTUP_SORT_DEFAULT_KEY_FALLBACK,
+        )
 
         self.accept()
 

@@ -58,6 +58,27 @@ SETTINGS_SHORTCUT_CAPTURE_BG = "#1a2a28"
 SETTINGS_SHORTCUT_CONFIRMED_BG = "#0d3d38"
 SETTINGS_CARD_PREVIEW_THUMB_BG = "#2a2a38"       # カード表示タブのプレビュー用サムネ背景
 SETTINGS_CARD_PREVIEW_META_OK_BG = "#4caf50"     # プレビューのメタバッジ(✓)背景
+# settings_dialog.py: 起動時ソート行（有効/無効でテーマ色を明示）
+SETTINGS_STARTUP_SORT_LABEL_QSS = f"""
+    QLabel#SettingsStartupSortLabel {{
+        color: {COLOR_TEXT_MAIN};
+    }}
+    QLabel#SettingsStartupSortLabel:disabled {{
+        color: {COLOR_MENU_DISABLED};
+    }}
+"""
+SETTINGS_STARTUP_SORT_COMBO_QSS = f"""
+    QComboBox#SettingsStartupSortCombo {{
+        color: {COLOR_TEXT_MAIN};
+        background-color: {COLOR_BG_WIDGET};
+        border: 1px solid {COLOR_BORDER};
+    }}
+    QComboBox#SettingsStartupSortCombo:disabled {{
+        color: {COLOR_TEXT_SUB};
+        background-color: {COLOR_BG_PANEL};
+        border: 1px solid {COLOR_BORDER};
+    }}
+"""
 
 # ── properties/meta_apply_dialog.py 用カラー/QSS ──────────────
 # ※meta_apply_dialog.py の直書き #xxxxxx を同値で定数化（見た目維持）
@@ -92,6 +113,16 @@ PROPERTY_STAR_OFF_FG = "#888"        # 未選択の星色
 BOOKMARK_STAR_ON_FG = "#f5c518"
 BOOKMARK_STAR_OFF_FG = "#555555"
 BOOKMARK_SAVE_BG = "#2d7a2d"
+
+# ── filter_popover.py 用（下部「条件一括クリア」ボタン・アウトライン）────────
+COLOR_UI_TRANSPARENT = "transparent"
+COLOR_FILTER_POPOVER_CLEAR_ORANGE = "#f08000"
+COLOR_FILTER_POPOVER_CLEAR_BG = COLOR_UI_TRANSPARENT
+COLOR_FILTER_POPOVER_CLEAR_BORDER = COLOR_FILTER_POPOVER_CLEAR_ORANGE
+COLOR_FILTER_POPOVER_CLEAR_FG = COLOR_FILTER_POPOVER_CLEAR_ORANGE
+COLOR_FILTER_POPOVER_CLEAR_HOVER_BG = COLOR_UI_TRANSPARENT
+COLOR_FILTER_POPOVER_CLEAR_HOVER_BORDER = COLOR_FILTER_POPOVER_CLEAR_ORANGE
+COLOR_FILTER_POPOVER_CLEAR_HOVER_FG = COLOR_FILTER_POPOVER_CLEAR_ORANGE
 
 # ── bookmarklet_window.py 用カラー ─────────────────────────
 # ※bookmarklet_window.py の直書き #xxxxxx を同値で定数化（見た目維持）
@@ -206,6 +237,13 @@ THEME_COLORS = {
     "btn_cancel_border": COLOR_BTN_CANCEL_BORDER,
     # キャンセル系ボタン上の文字色（BTN_CANCEL_STYLE と同じ白）
     "btn_cancel_fg":  COLOR_WHITE,
+    # フィルターパネル下部クリア（FilterClearButton・アウトライン）
+    "filter_clear_btn_bg": COLOR_FILTER_POPOVER_CLEAR_BG,
+    "filter_clear_btn_border": COLOR_FILTER_POPOVER_CLEAR_BORDER,
+    "filter_clear_btn_fg": COLOR_FILTER_POPOVER_CLEAR_FG,
+    "filter_clear_btn_hover_bg": COLOR_FILTER_POPOVER_CLEAR_HOVER_BG,
+    "filter_clear_btn_hover_border": COLOR_FILTER_POPOVER_CLEAR_HOVER_BORDER,
+    "filter_clear_btn_hover_fg": COLOR_FILTER_POPOVER_CLEAR_HOVER_FG,
 }
 
 # ドロップダウン矢印文字（ここを変えれば全箇所に反映）

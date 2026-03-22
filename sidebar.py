@@ -272,7 +272,7 @@ class SidebarWidget(QWidget):
                 break
 
     def set_filter_result_mode(self, active: bool, books: list[dict] | None = None):
-        """ゴーストバーフィルター適用中はプルダウンを隠し「フィルター」表示＋結果一覧にする"""
+        """複合フィルター適用中はプルダウンを隠し「フィルター」表示＋結果一覧にする"""
         self._showing_filter_result = active
         self._filter_result_books = list(books or [])
         if active:
