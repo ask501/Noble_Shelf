@@ -310,7 +310,7 @@ class MetaApplyDialog(QDialog):
                 self._url = u
 
             def run(self):
-                from thumbnail_crop_dialog import _download_image
+                from ui.dialogs.thumbnail_crop_dialog import _download_image
 
                 self.done.emit(_download_image(self._url))
 
@@ -337,7 +337,7 @@ class MetaApplyDialog(QDialog):
 
     def _on_cover_crop(self):
         """切り抜きダイアログを開き、確定時にサムネイルパスを保存"""
-        from thumbnail_crop_dialog import ThumbnailCropDialog
+        from ui.dialogs.thumbnail_crop_dialog import ThumbnailCropDialog
 
         if not self._fetched_image_url:
             QMessageBox.information(self, "サムネイル", "取得した画像がありません。")
@@ -375,7 +375,7 @@ class MetaApplyDialog(QDialog):
         """取得画像URLをダウンロードしてcover_cacheに保存しパスを返す"""
         import hashlib
 
-        from thumbnail_crop_dialog import _download_image
+        from ui.dialogs.thumbnail_crop_dialog import _download_image
 
         pix = _download_image(self._fetched_image_url)
         if pix is None or pix.isNull():

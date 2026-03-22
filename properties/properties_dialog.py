@@ -802,7 +802,7 @@ class PropertyDialog(QDialog):
 
     def _on_crop_cover(self):
         """現在のサムネイルから切り抜き（cover_cacheに保存）"""
-        from thumbnail_crop_dialog import ThumbnailCropDialog
+        from ui.dialogs.thumbnail_crop_dialog import ThumbnailCropDialog
         src = self._new_cover_path or self._cover
         if not src or not os.path.exists(src):
             QMessageBox.information(self, "切り抜き", "切り抜きする画像がありません。先に「画像を変更」で画像を設定してください。")

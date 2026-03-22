@@ -6,8 +6,8 @@ debug_tools.py - 開発・デバッグ用ユーティリティ
 
 from PySide6.QtWidgets import QDialog, QVBoxLayout
 
-from first_run import LibrarySetupOverlay
-from library_folder_dialog import LibraryFolderDialog
+from ui.dialogs.first_run import LibrarySetupOverlay
+from ui.dialogs.library_folder_dialog import LibraryFolderDialog
 import config
 
 

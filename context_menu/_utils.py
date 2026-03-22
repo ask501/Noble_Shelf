@@ -176,7 +176,7 @@ def open_book(path: str, parent_window, modal: bool = True) -> bool:
         name = db.get_book_name_by_path(path) or os.path.basename(path) or path
         db.add_recent_book(name, path)
         return True
-    from viewer import Viewer
+    from ui.dialogs.viewer import Viewer
 
     v = Viewer(parent_window, path)
     if modal:

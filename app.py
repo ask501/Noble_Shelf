@@ -30,20 +30,20 @@ import time
 
 import config
 import db
-from library_folder_dialog import LibraryFolderDialog
+from ui.dialogs.library_folder_dialog import LibraryFolderDialog
 from version import VERSION
 from grid import BookGridView
 from scanner import scan_library
-from sidebar import SidebarWidget
-from searchbar import SearchBar, filter_books, build_haystack_cache
-from toolbar import ToolBar
+from ui.widgets.sidebar import SidebarWidget
+from ui.widgets.searchbar import SearchBar, filter_books, build_haystack_cache
+from ui.widgets.toolbar import ToolBar
 from drop_handler import handle_drop, _get_pdf_cover_and_pages
-from filter_popover import FilterPopover
+from ui.dialogs.filter_popover import FilterPopover
 from theme import THEME_COLORS, apply_dark_titlebar, APP_BAR_SEPARATOR_RGBA
 from properties import _auto_kana, _needs_kana_conversion, StoreFileInputDialog
-from menubar import setup_menubar, refresh_shortcuts
-from first_run import LibrarySetupOverlay
-from statusbar import setup_statusbar
+from ui.widgets.menubar import setup_menubar, refresh_shortcuts
+from ui.dialogs.first_run import LibrarySetupOverlay
+from ui.widgets.statusbar import setup_statusbar
 
 
 def _resolve_cover(path: str, cover: str) -> str:
@@ -190,7 +190,7 @@ class MainWindow(QMainWindow):
         if not library_folder or not os.path.isdir(library_folder):
             QMessageBox.information(self, config.APP_TITLE, "ライブラリフォルダが未設定です。")
             return
-        from ui.library_check_dialog import LibraryCheckDialog
+        from ui.dialogs.library_check_dialog import LibraryCheckDialog
 
         dlg = LibraryCheckDialog(library_folder, self)
         dlg.exec()
@@ -357,7 +357,7 @@ class MainWindow(QMainWindow):
     def _open_bookmarklet_window(self) -> None:
         """ブックマークレットキューウィンドウを開く"""
         if not hasattr(self, "_bookmarklet_window") or self._bookmarklet_window is None:
-            from bookmarklet_window import BookmarkletWindow
+            from ui.dialogs.bookmarklet_window import BookmarkletWindow
             from theme import apply_dark_titlebar
             self._bookmarklet_window = BookmarkletWindow(parent=self, main_window=self)
         self._bookmarklet_window.show()
@@ -395,7 +395,7 @@ class MainWindow(QMainWindow):
         def _save_cover(cover_url: str, book_path: str) -> str | None:
             import hashlib
 
-            from thumbnail_crop_dialog import _download_image
+            from ui.dialogs.thumbnail_crop_dialog import _download_image
 
             pix = _download_image(cover_url)
             if pix is None or pix.isNull():
@@ -1362,6 +1362,8 @@ class MainWindow(QMainWindow):
         def match_condition(book: dict, field: str, value: str) -> bool:
             path = book.get("path", "") or ""
             meta = self._meta_cache.get(path) if path else {}
+            if meta is None:
+                return False
 
             if field == "author":
                 author_val = meta.get("author")

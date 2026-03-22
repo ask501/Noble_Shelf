@@ -138,7 +138,7 @@ class BookmarkletWindow(QWidget):
         self._btn_del_all.clicked.connect(self._delete_all)
 
     def _open_help(self) -> None:
-        from ui.bookmarklet_help_dialog import BookmarkletHelpDialog
+        from ui.dialogs.bookmarklet_help_dialog import BookmarkletHelpDialog
 
         dlg = getattr(self, "_bookmarklet_help_dialog", None)
         if dlg is None:

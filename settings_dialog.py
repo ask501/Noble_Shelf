@@ -26,7 +26,7 @@ import os
 
 import db
 import config
-from sidebar import SIDEBAR_MODES
+from ui.widgets.sidebar import SIDEBAR_MODES
 from theme import (
     apply_dark_titlebar,
     SETTINGS_STARTUP_SORT_COMBO_QSS,

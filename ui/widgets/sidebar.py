@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal, QRect, QSize, QEvent
 from PySide6.QtGui import QFont, QPainter, QColor, QPen, QFontMetrics
-from ui.auto_scroll_mixin import AutoScrollListWidget
+from ui.utils.auto_scroll_mixin import AutoScrollListWidget
 
 import db
 import config

@@ -8,7 +8,7 @@ from PySide6.QtWidgets import QAbstractItemView, QListView, QMessageBox
 
 import config
 import db
-from ui.auto_scroll_mixin import AutoScrollMixin
+from ui.utils.auto_scroll_mixin import AutoScrollMixin
 from .delegate import BookCardDelegate, CARD_H, CARD_W, MIN_GAP
 from .model import BookListModel
 from .roles import ROLE_CIRCLE, ROLE_COVER, ROLE_PAGES, ROLE_PATH, ROLE_RATING, ROLE_TITLE
