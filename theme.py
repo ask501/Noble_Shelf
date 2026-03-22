@@ -2,6 +2,12 @@
 theme.py - アプリ全体のテーマ・スタイル定義
 旧 ui_common.py の移植。PySide6用QSSに対応。
 """
+from __future__ import annotations
+
+import os
+
+import config
+from paths import ICON_COMBO_ARROW
 
 # ── カラー定数 ────────────────────────────────────────────
 COLOR_BG_BASE    = "#1e1e1e"
@@ -269,6 +275,9 @@ DANGER_MENU_ITEM_STYLE_HOVER = (
     f"background-color: {MENU_ITEM_HOVER_BG}; border-radius: {MENU_ITEM_BORDER_RADIUS};"
 )
 
+# QComboBox::down-arrow の url（Windows の \ は QSS で使えないため / に統一）
+_QSS_COMBO_DOWN_ARROW_URL = ICON_COMBO_ARROW.replace(os.sep, "/")
+
 # ── グローバルQSS ─────────────────────────────────────────
 APP_QSS = f"""
 QWidget {{
@@ -480,9 +489,9 @@ QComboBox::drop-down:hover {{
     background: {COLOR_HOVER};
 }}
 QComboBox::down-arrow {{
-    image: url(assets/mdi--triangle-down.svg);
-    width: 10px;
-    height: 10px;
+    image: url({_QSS_COMBO_DOWN_ARROW_URL});
+    width: {config.APP_QSS_COMBO_DOWN_ARROW_SIZE_PX}px;
+    height: {config.APP_QSS_COMBO_DOWN_ARROW_SIZE_PX}px;
 }}
 QComboBox QAbstractItemView {{
     background-color: {COLOR_BG_PANEL};

@@ -28,6 +28,8 @@ ICON_TOOLBAR_TITLE = os.path.join(APP_BASE, "assets", "title.png")
 ICON_TOOLBAR_BOOKMARKLET = os.path.join(APP_BASE, "assets", "bookmarklet.png")
 # toolbar.py: 設定（歯車）アイコン（表示のみ・処理未接続）
 ICON_TOOLBAR_SETTINGS = os.path.join(APP_BASE, "assets", "toolbar_settings.png")
+# theme.py: QComboBox::down-arrow 用 SVG（QSS の url は / 区切りに変換して使用）
+ICON_COMBO_ARROW = os.path.join(APP_BASE, "assets", "mdi--triangle-down.svg")
 
 # ── アプリアイコン（ウィンドウ・exe） ──────────────────
 APP_ICON = os.path.join(APP_BASE, "assets", "icon.png")

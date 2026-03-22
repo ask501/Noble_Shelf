@@ -60,6 +60,8 @@ FONT_SIZE_CONTEXT_MENU    = FONT_SIZE_MD        # コンテキストメニュー
 FONT_SIZE_CONTEXT_MENU_SHORTCUT = FONT_SIZE_XS  # コンテキストメニュー右側ショートカット表示（QSS）
 FONT_SIZE_STAR_UI         = FONT_SIZE_XL        # 星評価ボタン等（QSS）
 FONT_SIZE_APP_GLOBAL      = FONT_SIZE_MD        # アプリ全体QSSのデフォルト（QWidget等）
+# theme.py: APP_QSS 内 QComboBox::down-arrow（SVG）の幅・高さ(px)
+APP_QSS_COMBO_DOWN_ARROW_SIZE_PX = 10
 
 
 
