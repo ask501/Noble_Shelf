@@ -265,11 +265,11 @@ def _handle_store_file(path: str, library_folder: str, parent, on_done):
         cover = ""
         if ext in PDF_EXTS:
             cover, pages = _get_pdf_cover_and_pages(dest)
-            db.upsert_book(
-                name, circle, title, dest, cover, mtime, is_dlst, pages=pages
+            db.upsert_store_file_book(
+                dest, name, circle, title, cover, mtime, is_dlst, pages
             )
         else:
-            db.upsert_book(name, circle, title, dest, cover, mtime, is_dlst)
+            db.upsert_store_file_book(dest, name, circle, title, cover, mtime, is_dlst)
         if on_done:
             on_done()
     except Exception as e:

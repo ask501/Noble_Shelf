@@ -7,7 +7,7 @@ from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QLineEdit, QMessageB
 
 import config
 import db
-from ui.dialogs.properties._utils import _is_library_root
+from ui.dialogs.properties._utils import _is_library_root, _safe_from_db_path
 from theme import THEME_COLORS, apply_dark_titlebar
 
 
@@ -61,7 +61,7 @@ class RenameDialog(QDialog):
         btn_ok.clicked.connect(self._apply)
 
     def _apply(self):
-        path = self._book.get("path", "")
+        path = _safe_from_db_path(self._book.get("path", ""))
         cover = self._book.get("cover", "")
         circle_old = self._book.get("circle", "")
         title_old = self._book.get("title", "")

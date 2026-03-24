@@ -540,6 +540,25 @@ QToolTip {{
 """
 
 
+def get_statusbar_scan_progress_qss(border_radius_px: int) -> str:
+    """
+    ステータスバー用スキャン進捗 QProgressBar の QSS。
+    角丸などの数値は app 側で config から渡す（theme は config を import しない）。
+    """
+    r = int(border_radius_px)
+    return f"""
+    QProgressBar#StatusBarScanProgress {{
+        border: 1px solid {COLOR_BORDER};
+        border-radius: {r}px;
+        background-color: {COLOR_BG_WIDGET};
+        text-align: center;
+    }}
+    QProgressBar#StatusBarScanProgress::chunk {{
+        background-color: {COLOR_ACCENT};
+    }}
+    """
+
+
 def apply_dark_titlebar(window) -> None:
     """ウィンドウのタイトルバーをダークにする（Windows専用）"""
     try:

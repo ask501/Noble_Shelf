@@ -38,6 +38,18 @@ def _is_library_root(path: str) -> bool:
     return os.path.normpath(os.path.abspath(path)) == os.path.normpath(os.path.abspath(lib))
 
 
+def _safe_from_db_path(path: str) -> str:
+    """DBの相対パス/絶対パスをUI用の絶対パスに安全に解決する。"""
+    if not path or not path.strip():
+        return ""
+    if os.path.isabs(path):
+        return os.path.normpath(path)
+    try:
+        return os.path.normpath(db._from_db_path(path))
+    except Exception:
+        return os.path.normpath(path)
+
+
 def _meta_source_for_apply(meta: dict, applied: dict) -> str | None:
     """メタ適用時の取得元キー。URL・DLSite API に基づく。dlsite, fanza, とらのあな, 同人DB, other のいずれかまたは None。"""
     did = (applied.get("dlsite_id") or "").strip()

@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
 
 import config
 import db
-from ui.dialogs.properties._utils import BTN_CANCEL_STYLE, BTN_SAVE_STYLE, _meta_source_for_apply
+from ui.dialogs.properties._utils import BTN_CANCEL_STYLE, BTN_SAVE_STYLE, _meta_source_for_apply, _safe_from_db_path
 from ui.dialogs.properties.meta_apply_dialog import MetaApplyDialog
 from theme import SITE_COLORS, apply_dark_titlebar, META_SEARCH_SITE_DEFAULT, META_SEARCH_ITEM_DIM_FG
 
@@ -375,7 +375,7 @@ class MetaSearchDialog(QDialog):
                     "cover": current_book.get("cover", ""),
                 }
                 meta["dlsite_id"] = meta.get("dojindb_url") or meta.get("id") or ""
-                path = current_book.get("path", "")
+                path = _safe_from_db_path(current_book.get("path", ""))
                 apply_dlg = MetaApplyDialog(current, meta, self, book_path=path)
                 if apply_dlg.exec() != QDialog.Accepted:
                     return

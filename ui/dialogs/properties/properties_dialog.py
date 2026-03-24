@@ -32,6 +32,7 @@ from ui.dialogs.properties._utils import (
     PropertyFormContext,
     _auto_kana,
     _is_library_root,
+    _safe_from_db_path,
     _needs_kana_conversion,
     _parse_multi,
 )
@@ -102,7 +103,7 @@ class PropertyDialog(QDialog):
             self._bulk = False
         self._on_saved = on_saved
 
-        self._path: str = self._book.get("path", "")
+        self._path: str = _safe_from_db_path(self._book.get("path", ""))
         self._name: str = self._book.get("name", "")
         self._title: str = self._book.get("title", "") or self._name
         self._circle: str = self._book.get("circle", "")
@@ -138,7 +139,7 @@ class PropertyDialog(QDialog):
             vals = {getter(b) for b in self._books}
             if len(vals) > 1:
                 self._multi_fields.add(key)
-        all_metas = [db.get_book_meta(b.get("path")) or {} for b in self._books]
+        all_metas = [db.get_book_meta(_safe_from_db_path(b.get("path", ""))) or {} for b in self._books]
         for key, getter in [
             ("author", lambda m: (m.get("author") or "").strip()),
             ("series", lambda m: (m.get("series") or "").strip()),
@@ -154,7 +155,7 @@ class PropertyDialog(QDialog):
             if len(vals) > 1:
                 self._multi_fields.add(key)
         bookmarks = db.get_all_bookmarks()
-        rating_vals = {bookmarks.get(b.get("path"), 0) for b in self._books if b.get("path")}
+        rating_vals = {bookmarks.get(_safe_from_db_path(b.get("path", "")), 0) for b in self._books if b.get("path")}
         if len(rating_vals) > 1:
             self._multi_fields.add("rating")
 
@@ -1204,7 +1205,7 @@ class PropertyDialog(QDialog):
                 return None
 
         for b in self._books:
-            p = b.get("path")
+            p = _safe_from_db_path(b.get("path", ""))
             if not p:
                 continue
             meta = db.get_book_meta(p) or {}

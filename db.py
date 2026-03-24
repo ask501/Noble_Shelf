@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 db.py - SQLiteデータベース管理・バックアップ処理
 
@@ -13,11 +15,18 @@ import os
 import shutil
 import sys
 import unicodedata
+import uuid as uuid_lib
+from contextlib import contextmanager
 from datetime import datetime
+import config
 from paths import DB_FILE, BACKUP_DIR
 import cache
 
 MAX_BACKUPS = 10
+LIBRARY_FOLDER_SETTING_KEY = "library_folder"
+DEBUG_FORCE_DB_RECREATE_ONCE_ENV_KEY = "NOBLE_SHELF_FORCE_DB_RECREATE_ONCE"
+DEBUG_FORCE_DB_RECREATE_ENABLED_VALUE = "1"
+_debug_force_db_recreate_consumed = False
 
 # フィルターパネル用 get_all_*_with_count のキャッシュキー（cache.py）
 CACHE_KEY_TAGS_WITH_COUNT = "tags_with_count"
@@ -37,7 +46,204 @@ def get_conn():
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")   # 書き込み中でも読み取り可能にする
     conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute(f"PRAGMA busy_timeout={config.DB_BUSY_TIMEOUT_MS}")
     return conn
+
+
+@contextmanager
+def transaction():
+    """明示的トランザクション。例外時は自動ロールバック。"""
+    conn = get_conn()
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def _new_uuid() -> str:
+    """UUID v4文字列を返す。"""
+    return str(uuid_lib.uuid4())
+
+
+def _get_library_root() -> str:
+    """設定済みライブラリルートを返す。未設定時は空文字。"""
+    return (get_setting(LIBRARY_FOLDER_SETTING_KEY) or "").strip()
+
+
+def _to_db_path(abs_path: str) -> str:
+    """絶対パスをDB保存用の相対パスへ変換する。"""
+    root = _get_library_root()
+    if not root:
+        raise ValueError("ライブラリルートが未設定です")
+    return os.path.normpath(os.path.relpath(abs_path, root))
+
+
+def _from_db_path(rel_path: str) -> str:
+    """DB保存用の相対パスを絶対パスへ変換する。"""
+    root = _get_library_root()
+    if not root:
+        raise ValueError("ライブラリルートが未設定です")
+    return os.path.normpath(os.path.join(root, rel_path))
+
+
+def _get_book_uuid(conn: sqlite3.Connection, path: str) -> str | None:
+    """pathに対応するbooks.uuidを返す。未登録時はNone。"""
+    row = conn.execute("SELECT uuid FROM books WHERE path=?", (path,)).fetchone()
+    return (row["uuid"] if row else None) if row is not None else None
+
+
+def get_book_uuid(path: str) -> str | None:
+    """pathに対応するbooks.uuidを返す。未登録時はNone。"""
+    if not path or not str(path).strip():
+        return None
+    conn = get_conn()
+    try:
+        return _get_book_uuid(conn, path)
+    finally:
+        conn.close()
+
+
+def get_book_by_uuid(book_uuid: str) -> dict | None:
+    """uuidでbooksレコードを取得する。"""
+    if not book_uuid or not str(book_uuid).strip():
+        return None
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            """SELECT uuid, name, circle, title, path,
+                      COALESCE(NULLIF(cover_custom, ''), cover_path) as cover_path,
+                      mtime, COALESCE(is_dlst, 0) as is_dlst
+               FROM books WHERE uuid=?""",
+            (book_uuid,),
+        ).fetchone()
+        if not row:
+            return None
+        # books に media_type 列は無い（新スキーマ）。呼び出し側互換用に既定値を付与する。
+        d = dict(row)
+        d.setdefault("media_type", config.BOOKS_MEDIA_TYPE_DEFAULT)
+        return d
+    finally:
+        conn.close()
+
+
+def update_book_path_by_uuid(book_uuid: str, new_path: str) -> bool:
+    """uuid指定でbooks.pathを更新する。更新時はTrueを返す。"""
+    if not book_uuid or not new_path:
+        return False
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            "UPDATE books SET path=?, updated_at=datetime('now','localtime') WHERE uuid=?",
+            (new_path, book_uuid),
+        )
+        if cur.rowcount:
+            conn.commit()
+            return True
+        return False
+    finally:
+        conn.close()
+
+
+def upsert_book_by_uuid(
+    book_uuid: str,
+    name: str,
+    circle: str,
+    title: str,
+    path: str,
+    cover_path: str,
+    mtime: float | None = None,
+    is_dlst: int = 0,
+    pages: int | None = None,
+) -> None:
+    """uuid指定でbooksをupsertする。pathはUNIQUEで維持する。"""
+    if not book_uuid or not path:
+        return
+    store_cover = _normalize_cover_for_save(cover_path) if cover_path else ""
+    conn = get_conn()
+    try:
+        conn.execute(
+            """INSERT INTO books(uuid, name, circle, title, path, cover_path, mtime, is_dlst, updated_at)
+               VALUES(?,?,?,?,?,?,?,?,datetime('now','localtime'))
+               ON CONFLICT(uuid) DO UPDATE SET
+                 name=excluded.name, circle=excluded.circle, title=excluded.title,
+                 path=excluded.path, cover_path=excluded.cover_path, mtime=excluded.mtime,
+                 is_dlst=excluded.is_dlst, updated_at=excluded.updated_at""",
+            (book_uuid, name, circle, title, path, store_cover, mtime, is_dlst),
+        )
+        conn.commit()
+        if pages is not None:
+            set_book_meta(path, pages=pages)
+    finally:
+        conn.close()
+    cache.invalidate()
+
+
+def upsert_store_file_book(
+    abs_path: str,
+    name: str,
+    circle: str,
+    title: str,
+    cover_path: str = "",
+    mtime: float | None = None,
+    is_dlst: int = 0,
+    pages: int | None = None,
+) -> None:
+    """
+    ストアファイル等（ライブラリ直下・.noble-shelf-id なし）を books に登録する。
+    path は _to_db_path で相対化し、uuid は既存レコードがあれば path で引き継ぎ、
+    なければ path 文字列から uuid5 で安定生成する。
+    """
+    if not abs_path or not str(abs_path).strip():
+        return
+    abs_norm = os.path.normpath(os.path.abspath(str(abs_path).strip()))
+    try:
+        rel_path = _to_db_path(abs_norm)
+    except ValueError:
+        rel_path = os.path.normpath(abs_norm)
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT uuid FROM books WHERE path=?", (rel_path,)).fetchone()
+        if row:
+            book_uuid = row["uuid"]
+        else:
+            key = os.path.normcase(os.path.normpath(rel_path))
+            book_uuid = str(uuid_lib.uuid5(uuid_lib.NAMESPACE_URL, key))
+    finally:
+        conn.close()
+    upsert_book_by_uuid(
+        book_uuid,
+        name,
+        circle,
+        title,
+        rel_path,
+        cover_path or "",
+        mtime,
+        is_dlst,
+        pages,
+    )
+
+
+def _is_uuid_schema_ready(c: sqlite3.Cursor) -> bool:
+    """books/book_metaがuuid基準スキーマならTrue。"""
+    book_cols = [r[1] for r in c.execute("PRAGMA table_info(books)").fetchall()]
+    meta_cols = [r[1] for r in c.execute("PRAGMA table_info(book_meta)").fetchall()]
+    return ("uuid" in book_cols and "path" in book_cols and "uuid" in meta_cols)
+
+
+def _consume_debug_force_db_recreate_once() -> bool:
+    """デバッグ用: 環境変数が有効なら1プロセス中で1回だけTrueを返す。"""
+    global _debug_force_db_recreate_consumed
+    if _debug_force_db_recreate_consumed:
+        return False
+    flag = (os.environ.get(DEBUG_FORCE_DB_RECREATE_ONCE_ENV_KEY) or "").strip()
+    if flag != DEBUG_FORCE_DB_RECREATE_ENABLED_VALUE:
+        return False
+    _debug_force_db_recreate_consumed = True
+    return True
 
 
 def init_db():
@@ -45,11 +251,22 @@ def init_db():
     conn = get_conn()
     try:
         c = conn.cursor()
+        force_recreate = _consume_debug_force_db_recreate_once()
+
+        # 旧path主キー構成なら、v3スキーマへ再作成（既存ユーザーゼロ前提）
+        c.execute("CREATE TABLE IF NOT EXISTS books(path TEXT PRIMARY KEY)")
+        c.execute("CREATE TABLE IF NOT EXISTS book_meta(path TEXT PRIMARY KEY)")
+        if force_recreate or not _is_uuid_schema_ready(c):
+            c.execute("DROP TABLE IF EXISTS book_characters")
+            c.execute("DROP TABLE IF EXISTS book_tags")
+            c.execute("DROP TABLE IF EXISTS book_meta")
+            c.execute("DROP TABLE IF EXISTS books")
 
         # ── books テーブル ──────────────────────────────
         c.execute("""
             CREATE TABLE IF NOT EXISTS books (
-                path        TEXT PRIMARY KEY,
+                uuid        TEXT PRIMARY KEY,
+                path        TEXT NOT NULL UNIQUE,
                 name        TEXT NOT NULL,
                 circle      TEXT NOT NULL,
                 title       TEXT NOT NULL,
@@ -94,7 +311,7 @@ def init_db():
         # ── book_meta テーブル（作者・タイプ・シリーズ・作品ID・除外フラグなど）────
         c.execute("""
             CREATE TABLE IF NOT EXISTS book_meta (
-                path         TEXT PRIMARY KEY,
+                uuid         TEXT PRIMARY KEY,
                 author       TEXT DEFAULT '',
                 type         TEXT DEFAULT '',
                 series       TEXT DEFAULT '',
@@ -107,7 +324,9 @@ def init_db():
                 price        INTEGER,
                 memo         TEXT DEFAULT '',
                 store_url    TEXT DEFAULT '',
-                updated_at   TEXT DEFAULT (datetime('now','localtime'))
+                meta_source  TEXT DEFAULT '',
+                updated_at   TEXT DEFAULT (datetime('now','localtime')),
+                FOREIGN KEY (uuid) REFERENCES books(uuid) ON DELETE CASCADE
             )
         """)
         # 既存DBに不足カラムがあれば追加（マイグレーション）
@@ -136,18 +355,20 @@ def init_db():
         # ── book_characters テーブル ───────────────────
         c.execute("""
             CREATE TABLE IF NOT EXISTS book_characters (
-                path      TEXT NOT NULL,
+                uuid      TEXT NOT NULL,
                 character TEXT NOT NULL,
-                PRIMARY KEY (path, character)
+                PRIMARY KEY (uuid, character),
+                FOREIGN KEY (uuid) REFERENCES books(uuid) ON DELETE CASCADE
             )
         """)
 
         # ── book_tags テーブル ─────────────────────────
         c.execute("""
             CREATE TABLE IF NOT EXISTS book_tags (
-                path TEXT NOT NULL,
+                uuid TEXT NOT NULL,
                 tag  TEXT NOT NULL,
-                PRIMARY KEY (path, tag)
+                PRIMARY KEY (uuid, tag),
+                FOREIGN KEY (uuid) REFERENCES books(uuid) ON DELETE CASCADE
             )
         """)
 
@@ -189,8 +410,9 @@ def init_db():
 
         # ── インデックス ───────────────────────────────
         c.execute("CREATE INDEX IF NOT EXISTS idx_books_circle ON books(circle)")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_characters_path ON book_characters(path)")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_tags_path ON book_tags(path)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_books_path ON books(path)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_characters_uuid ON book_characters(uuid)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_tags_uuid ON book_tags(uuid)")
 
         conn.commit()
 
@@ -214,7 +436,9 @@ def migrate_release_date_format():
     conn = get_conn()
     try:
         rows = conn.execute(
-            "SELECT path, release_date FROM book_meta WHERE release_date != ''"
+            """SELECT m.uuid, m.release_date
+               FROM book_meta m
+               WHERE m.release_date != ''"""
         ).fetchall()
         for row in rows:
             rd = row["release_date"] or ""
@@ -222,8 +446,8 @@ def migrate_release_date_format():
             if m:
                 normalized = f"{m.group(1)}年{int(m.group(2))}月{int(m.group(3))}日"
                 conn.execute(
-                    "UPDATE book_meta SET release_date = ? WHERE path = ?",
-                    (normalized, row["path"]),
+                    "UPDATE book_meta SET release_date = ? WHERE uuid = ?",
+                    (normalized, row["uuid"]),
                 )
         conn.commit()
     finally:
@@ -384,7 +608,7 @@ def find_book_by_bookmarklet(dlsite_id: str, title: str, url: str = "") -> dict 
         if dlsite_id:
             row = conn.execute(
                 "SELECT b.path, b.name, b.title, b.circle FROM books b "
-                "LEFT JOIN book_meta m ON b.path = m.path "
+                "LEFT JOIN book_meta m ON b.uuid = m.uuid "
                 "WHERE m.dlsite_id = ?",
                 (dlsite_id,),
             ).fetchone()
@@ -649,14 +873,17 @@ def upsert_book(name, circle, title, path, cover_path, mtime=None, is_dlst=0, pa
     store_cover = _normalize_cover_for_save(cover_path) if cover_path else ""
     conn = get_conn()
     try:
+        row = conn.execute("SELECT uuid FROM books WHERE path=?", (path,)).fetchone()
+        book_uuid = row["uuid"] if row else _new_uuid()
         conn.execute(
-            """INSERT INTO books(name, circle, title, path, cover_path, mtime, is_dlst, updated_at)
-               VALUES(?,?,?,?,?,?,?,datetime('now','localtime'))
+            """INSERT INTO books(uuid, name, circle, title, path, cover_path, mtime, is_dlst, updated_at)
+               VALUES(?,?,?,?,?,?,?,?,datetime('now','localtime'))
                ON CONFLICT(path) DO UPDATE SET
+                 uuid=excluded.uuid,
                  name=excluded.name, circle=excluded.circle, title=excluded.title,
                  cover_path=excluded.cover_path, mtime=excluded.mtime, is_dlst=excluded.is_dlst,
                  updated_at=excluded.updated_at""",
-            (name, circle, title, path, store_cover, mtime, is_dlst)
+            (book_uuid, name, circle, title, path, store_cover, mtime, is_dlst)
         )
         conn.commit()
         if pages is not None:
@@ -674,16 +901,24 @@ def bulk_upsert_books(records):
     """
     if not records:
         return
-    normalized = [
-        (r[0], r[1], r[2], r[3], _normalize_cover_for_save(r[4]) if r[4] else "", r[5], r[6])
-        for r in records
-    ]
+    normalized: list[tuple] = []
+    conn = get_conn()
+    try:
+        for r in records:
+            existing = conn.execute("SELECT uuid FROM books WHERE path=?", (r[3],)).fetchone()
+            book_uuid = existing["uuid"] if existing else _new_uuid()
+            normalized.append(
+                (book_uuid, r[0], r[1], r[2], r[3], _normalize_cover_for_save(r[4]) if r[4] else "", r[5], r[6])
+            )
+    finally:
+        conn.close()
     conn = get_conn()
     try:
         conn.executemany(
-            """INSERT INTO books(name, circle, title, path, cover_path, mtime, is_dlst, updated_at)
-               VALUES(?,?,?,?,?,?,?,datetime('now','localtime'))
+            """INSERT INTO books(uuid, name, circle, title, path, cover_path, mtime, is_dlst, updated_at)
+               VALUES(?,?,?,?,?,?,?,?,datetime('now','localtime'))
                ON CONFLICT(path) DO UPDATE SET
+                 uuid=excluded.uuid,
                  name=excluded.name, circle=excluded.circle, title=excluded.title,
                  cover_path=excluded.cover_path, mtime=excluded.mtime, is_dlst=excluded.is_dlst,
                  updated_at=excluded.updated_at""",
@@ -700,6 +935,7 @@ def delete_book(path):
     try:
         conn.execute("DELETE FROM books WHERE path=?", (path,))
         conn.execute("DELETE FROM bookmarks WHERE path=?", (path,))
+        conn.execute("DELETE FROM recent_books WHERE path=?", (path,))
         conn.commit()
     finally:
         conn.close()
@@ -724,14 +960,51 @@ def bulk_delete_books(paths):
     cache.invalidate()
 
 
+def bulk_upsert_and_delete_books(
+    upsert_records: list[tuple],
+    delete_paths: list[str],
+) -> None:
+    """
+    upsertとdeleteを1トランザクションで実行する。
+    upsert_records: (uuid, name, circle, title, path, cover_path, mtime, is_dlst) のタプルリスト
+    delete_paths: 削除対象のpathリスト
+    """
+    if not upsert_records and not delete_paths:
+        return
+    conn = get_conn()
+    try:
+        for args in upsert_records:
+            conn.execute(
+                """INSERT INTO books(uuid, name, circle, title, path, cover_path, mtime, is_dlst, updated_at)
+                   VALUES(?,?,?,?,?,?,?,?,datetime('now','localtime'))
+                   ON CONFLICT(uuid) DO UPDATE SET
+                     name=excluded.name, circle=excluded.circle, title=excluded.title,
+                     path=excluded.path, cover_path=excluded.cover_path, mtime=excluded.mtime,
+                     is_dlst=excluded.is_dlst, updated_at=excluded.updated_at""",
+                args,
+            )
+        if delete_paths:
+            unique_paths = list(set(delete_paths))
+            conn.executemany(
+                "DELETE FROM books WHERE path=?", [(p,) for p in unique_paths]
+            )
+            conn.executemany(
+                "DELETE FROM bookmarks WHERE path=?", [(p,) for p in unique_paths]
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    cache.invalidate()
+
+
 def rename_book(old_path, new_path, new_name, new_circle, new_title, new_cover_path):
     conn = get_conn()
     try:
         # 新しいパスに既存のエントリがある場合は先に削除（UNIQUE制約エラー回避）
         conn.execute("DELETE FROM books WHERE path=? AND path!=?", (new_path, old_path))
-        conn.execute("DELETE FROM book_meta WHERE path=? AND path!=?", (new_path, old_path))
-        conn.execute("DELETE FROM book_tags WHERE path=? AND path!=?", (new_path, old_path))
-        conn.execute("DELETE FROM book_characters WHERE path=? AND path!=?", (new_path, old_path))
         conn.execute("DELETE FROM bookmarks WHERE path=? AND path!=?", (new_path, old_path))
         conn.execute("DELETE FROM recent_books WHERE path=? AND path!=?", (new_path, old_path))
 
@@ -757,12 +1030,9 @@ def rename_book(old_path, new_path, new_name, new_circle, new_title, new_cover_p
                cover_custom=COALESCE(?, cover_custom), updated_at=datetime('now','localtime') WHERE path=?""",
             (new_path, new_name, new_circle, new_title, cover_path_store, new_cover_custom, old_path)
         )
-        # 関連テーブルも path を更新
+        # pathを持つ関連テーブルのみ更新
         conn.execute("UPDATE bookmarks SET path=? WHERE path=?", (new_path, old_path))
         conn.execute("UPDATE recent_books SET path=? WHERE path=?", (new_path, old_path))
-        conn.execute("UPDATE book_meta SET path=? WHERE path=?", (new_path, old_path))
-        conn.execute("UPDATE book_tags SET path=? WHERE path=?", (new_path, old_path))
-        conn.execute("UPDATE book_characters SET path=? WHERE path=?", (new_path, old_path))
         conn.commit()
     finally:
         conn.close()
@@ -1231,11 +1501,39 @@ def get_book_meta(path):
     """
     conn = get_conn()
     try:
+        lookup_path = path
+        # 絶対パスで渡された場合はDB保存形式（相対パス）に揃えて検索する
+        if isinstance(path, str):
+            if os.path.isabs(path):
+                try:
+                    lookup_path = _to_db_path(path)
+                except ValueError:
+                    lookup_path = path
+            elif os.path.dirname(path) == "":
+                # ストアファイル名のみ（例: .dlst）で渡るケースはそのまま検索
+                lookup_path = path
+        book_uuid = _get_book_uuid(conn, lookup_path)
+        if not book_uuid:
+            return {
+                "author": "",
+                "type": "",
+                "series": "",
+                "dlsite_id": "",
+                "title_kana": "",
+                "circle_kana": "",
+                "pages": None,
+                "release_date": "",
+                "price": None,
+                "memo": "",
+                "store_url": "",
+                "characters": [],
+                "tags": [],
+            }
         row = conn.execute(
             "SELECT author, type, series, dlsite_id, title_kana, circle_kana, "
             "pages, release_date, price, memo, store_url "
-            "FROM book_meta WHERE path=?",
-            (path,)
+            "FROM book_meta WHERE uuid=?",
+            (book_uuid,)
         ).fetchone()
         meta = {
             "author":      row["author"]      if row else "",
@@ -1251,10 +1549,10 @@ def get_book_meta(path):
             "store_url":    row["store_url"]    if row and row["store_url"] is not None else "",
         }
         chars = conn.execute(
-            "SELECT character FROM book_characters WHERE path=? ORDER BY character", (path,)
+            "SELECT character FROM book_characters WHERE uuid=? ORDER BY character", (book_uuid,)
         ).fetchall()
         tags = conn.execute(
-            "SELECT tag FROM book_tags WHERE path=? ORDER BY tag", (path,)
+            "SELECT tag FROM book_tags WHERE uuid=? ORDER BY tag", (book_uuid,)
         ).fetchall()
         meta["characters"] = [r["character"] for r in chars]
         meta["tags"]        = [r["tag"]       for r in tags]
@@ -1268,14 +1566,14 @@ def get_all_book_metas() -> dict[str, dict]:
     conn = get_conn()
     try:
         rows = conn.execute(
-            "SELECT path, author, type, series, dlsite_id, title_kana, circle_kana, "
-            "pages, release_date, price, memo FROM book_meta"
+            "SELECT b.path, m.uuid, m.author, m.type, m.series, m.dlsite_id, m.title_kana, m.circle_kana, "
+            "m.pages, m.release_date, m.price, m.memo FROM books b LEFT JOIN book_meta m ON b.uuid = m.uuid"
         ).fetchall()
         chars = conn.execute(
-            "SELECT path, character FROM book_characters ORDER BY path, character"
+            "SELECT b.path, c.character FROM books b INNER JOIN book_characters c ON b.uuid = c.uuid ORDER BY b.path, c.character"
         ).fetchall()
         tags = conn.execute(
-            "SELECT path, tag FROM book_tags ORDER BY path, tag"
+            "SELECT b.path, t.tag FROM books b INNER JOIN book_tags t ON b.uuid = t.uuid ORDER BY b.path, t.tag"
         ).fetchall()
 
         meta_map: dict[str, dict] = {}
@@ -1329,8 +1627,11 @@ def has_metadata(path):
     """
     conn = get_conn()
     try:
+        book_uuid = _get_book_uuid(conn, path)
+        if not book_uuid:
+            return False
         row = conn.execute(
-            "SELECT dlsite_id FROM book_meta WHERE path=? AND dlsite_id != ''", (path,)
+            "SELECT dlsite_id FROM book_meta WHERE uuid=? AND dlsite_id != ''", (book_uuid,)
         ).fetchone()
         return row is not None
     finally:
@@ -1342,8 +1643,8 @@ def get_paths_with_metadata():
     conn = get_conn()
     try:
         rows = conn.execute(
-            """SELECT m.path FROM book_meta m
-               INNER JOIN books b ON m.path = b.path
+            """SELECT b.path FROM books b
+               INNER JOIN book_meta m ON b.uuid = m.uuid
                WHERE m.dlsite_id != '' AND m.excluded = 0"""
         ).fetchall()
         return {r["path"] for r in rows}
@@ -1356,8 +1657,8 @@ def get_paths_excluded():
     conn = get_conn()
     try:
         rows = conn.execute(
-            """SELECT m.path FROM book_meta m
-               INNER JOIN books b ON m.path = b.path
+            """SELECT b.path FROM books b
+               INNER JOIN book_meta m ON b.uuid = m.uuid
                WHERE m.excluded = 1"""
         ).fetchall()
         return {r["path"] for r in rows}
@@ -1369,12 +1670,15 @@ def set_excluded(path, excluded=True):
     """除外フラグを設定"""
     conn = get_conn()
     try:
+        book_uuid = _get_book_uuid(conn, path)
+        if not book_uuid:
+            return
         conn.execute(
-            """INSERT INTO book_meta(path, excluded, updated_at)
+            """INSERT INTO book_meta(uuid, excluded, updated_at)
                VALUES(?, ?, datetime('now','localtime'))
-               ON CONFLICT(path) DO UPDATE SET
+               ON CONFLICT(uuid) DO UPDATE SET
                  excluded=excluded.excluded, updated_at=excluded.updated_at""",
-            (path, 1 if excluded else 0)
+            (book_uuid, 1 if excluded else 0)
         )
         conn.commit()
     finally:
@@ -1385,7 +1689,10 @@ def is_excluded(path):
     """除外されているか"""
     conn = get_conn()
     try:
-        row = conn.execute("SELECT excluded FROM book_meta WHERE path=?", (path,)).fetchone()
+        book_uuid = _get_book_uuid(conn, path)
+        if not book_uuid:
+            return False
+        row = conn.execute("SELECT excluded FROM book_meta WHERE uuid=?", (book_uuid,)).fetchone()
         return row is not None and row["excluded"] == 1
     finally:
         conn.close()
@@ -1421,8 +1728,8 @@ def get_meta_source_counts():
     conn = get_conn()
     try:
         rows = conn.execute(
-            """SELECT m.path, m.dlsite_id, m.excluded
-               FROM book_meta m INNER JOIN books b ON m.path = b.path"""
+            """SELECT b.path, m.dlsite_id, m.excluded
+               FROM books b INNER JOIN book_meta m ON b.uuid = m.uuid"""
         ).fetchall()
         from collections import Counter
         excluded_count = sum(1 for r in rows if r["excluded"] == 1)
@@ -1439,8 +1746,8 @@ def get_meta_source_counts():
             source_counts[src] += 1
         not_acquired_count = conn.execute(
             """SELECT COUNT(*) FROM books b
-               LEFT JOIN book_meta m ON b.path = m.path
-               WHERE (m.path IS NULL OR ((m.dlsite_id IS NULL OR m.dlsite_id = '') AND COALESCE(m.excluded,0) = 0))"""
+               LEFT JOIN book_meta m ON b.uuid = m.uuid
+               WHERE (m.uuid IS NULL OR ((m.dlsite_id IS NULL OR m.dlsite_id = '') AND COALESCE(m.excluded,0) = 0))"""
         ).fetchone()[0]
         label_map = {
             "not_acquired": "未取得",
@@ -1468,7 +1775,7 @@ def get_books_by_meta_source(source_key: str):
             rows = conn.execute("""
                 SELECT b.name, b.circle, b.title, b.path,
                        COALESCE(NULLIF(b.cover_custom, ''), b.cover_path) as cover_path
-                FROM books b INNER JOIN book_meta m ON b.path = m.path
+                FROM books b INNER JOIN book_meta m ON b.uuid = m.uuid
                 WHERE m.excluded = 1 ORDER BY b.name
             """).fetchall()
             return [(r["name"], r["circle"], r["title"], r["path"], r["cover_path"]) for r in rows]
@@ -1476,8 +1783,8 @@ def get_books_by_meta_source(source_key: str):
             rows = conn.execute("""
                 SELECT b.name, b.circle, b.title, b.path,
                        COALESCE(NULLIF(b.cover_custom, ''), b.cover_path) as cover_path
-                FROM books b LEFT JOIN book_meta m ON b.path = m.path
-                WHERE (m.path IS NULL OR (COALESCE(m.dlsite_id,'') = '' AND COALESCE(m.excluded,0) = 0))
+                FROM books b LEFT JOIN book_meta m ON b.uuid = m.uuid
+                WHERE (m.uuid IS NULL OR (COALESCE(m.dlsite_id,'') = '' AND COALESCE(m.excluded,0) = 0))
                 ORDER BY b.name
             """).fetchall()
             return [(r["name"], r["circle"], r["title"], r["path"], r["cover_path"]) for r in rows]
@@ -1486,7 +1793,7 @@ def get_books_by_meta_source(source_key: str):
             rows = conn.execute("""
                 SELECT b.name, b.circle, b.title, b.path,
                        COALESCE(NULLIF(b.cover_custom, ''), b.cover_path) as cover_path
-                FROM books b INNER JOIN book_meta m ON b.path = m.path
+                FROM books b INNER JOIN book_meta m ON b.uuid = m.uuid
                 WHERE m.excluded = 0 AND (m.dlsite_id LIKE '040%%' OR m.dlsite_id LIKE '042%%')
                 ORDER BY b.name
             """).fetchall()
@@ -1495,7 +1802,7 @@ def get_books_by_meta_source(source_key: str):
             rows = conn.execute("""
                 SELECT b.name, b.circle, b.title, b.path,
                        COALESCE(NULLIF(b.cover_custom, ''), b.cover_path) as cover_path
-                FROM books b INNER JOIN book_meta m ON b.path = m.path
+                FROM books b INNER JOIN book_meta m ON b.uuid = m.uuid
                 WHERE m.excluded = 0 AND m.dlsite_id LIKE '%%dojindb.net%%'
                 ORDER BY b.name
             """).fetchall()
@@ -1506,7 +1813,7 @@ def get_books_by_meta_source(source_key: str):
                 rows = conn.execute("""
                     SELECT b.name, b.circle, b.title, b.path,
                            COALESCE(NULLIF(b.cover_custom, ''), b.cover_path) as cover_path
-                    FROM books b INNER JOIN book_meta m ON b.path = m.path
+                    FROM books b INNER JOIN book_meta m ON b.uuid = m.uuid
                     WHERE m.excluded = 0 AND (
                         m.dlsite_id LIKE 'RJ%' OR m.dlsite_id LIKE 'BJ%' OR m.dlsite_id LIKE 'VJ%'
                     )
@@ -1516,7 +1823,7 @@ def get_books_by_meta_source(source_key: str):
                 rows = conn.execute("""
                     SELECT b.name, b.circle, b.title, b.path,
                            COALESCE(NULLIF(b.cover_custom, ''), b.cover_path) as cover_path
-                    FROM books b INNER JOIN book_meta m ON b.path = m.path
+                    FROM books b INNER JOIN book_meta m ON b.uuid = m.uuid
                     WHERE m.excluded = 0 AND m.dlsite_id LIKE 'D_%'
                     ORDER BY b.name
                 """).fetchall()
@@ -1525,7 +1832,7 @@ def get_books_by_meta_source(source_key: str):
                     SELECT b.name, b.circle, b.title, b.path,
                            COALESCE(NULLIF(b.cover_custom, ''), b.cover_path) as cover_path,
                            m.dlsite_id
-                    FROM books b INNER JOIN book_meta m ON b.path = m.path
+                    FROM books b INNER JOIN book_meta m ON b.uuid = m.uuid
                     WHERE m.excluded = 0 AND m.dlsite_id != '' AND m.dlsite_id IS NOT NULL
                     ORDER BY b.name
                 """).fetchall()
@@ -1553,7 +1860,7 @@ def get_books_by_metadata_status(status):
                 SELECT b.name, b.circle, b.title, b.path, 
                        COALESCE(NULLIF(b.cover_custom, ''), b.cover_path) as cover_path 
                 FROM books b
-                INNER JOIN book_meta m ON b.path = m.path
+                INNER JOIN book_meta m ON b.uuid = m.uuid
                 WHERE m.dlsite_id != '' AND m.excluded = 0
                 ORDER BY b.name
             """).fetchall()
@@ -1563,7 +1870,7 @@ def get_books_by_metadata_status(status):
                 SELECT b.name, b.circle, b.title, b.path, 
                        COALESCE(NULLIF(b.cover_custom, ''), b.cover_path) as cover_path 
                 FROM books b
-                INNER JOIN book_meta m ON b.path = m.path
+                INNER JOIN book_meta m ON b.uuid = m.uuid
                 WHERE m.excluded = 1
                 ORDER BY b.name
             """).fetchall()
@@ -1573,8 +1880,8 @@ def get_books_by_metadata_status(status):
                 SELECT b.name, b.circle, b.title, b.path, 
                        COALESCE(NULLIF(b.cover_custom, ''), b.cover_path) as cover_path 
                 FROM books b
-                LEFT JOIN book_meta m ON b.path = m.path
-                WHERE (m.path IS NULL OR (m.dlsite_id = '' AND m.excluded = 0))
+                LEFT JOIN book_meta m ON b.uuid = m.uuid
+                WHERE (m.uuid IS NULL OR (m.dlsite_id = '' AND m.excluded = 0))
                 ORDER BY b.name
             """).fetchall()
         return [(r["name"], r["circle"], r["title"], r["path"], r["cover_path"]) for r in rows]
@@ -1607,11 +1914,25 @@ def set_book_meta(
     """
     conn = get_conn()
     try:
+        lookup_path = path
+        # 絶対パスで渡された場合はDB保存形式（相対パス）に揃えて検索する
+        if isinstance(path, str):
+            if os.path.isabs(path):
+                try:
+                    lookup_path = _to_db_path(path)
+                except ValueError:
+                    lookup_path = path
+            elif os.path.dirname(path) == "":
+                # ストアファイル名のみ（例: .dlst）で渡るケースはそのまま検索
+                lookup_path = path
+        book_uuid = _get_book_uuid(conn, lookup_path)
+        if not book_uuid:
+            return
         # 既存値を取得して、None のフィールドは既存値を維持
         cur = conn.execute(
             "SELECT dlsite_id, title_kana, circle_kana, pages, release_date, price, memo, meta_source, store_url "
-            "FROM book_meta WHERE path=?",
-            (path,),
+            "FROM book_meta WHERE uuid=?",
+            (book_uuid,),
         ).fetchone()
 
         cur_dlsite_id   = cur["dlsite_id"]   if cur else ""
@@ -1636,13 +1957,13 @@ def set_book_meta(
 
         conn.execute(
             """INSERT INTO book_meta(
-                   path, author, type, series,
+                   uuid, author, type, series,
                    dlsite_id, title_kana, circle_kana,
                    pages, release_date, price, memo, meta_source, store_url,
                    updated_at
                )
                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now','localtime'))
-               ON CONFLICT(path) DO UPDATE SET
+               ON CONFLICT(uuid) DO UPDATE SET
                  author=excluded.author,
                  type=excluded.type,
                  series=excluded.series,
@@ -1657,7 +1978,7 @@ def set_book_meta(
                  store_url=excluded.store_url,
                  updated_at=excluded.updated_at""",
             (
-                path,
+                book_uuid,
                 author or "",
                 type_ or "",
                 series or "",
@@ -1673,19 +1994,19 @@ def set_book_meta(
             ),
         )
         # キャラクター・タグは全削除→再挿入
-        conn.execute("DELETE FROM book_characters WHERE path=?", (path,))
+        conn.execute("DELETE FROM book_characters WHERE uuid=?", (book_uuid,))
         for c in (characters or []):
             c = c.strip()
             if c:
                 conn.execute(
-                    "INSERT OR IGNORE INTO book_characters(path, character) VALUES(?,?)", (path, c)
+                    "INSERT OR IGNORE INTO book_characters(uuid, character) VALUES(?,?)", (book_uuid, c)
                 )
-        conn.execute("DELETE FROM book_tags WHERE path=?", (path,))
+        conn.execute("DELETE FROM book_tags WHERE uuid=?", (book_uuid,))
         for t in (tags or []):
             t = t.strip()
             if t:
                 conn.execute(
-                    "INSERT OR IGNORE INTO book_tags(path, tag) VALUES(?,?)", (path, t)
+                    "INSERT OR IGNORE INTO book_tags(uuid, tag) VALUES(?,?)", (book_uuid, t)
                 )
         conn.commit()
     finally:
@@ -1870,11 +2191,8 @@ def cleanup_invalid_paths():
         deleted_count = 0
         for row in rows:
             if row["path"] and not os.path.exists(row["path"]):
-                # 関連テーブルからも削除
+                # books削除時にbook_meta/tag/characterはFK CASCADEで削除
                 conn.execute("DELETE FROM books WHERE path=?", (row["path"],))
-                conn.execute("DELETE FROM book_meta WHERE path=?", (row["path"],))
-                conn.execute("DELETE FROM book_tags WHERE path=?", (row["path"],))
-                conn.execute("DELETE FROM book_characters WHERE path=?", (row["path"],))
                 conn.execute("DELETE FROM bookmarks WHERE path=?", (row["path"],))
                 conn.execute("DELETE FROM recent_books WHERE path=?", (row["path"],))
                 deleted_count += 1
@@ -1940,7 +2258,10 @@ def get_all_tags():
     conn = get_conn()
     try:
         rows = conn.execute(
-            "SELECT DISTINCT tag FROM book_tags ORDER BY tag"
+            """SELECT DISTINCT t.tag
+               FROM book_tags t
+               INNER JOIN books b ON t.uuid = b.uuid
+               ORDER BY t.tag"""
         ).fetchall()
         return [r["tag"] for r in rows]
     finally:
@@ -1956,9 +2277,9 @@ def _fetch_tags_with_count():
     conn = get_conn()
     try:
         rows = conn.execute(
-            """SELECT t.tag, COUNT(DISTINCT t.path) AS cnt 
+            """SELECT t.tag, COUNT(DISTINCT t.uuid) AS cnt 
                FROM book_tags t
-               INNER JOIN books b ON t.path = b.path
+               INNER JOIN books b ON t.uuid = b.uuid
                GROUP BY t.tag ORDER BY cnt DESC, t.tag"""
         ).fetchall()
         return [(r["tag"], r["cnt"]) for r in rows]
@@ -1989,7 +2310,10 @@ def get_all_characters():
     conn = get_conn()
     try:
         rows = conn.execute(
-            "SELECT DISTINCT character FROM book_characters ORDER BY character"
+            """SELECT DISTINCT c.character
+               FROM book_characters c
+               INNER JOIN books b ON c.uuid = b.uuid
+               ORDER BY c.character"""
         ).fetchall()
         return [r["character"] for r in rows]
     finally:
@@ -2005,9 +2329,9 @@ def _fetch_characters_with_count():
     conn = get_conn()
     try:
         rows = conn.execute(
-            """SELECT c.character, COUNT(DISTINCT c.path) AS cnt 
+            """SELECT c.character, COUNT(DISTINCT c.uuid) AS cnt 
                FROM book_characters c
-               INNER JOIN books b ON c.path = b.path
+               INNER JOIN books b ON c.uuid = b.uuid
                GROUP BY c.character ORDER BY cnt DESC, c.character"""
         ).fetchall()
         return [(r["character"], r["cnt"]) for r in rows]
@@ -2036,9 +2360,9 @@ def _fetch_authors_with_count():
     conn = get_conn()
     try:
         rows = conn.execute(
-            """SELECT m.author, COUNT(m.path) AS cnt 
+            """SELECT m.author, COUNT(m.uuid) AS cnt 
                FROM book_meta m
-               INNER JOIN books b ON m.path = b.path
+               INNER JOIN books b ON m.uuid = b.uuid
                WHERE m.author != '' 
                GROUP BY m.author ORDER BY cnt DESC, m.author"""
         ).fetchall()
@@ -2052,7 +2376,9 @@ def get_paths_with_author():
     conn = get_conn()
     try:
         rows = conn.execute(
-            "SELECT path FROM book_meta WHERE author != ''"
+            """SELECT b.path
+               FROM books b INNER JOIN book_meta m ON b.uuid = m.uuid
+               WHERE m.author != ''"""
         ).fetchall()
         return [r["path"] for r in rows]
     finally:
@@ -2064,7 +2390,8 @@ def get_paths_with_tag():
     conn = get_conn()
     try:
         rows = conn.execute(
-            "SELECT DISTINCT path FROM book_tags"
+            """SELECT DISTINCT b.path
+               FROM books b INNER JOIN book_tags t ON b.uuid = t.uuid"""
         ).fetchall()
         return [r["path"] for r in rows]
     finally:
@@ -2076,7 +2403,8 @@ def get_paths_with_character():
     conn = get_conn()
     try:
         rows = conn.execute(
-            "SELECT DISTINCT path FROM book_characters"
+            """SELECT DISTINCT b.path
+               FROM books b INNER JOIN book_characters c ON b.uuid = c.uuid"""
         ).fetchall()
         return [r["path"] for r in rows]
     finally:
@@ -2116,7 +2444,10 @@ def _fetch_series_with_count():
     conn = get_conn()
     try:
         rows = conn.execute(
-            "SELECT series, COUNT(path) AS cnt FROM book_meta WHERE series != '' GROUP BY series ORDER BY cnt DESC, series"
+            """SELECT m.series, COUNT(m.uuid) AS cnt
+               FROM book_meta m INNER JOIN books b ON m.uuid = b.uuid
+               WHERE m.series != ''
+               GROUP BY m.series ORDER BY cnt DESC, m.series"""
         ).fetchall()
         return [(r["series"], r["cnt"]) for r in rows]
     finally:
@@ -2128,7 +2459,9 @@ def get_paths_with_series():
     conn = get_conn()
     try:
         rows = conn.execute(
-            "SELECT path FROM book_meta WHERE series != ''"
+            """SELECT b.path
+               FROM books b INNER JOIN book_meta m ON b.uuid = m.uuid
+               WHERE m.series != ''"""
         ).fetchall()
         return {r["path"] for r in rows}
     finally:
@@ -2171,19 +2504,31 @@ def search_books(conditions, operator="AND"):
                 ).fetchall()
                 all_paths.update(r["path"] for r in rows)
                 rows = conn.execute(
-                    "SELECT path FROM book_meta WHERE lower(nfkc(author)) LIKE ?", (pattern,)
+                    """SELECT b.path
+                       FROM books b INNER JOIN book_meta m ON b.uuid = m.uuid
+                       WHERE lower(nfkc(m.author)) LIKE ?""",
+                    (pattern,),
                 ).fetchall()
                 all_paths.update(r["path"] for r in rows)
                 rows = conn.execute(
-                    "SELECT path FROM book_meta WHERE lower(nfkc(series)) LIKE ?", (pattern,)
+                    """SELECT b.path
+                       FROM books b INNER JOIN book_meta m ON b.uuid = m.uuid
+                       WHERE lower(nfkc(m.series)) LIKE ?""",
+                    (pattern,),
                 ).fetchall()
                 all_paths.update(r["path"] for r in rows)
                 rows = conn.execute(
-                    "SELECT path FROM book_characters WHERE lower(nfkc(character)) LIKE ?", (pattern,)
+                    """SELECT b.path
+                       FROM books b INNER JOIN book_characters c ON b.uuid = c.uuid
+                       WHERE lower(nfkc(c.character)) LIKE ?""",
+                    (pattern,),
                 ).fetchall()
                 all_paths.update(r["path"] for r in rows)
                 rows = conn.execute(
-                    "SELECT path FROM book_tags WHERE lower(nfkc(tag)) LIKE ?", (pattern,)
+                    """SELECT b.path
+                       FROM books b INNER JOIN book_tags t ON b.uuid = t.uuid
+                       WHERE lower(nfkc(t.tag)) LIKE ?""",
+                    (pattern,),
                 ).fetchall()
                 all_paths.update(r["path"] for r in rows)
                 path_sets.append(all_paths)
@@ -2198,32 +2543,50 @@ def search_books(conditions, operator="AND"):
                 ).fetchall()
             elif field == "author":
                 rows = conn.execute(
-                    "SELECT path FROM book_meta WHERE lower(nfkc(author)) LIKE ?", (pattern,)
+                    """SELECT b.path
+                       FROM books b INNER JOIN book_meta m ON b.uuid = m.uuid
+                       WHERE lower(nfkc(m.author)) LIKE ?""",
+                    (pattern,),
                 ).fetchall()
             elif field == "series":
                 rows = conn.execute(
-                    "SELECT path FROM book_meta WHERE lower(nfkc(series)) LIKE ?", (pattern,)
+                    """SELECT b.path
+                       FROM books b INNER JOIN book_meta m ON b.uuid = m.uuid
+                       WHERE lower(nfkc(m.series)) LIKE ?""",
+                    (pattern,),
                 ).fetchall()
             elif field == "character":
                 rows = conn.execute(
-                    "SELECT path FROM book_characters WHERE lower(nfkc(character)) LIKE ?", (pattern,)
+                    """SELECT b.path
+                       FROM books b INNER JOIN book_characters c ON b.uuid = c.uuid
+                       WHERE lower(nfkc(c.character)) LIKE ?""",
+                    (pattern,),
                 ).fetchall()
             elif field == "tag":
                 rows = conn.execute(
-                    "SELECT path FROM book_tags WHERE lower(nfkc(tag)) LIKE ?", (pattern,)
+                    """SELECT b.path
+                       FROM books b INNER JOIN book_tags t ON b.uuid = t.uuid
+                       WHERE lower(nfkc(t.tag)) LIKE ?""",
+                    (pattern,),
                 ).fetchall()
             elif field == "metadata":
                 if "取得" in val or "済" in val:
                     rows = conn.execute("""
                         SELECT b.path FROM books b
-                        INNER JOIN book_meta m ON b.path = m.path
+                        INNER JOIN book_meta m ON b.uuid = m.uuid
                         WHERE m.dlsite_id != '' AND m.dlsite_id IS NOT NULL AND m.excluded = 0
                     """).fetchall()
                 elif "未" in val:
                     acquired = conn.execute("""
-                        SELECT path FROM book_meta WHERE dlsite_id != '' AND dlsite_id IS NOT NULL AND excluded = 0
+                        SELECT b.path
+                        FROM books b INNER JOIN book_meta m ON b.uuid = m.uuid
+                        WHERE m.dlsite_id != '' AND m.dlsite_id IS NOT NULL AND m.excluded = 0
                     """).fetchall()
-                    excluded = conn.execute("SELECT path FROM book_meta WHERE excluded = 1").fetchall()
+                    excluded = conn.execute("""
+                        SELECT b.path
+                        FROM books b INNER JOIN book_meta m ON b.uuid = m.uuid
+                        WHERE m.excluded = 1
+                    """).fetchall()
                     all_paths = {r["path"] for r in conn.execute("SELECT path FROM books").fetchall()}
                     path_sets.append(all_paths - {r["path"] for r in acquired} - {r["path"] for r in excluded})
                     continue

@@ -184,6 +184,29 @@ BADGE_ICON_PAD = 5
 STORE_FILE_EXT_DLSITE = ".dlst"
 STORE_FILE_EXTS_DMM = (".dmmb", ".dmme", ".dmmr")
 
+# scanners/book_scanner.py: books.media_type 既定・スキャン時の誤削除抑止（分数閾値）
+BOOKS_MEDIA_TYPE_DEFAULT = "book"
+SCAN_STALE_DELETE_SKIP_FRACTION_NUMERATOR = 1
+SCAN_STALE_DELETE_SKIP_FRACTION_DENOMINATOR = 2
+# db.py: SQLiteロック競合時の待機時間（ms）
+DB_BUSY_TIMEOUT_MS = 3000
+# scanners/book_scanner.py: 進捗シグナル発火間隔（件）
+SCAN_PROGRESS_EMIT_INTERVAL = 10
+
+# scanners/book_scanner.py: 作品フォルダ内の永続UUID（.noble-shelf-id）
+NOBLE_SHELF_ID_FILENAME = ".noble-shelf-id"
+NOBLE_SHELF_ID_TMP_SUFFIX = ".tmp"
+# UUID v4 1行の検証用（小文字・ハイフン区切り）
+NOBLE_SHELF_UUID_V4_REGEX = (
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+)
+# 読み取りリトライ間隔（ms）: 指数バックオフ 100 → 300 → 1000
+NOBLE_SHELF_ID_READ_BACKOFF_MS = (100, 300, 1000)
+# 書き込みリトライ間隔（ms）: PermissionError 対策
+NOBLE_SHELF_ID_WRITE_RETRY_DELAY_MS = [100, 100, 100]
+# UUID重複（先勝ちで後から来たフォルダを振り直した）ときのトースト文面（{name}=フォルダ名）
+SCAN_UUID_DUPLICATE_TOAST_TEMPLATE = "同一作品IDが重複したため、新しいIDに振り直しました: {name}"
+
 CARD_STAR_OFFSET_RIGHT = 2   # 星評価：サムネイル右端から
 CARD_STAR_OFFSET_BOTTOM = 2  # 星評価：サムネイル下端から
 CARD_META_OFFSET_X = 0   # メタ/除外マーク：カード左端から（サムネ左と揃える）
@@ -286,6 +309,13 @@ BOOKMARKLET_HELP_SCREENSHOT_MAX_WIDTH = 434
 # statusbar.py: ステータスバーUI（見た目維持）
 STATUSBAR_SLIDER_WIDTH = 120
 STATUSBAR_LICENSE_MARGIN_X = 12
+# app.py: スキャン進捗（QProgressBar + ラベル）
+STATUSBAR_SCAN_PROGRESS_WIDTH = 140
+STATUSBAR_SCAN_PROGRESS_HEIGHT = 16
+STATUSBAR_SCAN_PROGRESS_SPACING = 8
+STATUSBAR_SCAN_PROGRESS_BORDER_RADIUS = 2
+# 表示例: 「スキャン中... 123/526」
+SCAN_PROGRESS_LABEL_TEMPLATE = "スキャン中... {scanned}/{total}"
 
 # thumbnail_crop_dialog.py: ダイアログ/ネットワーク/保存（見た目維持）
 THUMB_CROP_DIALOG_MIN_SIZE = (640, 480)
@@ -591,8 +621,12 @@ VIEWER_SLIDER_HANDLE_SIZE = 14  # width/height
 VIEWER_SLIDER_HANDLE_RADIUS = 7
 VIEWER_SLIDER_HANDLE_MARGIN_Y = -5
 
-# 起動直後のスキャンでストアファイル入力ダイアログを出さない時間(秒)
-INITIAL_SCAN_SUPPRESS_DIALOG_SEC = 3.0
+# （旧）起動直後スキャンでストアダイアログを抑止する時間(秒)。app.py は _is_startup_scan で管理。
+INITIAL_SCAN_SUPPRESS_DIALOG_SEC = 30.0
+# app.py: スキャン失敗時にグリッド上部へ表示する小ラベル
+SCAN_STALE_FLAG_TEXT = "古いデータを表示中"
+# app.py: ステータスバー簡易トースト表示時間(ms)
+SCAN_TOAST_DURATION_MS = 4000
 
 # ── フィルターポップオーバー（ツールバーから開く右パネル）──────────────
 # filter_popover.py: 即時反映パネルのヘッダー・コンボ先頭項目

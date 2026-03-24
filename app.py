@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QComboBox,
     QLineEdit,
+    QProgressBar,
     QListWidget,
     QListWidgetItem,
     QRadioButton,
@@ -24,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QTimer, Signal, QEvent, QUrl, QMimeData
 from PySide6.QtGui import QAction, QKeySequence
+import logging
 import os
 import random
 import time
@@ -33,13 +35,13 @@ import db
 from ui.dialogs.library_folder_dialog import LibraryFolderDialog
 from version import VERSION
 from grid import BookGridView
-from scanner import scan_library
+from scanners import scan_library
 from ui.widgets.sidebar import SidebarWidget
 from ui.widgets.searchbar import SearchBar, filter_books, build_haystack_cache
 from ui.widgets.toolbar import ToolBar
 from drop_handler import handle_drop, _get_pdf_cover_and_pages
 from ui.dialogs.filter_popover import FilterPopover
-from theme import THEME_COLORS, COLOR_BORDER, apply_dark_titlebar
+from theme import THEME_COLORS, COLOR_BORDER, apply_dark_titlebar, get_statusbar_scan_progress_qss
 from ui.dialogs.properties import _auto_kana, _needs_kana_conversion, StoreFileInputDialog
 from ui.widgets.menubar import setup_menubar, refresh_shortcuts
 from ui.dialogs.first_run import LibrarySetupOverlay
@@ -75,6 +77,7 @@ def _resolve_cover(path: str, cover: str) -> str:
 class MainWindow(QMainWindow):
     bookmarkletReceived = Signal()  # ブックマークレット受信通知（既存のSignalインポートを使用）
     def __init__(self):
+        """メインウィンドウを初期化しUIとDBを準備する。"""
         super().__init__()
         self.setWindowTitle(f"{config.APP_TITLE} v{VERSION}")
         self.resize(config.WINDOW_WIDTH, config.WINDOW_HEIGHT)
@@ -98,9 +101,11 @@ class MainWindow(QMainWindow):
         self._filter_dlsite_only: bool = False
         self._filter_fanza_only: bool = False
         self._filter_no_cover_only: bool = False  # 表示メニュー「サムネイル未設定」選択時
-        self._startup_time = time.time()
+        # 起動後最初のスキャン完了まで True（ストアファイル登録ダイアログを抑止する判定に使用）
+        self._is_startup_scan: bool = True
         self._open_viewers: list = []  # 内置ビューワー（すべて閉じる用）
         self._bookmarklet_window = None
+        self._scan_blocking = False
 
         self._setup_menubar()
         self._setup_central()
@@ -120,6 +125,7 @@ class MainWindow(QMainWindow):
         self.installEventFilter(self)
 
     def eventFilter(self, obj, event):
+        """フォーカス解除とタイトルバー等の最大化ダブルクリックを処理する。"""
         # 右クリックは grid の customContextMenuRequested に任せる（eventFilter では扱わない）
 
         # 検索入力以外をクリックしたら検索フォーカスを解除
@@ -159,6 +165,7 @@ class MainWindow(QMainWindow):
 
     # ── メニューバー ──────────────────────────────────────
     def _setup_menubar(self):
+        """メニューバーとツールバー表示項目を組み立てる。"""
         setup_menubar(self)
         # 表示メニューに「ツールバー」チェック（menubar.setup_menubar 後に挿入）
         for _mb_action in self.menuBar().actions():
@@ -176,6 +183,7 @@ class MainWindow(QMainWindow):
             self._act_tool_library_check.triggered.connect(self._open_library_check_dialog)
 
     def _on_open_settings(self):
+        """設定ダイアログを開きショートカットとカード表示を反映する。"""
         from PySide6.QtWidgets import QDialog
         from ui.dialogs.settings import SettingsDialog
 
@@ -186,6 +194,7 @@ class MainWindow(QMainWindow):
         self._grid.apply_display_settings()
 
     def _open_library_check_dialog(self) -> None:
+        """ライブラリ整合性チェック用ダイアログを開く。"""
         library_folder = (db.get_setting("library_folder") or "").strip()
         if not library_folder or not os.path.isdir(library_folder):
             QMessageBox.information(self, config.APP_TITLE, "ライブラリフォルダが未設定です。")
@@ -275,6 +284,7 @@ class MainWindow(QMainWindow):
         )
 
         def _open_recent_menu_item(p: str) -> None:
+            """履歴から該当作品を開き履歴モードなら更新する。"""
             open_book(p, self, modal=False)
             if hasattr(self, "_sidebar") and self._sidebar and self._sidebar._mode == "history":
                 self._sidebar.refresh()
@@ -388,6 +398,7 @@ class MainWindow(QMainWindow):
             if self._bookmarklet_window is not None:
                 self._bookmarklet_window.hide()
 
+    # ═══ ブックマークレット ═══
     def _start_local_server(self) -> None:
         """ローカルHTTPサーバーを起動する"""
         import local_server
@@ -401,6 +412,7 @@ class MainWindow(QMainWindow):
         """
 
         def _save_cover(cover_url: str, book_path: str) -> str | None:
+            """取得画像をカバーキャッシュにJPEGで保存する。"""
             import hashlib
 
             from ui.dialogs.thumbnail_crop_dialog import _download_image
@@ -529,12 +541,14 @@ class MainWindow(QMainWindow):
             self._bookmarklet_window.refresh()
 
     def closeEvent(self, event) -> None:
+        """終了時にローカルHTTPサーバーを停止する。"""
         import local_server
 
         local_server.stop()
         super().closeEvent(event)
 
     def _on_restore_backup(self):
+        """バックアップ一覧からDBを復元し再起動を案内する。"""
         from PySide6.QtWidgets import QDialog, QVBoxLayout, QListWidget, QDialogButtonBox, QMessageBox
         import db
         import os
@@ -596,7 +610,9 @@ class MainWindow(QMainWindow):
             _os.execv(_sys.executable, [_sys.executable] + _sys.argv)
 
     # ── 中央レイアウト ────────────────────────────────────
+    # ═══ UI初期化・レイアウト ═══
     def _setup_central(self):
+        """中央部にツールバー・検索・グリッド・フィルタを配置する。"""
         central = QWidget()
         self.setCentralWidget(central)
         outer = QVBoxLayout(central)
@@ -727,6 +743,13 @@ class MainWindow(QMainWindow):
         self._sort_bar_sep_bottom.setStyleSheet(f"background-color: {COLOR_BORDER};")
         grid_layout.addWidget(self._sort_bar_sep_bottom)
 
+        self._scan_stale_flag = QLabel(config.SCAN_STALE_FLAG_TEXT)
+        self._scan_stale_flag.setVisible(False)
+        self._scan_stale_flag.setStyleSheet(
+            f"color: {THEME_COLORS['text_sub']}; font-size: {config.FONT_SIZE_XS}px; padding: 2px 8px;"
+        )
+        grid_layout.addWidget(self._scan_stale_flag)
+
         self._main_toolbar.ghostBarToggled.connect(
             lambda visible: self._set_ghostbar_visible(visible, save=True)
         )
@@ -770,6 +793,7 @@ class MainWindow(QMainWindow):
         self._update_sort_bar()
 
     def _make_app_callbacks(self) -> dict:
+        """グリッド向けコールバック辞書を返す。"""
         return {
             "rescan": self._rescan_library,
             "get_library_folder": lambda: (db.get_setting("library_folder") or "").strip(),
@@ -782,6 +806,7 @@ class MainWindow(QMainWindow):
 
     # ── ステータスバー ────────────────────────────────────
     def _setup_statusbar(self):
+        """ステータスバーとカード幅スライダーを設定する。"""
         sb = QStatusBar()
         sb.setSizeGripEnabled(True)
         sb.setStyleSheet(
@@ -793,7 +818,8 @@ class MainWindow(QMainWindow):
                 font-size: {config.FONT_SIZE_STATUS_BAR}px;
             }}
             QStatusBar QLabel,
-            QStatusBar QSlider {{
+            QStatusBar QSlider,
+            QStatusBar QWidget {{
                 background: transparent;
             }}
             QStatusBar::item {{
@@ -807,12 +833,37 @@ class MainWindow(QMainWindow):
         self._status_label = QLabel("0 冊")
         sb.addWidget(self._status_label)
 
+        # スキャン進捗（初期は非表示）
+        self._scan_progress_container = QWidget()
+        _scan_progress_row = QHBoxLayout(self._scan_progress_container)
+        _scan_progress_row.setContentsMargins(0, 0, 0, 0)
+        _scan_progress_row.setSpacing(config.STATUSBAR_SCAN_PROGRESS_SPACING)
+        self._scan_progress_label = QLabel("")
+        self._scan_progress_label.setStyleSheet(
+            f"font-size: {config.FONT_SIZE_STATUS_BAR}px;"
+        )
+        self._scan_progress_bar = QProgressBar()
+        self._scan_progress_bar.setObjectName("StatusBarScanProgress")
+        self._scan_progress_bar.setTextVisible(False)
+        self._scan_progress_bar.setFixedSize(
+            config.STATUSBAR_SCAN_PROGRESS_WIDTH,
+            config.STATUSBAR_SCAN_PROGRESS_HEIGHT,
+        )
+        self._scan_progress_bar.setStyleSheet(
+            get_statusbar_scan_progress_qss(config.STATUSBAR_SCAN_PROGRESS_BORDER_RADIUS)
+        )
+        _scan_progress_row.addWidget(self._scan_progress_label)
+        _scan_progress_row.addWidget(self._scan_progress_bar)
+        self._scan_progress_container.setVisible(False)
+        sb.addWidget(self._scan_progress_container)
+
         self._size_slider = setup_statusbar(self, sb)
         self._size_slider.valueChanged.connect(self._on_card_size_changed)
 
         self._grid.ctrlWheelZoom.connect(self._on_ctrl_wheel_zoom)
 
     def _on_card_size_changed(self, value: int):
+        """スライダー値に合わせてカード幅を更新する。"""
         self._grid.set_card_width(value)
 
     def _on_ctrl_wheel_zoom(self, delta: int):
@@ -824,11 +875,46 @@ class MainWindow(QMainWindow):
 
 
     def _toggle_searchbar(self):
+        """検索バーの表示を切り替え設定に保存する。"""
         visible = not self._searchbar.isVisible()
         self._set_searchbar_visible(visible, save=True)
 
+    def _safe_from_db_path(self, path: str) -> str:
+        """DB保存パスを安全に絶対パスへ解決する。"""
+        if not path:
+            return ""
+        try:
+            return db._from_db_path(path)
+        except Exception:
+            return path
+
+    def _set_scan_blocked(self, blocked: bool) -> None:
+        """スキャン中のグリッド操作ブロックを切り替える。"""
+        self._scan_blocking = blocked
+        if hasattr(self, "_grid"):
+            self._grid.setEnabled(not blocked)
+
+    def _show_scan_progress_started(self) -> None:
+        """スキャン開始時: 進捗バーを 0 にリセットして表示する。"""
+        if not hasattr(self, "_scan_progress_container"):
+            return
+        self._scan_progress_label.setText(
+            config.SCAN_PROGRESS_LABEL_TEMPLATE.format(scanned=0, total=0)
+        )
+        self._scan_progress_bar.setRange(0, 1)
+        self._scan_progress_bar.setValue(0)
+        self._scan_progress_container.setVisible(True)
+
+    def _hide_scan_progress_ui(self) -> None:
+        """スキャン終了・エラー時: 進捗バーとラベルを非表示にする。"""
+        if not hasattr(self, "_scan_progress_container"):
+            return
+        self._scan_progress_container.setVisible(False)
+
     # ── ライブラリ読み込み ────────────────────────────────
+    # ═══ ライブラリ管理 ═══
     def _load_library(self):
+        """DBから一覧を表示しバックグラウンドでスキャンする。"""
         folder = (db.get_setting("library_folder") or "").strip()
         if not folder or not os.path.isdir(folder):
             # ライブラリ未設定: グリッドを隠し、中央ボタンのみ表示
@@ -850,11 +936,11 @@ class MainWindow(QMainWindow):
         if rows:
             books = [
                 {
-                    "path":   row[3],
+                    "path":   self._safe_from_db_path(row[3] or ""),
                     "name":   row[0],
                     "title":  row[2] or row[0],
                     "circle": row[1] or "",
-                    "cover":  _resolve_cover(row[3] or "", row[4] or ""),
+                    "cover":  row[4] or "",
                     "pages":  0,
                     "rating": 0,
                 }
@@ -876,7 +962,8 @@ class MainWindow(QMainWindow):
         self._grid.apply_display_settings()
 
     def _select_library_folder(self):
-        current = db.get_setting("library_folder") or ""
+        """フォルダ選択後に設定保存とスキャンを行う。"""
+        current = (db.get_setting("library_folder") or "").strip()
         dlg = LibraryFolderDialog(self, current_path=current)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
@@ -889,69 +976,96 @@ class MainWindow(QMainWindow):
             self._empty_hint.hide()
         if hasattr(self, "_grid"):
             self._grid.show()
-        self._start_scan(folder)
+        is_changed = os.path.normcase(os.path.normpath(current)) != os.path.normcase(os.path.normpath(folder))
+        self._start_scan(folder, block_ui=is_changed)
 
     def _on_click_setup_library(self):
         """中央ボタンからライブラリフォルダ設定を開く"""
         self._select_library_folder()
 
     def _rescan_library(self):
+        """現在のライブラリフォルダを再スキャンする。"""
         folder = (db.get_setting("library_folder") or "").strip()
         if folder and os.path.isdir(folder):
             self._start_scan(folder)
 
-    def _start_scan(self, folder: str):
+    # ═══ スキャン ═══
+    def _start_scan(self, folder: str, block_ui: bool = False):
+        """指定フォルダでライブラリスキャンを非同期実行する。"""
+        if block_ui:
+            self._set_scan_blocked(True)
+        if hasattr(self, "_scan_stale_flag"):
+            self._scan_stale_flag.setVisible(False)
         self.setWindowTitle(f"{config.APP_TITLE} v{VERSION}")
+        self._show_scan_progress_started()
         scan_library(
             folder,
             on_finished=self._on_scan_finished,
             on_progress=self._on_scan_progress,
             on_error=self._on_scan_error,
             on_store_files_pending=self._on_store_files_pending,
+            on_uuid_duplicate_toast=self._on_uuid_duplicate_toast,
         )
 
     def _on_scan_finished(self, books: list):
-        # スキャン結果の cover は DB の生値（ID/相対パス）なので表示用に解決する（サムネ設定が剥がれて見えない問題を防ぐ）
-        for b in books:
-            b["cover"] = _resolve_cover(b.get("path") or "", b.get("cover") or "")
+        """スキャン完了時に一覧・件数・サイドバーを更新する。"""
+        try:
+            # スキャン結果の cover は DB の生値（ID/相対パス）なので表示用に解決する（サムネ設定が剥がれて見えない問題を防ぐ）
+            for b in books:
+                raw_path = b.get("path") or ""
+                b["path"] = self._safe_from_db_path(raw_path)
+            # cover は生のDB値のまま渡す（model.py 側で解決する）
 
-        # 直前の一覧とスキャン結果を比較し、差分がなければグリッドの再読み込みを行わない
-        old_books = self._all_books or []
+            # 直前の一覧とスキャン結果を比較し、差分がなければグリッドの再読み込みを行わない
+            old_books = self._all_books or []
 
-        def _books_changed(a: list[dict], b: list[dict]) -> bool:
-            if len(a) != len(b):
-                return True
-            for x, y in zip(a, b):
-                if (
-                    x.get("path") != y.get("path")
-                    or x.get("name") != y.get("name")
-                    or x.get("title") != y.get("title")
-                    or x.get("circle") != y.get("circle")
-                    or x.get("cover") != y.get("cover")
-                ):
+            def _books_changed(a: list[dict], b: list[dict]) -> bool:
+                """新旧ブック一覧に差分があるか判定する。"""
+                if len(a) != len(b):
                     return True
-            return False
+                for x, y in zip(a, b):
+                    if (
+                        x.get("path") != y.get("path")
+                        or x.get("name") != y.get("name")
+                        or x.get("title") != y.get("title")
+                        or x.get("circle") != y.get("circle")
+                        or x.get("cover") != y.get("cover")
+                    ):
+                        return True
+                return False
 
-        changed = _books_changed(old_books, books)
+            changed = _books_changed(old_books, books)
 
-        self._all_books = books
+            self._all_books = books
 
-        # 検索用ハヤスタックキャッシュを更新
-        build_haystack_cache(books)
+            # 検索用ハヤスタックキャッシュを更新
+            t0 = time.perf_counter()
+            build_haystack_cache(books)
+            logging.info("[FINISHED] haystack=%.3fs", time.perf_counter() - t0)
 
-        # 差分なしならグリッドはそのまま維持して一瞬消える問題を回避
-        if changed:
-            self._apply_filters()
+            # 差分なしならグリッドはそのまま維持して一瞬消える問題を回避
+            if changed:
+                t1 = time.perf_counter()
+                self._apply_filters()
+                logging.info("[FINISHED] apply_filters=%.3fs", time.perf_counter() - t1)
+            else:
+                logging.info("[FINISHED] apply_filters=skipped changed=%s", changed)
 
-        self._sidebar.refresh()
-        folder = (db.get_setting("library_folder") or "").strip()
-        self.setWindowTitle(f"{config.APP_TITLE} v{VERSION}")
-        self._status_label.setText(f"{len(books)} 冊")
+            self._sidebar.refresh()
+            folder = (db.get_setting("library_folder") or "").strip()
+            self.setWindowTitle(f"{config.APP_TITLE} v{VERSION}")
+            self._status_label.setText(f"{len(books)} 冊")
+            self._set_scan_blocked(False)
+            if hasattr(self, "_scan_stale_flag"):
+                self._scan_stale_flag.setVisible(False)
+        finally:
+            # 起動時スキャンは1回完了したら終了（以降のスキャンではストアダイアログを通常表示）
+            self._is_startup_scan = False
+            self._hide_scan_progress_ui()
 
     def _on_store_files_pending(self, pending_list: list):
-        """ストアファイル追加時に入力ダイアログで登録。起動直後（約3秒以内）のスキャンではダイアログを出さずファイル名から登録（強制終了後に起動するとダイアログが出るバグを防ぐ）。"""
-        is_initial_scan = (time.time() - self._startup_time) < config.INITIAL_SCAN_SUPPRESS_DIALOG_SEC
-        if is_initial_scan:
+        """ストアファイル追加時に入力ダイアログで登録。起動後最初のスキャン中はダイアログを出さずファイル名から登録する。"""
+        if self._is_startup_scan:
             for item in pending_list:
                 path = item["path"]
                 name = item["name"]
@@ -959,8 +1073,11 @@ class MainWindow(QMainWindow):
                 sc = (item.get("suggested_circle") or "").strip()
                 st = (item.get("suggested_title") or name).strip()
                 display_name = db.format_book_name(sc, st) or name
-                db.bulk_upsert_books([(display_name, sc, st, path, "", mtime, 0)])
-            self._refresh_books_from_db()
+                ext = os.path.splitext(name)[1].lower()
+                is_dlst = 1 if ext == config.STORE_FILE_EXT_DLSITE else 0
+                db.upsert_store_file_book(
+                    path, display_name, sc, st, "", mtime, is_dlst, None
+                )
             return
         for item in pending_list:
             path = item["path"]
@@ -974,7 +1091,22 @@ class MainWindow(QMainWindow):
             if dlg.exec() != QDialog.Accepted or not dlg.result:
                 continue
             book_tuple, meta = dlg.result
-            db.bulk_upsert_books([book_tuple])
+            disp_name, circle, title, abs_path, _cover_empty, mtime, _tuple_is_dlst = book_tuple
+            ext = os.path.splitext(name)[1].lower()
+            is_dlst = 1 if ext == config.STORE_FILE_EXT_DLSITE else 0
+            cover_arg = ""
+            if meta and meta.get("cover_path"):
+                cover_arg = meta["cover_path"]
+            db.upsert_store_file_book(
+                abs_path,
+                disp_name,
+                circle,
+                title,
+                cover_arg,
+                mtime,
+                is_dlst,
+                None,
+            )
             if meta:
                 meta_src = db._effective_meta_source("", (meta.get("dlsite_id") or "").strip())
                 db.set_book_meta(
@@ -990,7 +1122,6 @@ class MainWindow(QMainWindow):
                     dlsite_id=meta.get("dlsite_id") or None,
                     meta_source=meta_src,
                 )
-        self._refresh_books_from_db()
 
     def _refresh_books_from_db(self):
         """DBから一覧を再取得してグリッド・サイドバー・タイトルを更新する。"""
@@ -1004,11 +1135,11 @@ class MainWindow(QMainWindow):
             rows = []
         books = [
             {
-                "path": row[3],
+                "path": self._safe_from_db_path(row[3] or ""),
                 "name": row[0],
                 "title": row[2] or row[0],
                 "circle": row[1] or "",
-                "cover": _resolve_cover(row[3] or "", row[4] or ""),
+                "cover": row[4] or "",
                 "pages": 0,
                 "rating": 0,
                 "is_dlst": int(row[5]) if len(row) > 5 else 0,
@@ -1066,11 +1197,11 @@ class MainWindow(QMainWindow):
             rows = []
         books = [
             {
-                "path":   row[3],
+                "path":   self._safe_from_db_path(row[3] or ""),
                 "name":   row[0],
                 "title":  row[2] or row[0],
                 "circle": row[1] or "",
-                "cover":  _resolve_cover(row[3] or "", row[4] or ""),
+                "cover":  _resolve_cover(self._safe_from_db_path(row[3] or ""), row[4] or ""),
                 "pages":  0,
                 "rating": 0,
                 "is_dlst": int(row[5]) if len(row) > 5 else 0,
@@ -1114,6 +1245,7 @@ class MainWindow(QMainWindow):
                 done = [False]
 
                 def do_apply():
+                    """保存位置へスクロールを戻し描画更新を再開する。"""
                     if done[0]:
                         g.setUpdatesEnabled(True)
                         return
@@ -1134,6 +1266,7 @@ class MainWindow(QMainWindow):
                     )
 
                 def on_range_changed(_min, max_val):
+                    """範囲が十分なら復元してシグナルを外す。"""
                     if max_val >= v_scroll:
                         try:
                             vb.rangeChanged.disconnect(on_range_changed)
@@ -1152,6 +1285,7 @@ class MainWindow(QMainWindow):
                 else:
                     # フォールバック: 一定時間で rangeChanged が来ない場合に復元
                     def fallback():
+                        """range未発火時に遅延でスクロール復元を試みる。"""
                         if done[0]:
                             return
                         try:
@@ -1162,13 +1296,43 @@ class MainWindow(QMainWindow):
                     QTimer.singleShot(config.CONTEXT_MENU_SCROLL_FALLBACK_DELAY_MS, fallback)
 
     def _on_scan_progress(self, scanned: int, total: int):
+        """進捗中はウィンドウタイトルを既定の短い表記に戻す。"""
         self.setWindowTitle(config.APP_TITLE)
+        if not hasattr(self, "_scan_progress_container"):
+            return
+        self._scan_progress_container.setVisible(True)
+        t = max(0, int(total))
+        s = max(0, int(scanned))
+        if t <= 0:
+            self._scan_progress_bar.setRange(0, 1)
+            self._scan_progress_bar.setValue(0)
+        else:
+            self._scan_progress_bar.setRange(0, t)
+            self._scan_progress_bar.setValue(min(s, t))
+        self._scan_progress_label.setText(
+            config.SCAN_PROGRESS_LABEL_TEMPLATE.format(scanned=s, total=t)
+        )
+
+    def _on_uuid_duplicate_toast(self, message: str) -> None:
+        """UUID重複解消メッセージをステータスバーに表示する。"""
+        if hasattr(self, "_statusbar"):
+            self._statusbar.showMessage(message, config.SCAN_TOAST_DURATION_MS)
 
     def _on_scan_error(self, msg: str):
+        """エラー時もウィンドウタイトルを既定の短い表記に戻す。"""
+        self._is_startup_scan = False
+        self._hide_scan_progress_ui()
         self.setWindowTitle(config.APP_TITLE)
+        self._set_scan_blocked(False)
+        if hasattr(self, "_scan_stale_flag"):
+            self._scan_stale_flag.setVisible(True)
+        if hasattr(self, "_statusbar"):
+            self._statusbar.showMessage(msg or config.SCAN_STALE_FLAG_TEXT, config.SCAN_TOAST_DURATION_MS)
 
     # ── フィルタリング（サイドバー + 検索の合成） ─────────
+    # ═══ フィルター・ソート ═══
     def _apply_filters(self):
+        """各種フィルタとソートを合成しグリッドへ反映する。"""
         # 元の全件リスト
         all_books = self._all_books
         # サイドバー（作品名一覧）用に、フィルタ前の並び順を準備
@@ -1389,6 +1553,7 @@ class MainWindow(QMainWindow):
                 self._meta_cache = {}
 
         def match_condition(book: dict, field: str, value: str) -> bool:
+            """1条件がブックのメタと一致するか判定する。"""
             path = book.get("path", "") or ""
             meta = self._meta_cache.get(path) if path else {}
             if meta is None:
@@ -1485,6 +1650,7 @@ class MainWindow(QMainWindow):
 
         # メタデータはアプリ全体でキャッシュして、繰り返しDBアクセスを抑える
         def get_meta(path: str) -> dict:
+            """キャッシュからパス別メタ辞書を返す。"""
             return self._meta_cache.get(path, {})
 
         # 追加順: mtime を取得
@@ -1507,6 +1673,7 @@ class MainWindow(QMainWindow):
                 history_order = {}
 
         def sort_key(b: dict):
+            """現在のソートキーに応じた比較用キーを返す。"""
             path = b.get("path", "")
             meta = get_meta(path) if path else {}
 
@@ -1624,6 +1791,7 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "キャッシュの削除", msg)
         self._apply_filters()
 
+    # ═══ DB・メンテナンス ═══
     def _repair_pdf_covers(self):
         """PDFの1枚目をカバーとして未設定・壊れているものを cover_cache に生成して DB を更新する"""
         try:
@@ -1787,12 +1955,14 @@ class MainWindow(QMainWindow):
         return result
 
     def _set_filter_dlsite_only(self, checked: bool):
+        """DLSiteのみ表示フラグを更新し一覧を再適用する。"""
         self._filter_dlsite_only = checked
         if hasattr(self, "_act_filter_dlsite"):
             self._act_filter_dlsite.setChecked(checked)
         self._apply_filters()
 
     def _set_filter_fanza_only(self, checked: bool):
+        """FANZAのみ表示フラグを更新し一覧を再適用する。"""
         self._filter_fanza_only = checked
         if hasattr(self, "_act_filter_fanza"):
             self._act_filter_fanza.setChecked(checked)
@@ -1810,6 +1980,7 @@ class MainWindow(QMainWindow):
         return result
 
     def _set_filter_no_cover_only(self, checked: bool):
+        """サムネ未設定のみ表示フラグを更新し再適用する。"""
         self._filter_no_cover_only = checked
         if hasattr(self, "_act_filter_no_cover"):
             self._act_filter_no_cover.setChecked(checked)
@@ -1818,6 +1989,7 @@ class MainWindow(QMainWindow):
     def _apply_sidebar_filter(
         self, books: list, mode: str, value: str | set[str]
     ) -> list:
+        """サイドバー選択に応じてブック一覧を絞り込む。"""
         if mode == "circle":
             if value == "__unknown__":
                 return [b for b in books if not (b.get("circle") or "").strip()]
@@ -1887,17 +2059,21 @@ class MainWindow(QMainWindow):
         return books
 
     def _on_filter_changed(self, mode: str, value: str):
+        """サイドバー選択に合わせフィルタ状態を更新する。"""
         self._sidebar_filter = (mode, value)
         self._apply_filters()
 
     def _on_filter_cleared(self):
+        """サイドバー絞り込みを解除して一覧を再適用する。"""
         self._sidebar_filter = None
         self._apply_filters()
 
     def _on_search_changed(self, query: str):
+        """検索語変更に応じてフィルタを再適用する。"""
         self._apply_filters()
 
     def _on_search_cleared(self):
+        """検索クリア時にフィルタを再適用する。"""
         self._apply_filters()
 
     def _on_title_selected(self, path: str):
@@ -1930,19 +2106,23 @@ class MainWindow(QMainWindow):
         menu.exec(global_pos)
 
     # ── ドラッグ&ドロップ ─────────────────────────────────
+    # ═══ ドロップ処理 ═══
     def dragEnterEvent(self, event):
+        """URLドロップを受け付けるか判定する。"""
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
         else:
             event.ignore()
 
     def dragMoveEvent(self, event):
+        """移動中もURLドロップ可否を維持する。"""
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
         else:
             event.ignore()
 
     def dropEvent(self, event):
+        """ドロップされたパスを取り込み処理に渡す。"""
         urls = event.mimeData().urls()
         if not urls:
             return
@@ -1969,6 +2149,7 @@ class MainWindow(QMainWindow):
     # ── UI表示状態の復元・制御 ────────────────────────────
 
     def _restore_ui_visibility(self):
+        """DB設定に従い各バー類の表示を復元する。"""
         # ツールバーと検索バーは別設定・未設定時は表示
         show_tool = db.get_setting("ui_show_toolbar", "1")
         self._set_main_toolbar_visible(show_tool == "1", save=False)
@@ -1987,6 +2168,7 @@ class MainWindow(QMainWindow):
         show_infobar = db.get_setting("ui_show_infobar", "1")
         self._set_infobar_visible(show_infobar != "0", save=False)
 
+    # ═══ UI表示切り替え ═══
     def _set_main_toolbar_visible(self, visible: bool, save: bool):
         """表示メニュー「ツールバー」：アイコン行の表示。"""
         self._main_toolbar.apply_visibility(visible)
@@ -2014,6 +2196,7 @@ class MainWindow(QMainWindow):
             db.set_setting("ui_show_searchbar", "1" if visible else "0")
 
     def _set_sidebar_visible(self, visible: bool, save: bool):
+        """サイドバー表示とメニュー・ツールバーを同期する。"""
         self._sidebar.setVisible(visible)
         if hasattr(self, "_act_sidebar"):
             self._act_sidebar.setChecked(visible)
@@ -2039,6 +2222,7 @@ class MainWindow(QMainWindow):
             db.set_setting("ui_show_ghostbar", "1" if visible else "0")
 
     def _set_infobar_visible(self, visible: bool, save: bool):
+        """ステータスバー表示とメニューチェックを同期する。"""
         if hasattr(self, "_statusbar"):
             self._statusbar.setVisible(visible)
         if hasattr(self, "_act_infobar"):

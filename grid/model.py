@@ -14,6 +14,19 @@ from .thumb import ThumbSignals, ThumbWorker, _cache_path
 # ページ数カウントに使用する拡張子
 PAGE_COUNT_EXTS = (".jpg", ".jpeg", ".png", ".webp")
 
+
+def _safe_from_db_path(path: str) -> str:
+    """DBの相対/絶対pathをモデル内ファイル操作用に安全に解決する。"""
+    if not path:
+        return ""
+    if os.path.isabs(path):
+        return os.path.normpath(path)
+    try:
+        return os.path.normpath(db._from_db_path(path))
+    except Exception:
+        return os.path.normpath(path)
+
+
 class BookListModel(QAbstractListModel):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -43,7 +56,7 @@ class BookListModel(QAbstractListModel):
             if pages > 0:
                 return pages
 
-            path = b.get("path", "") or ""
+            path = _safe_from_db_path(b.get("path", "") or "")
             if not path:
                 return 0
 
@@ -58,7 +71,7 @@ class BookListModel(QAbstractListModel):
 
             return 0
         if role == ROLE_PATH:  # noqa: F405
-            return b.get("path", "")
+            return _safe_from_db_path(b.get("path", ""))
         if role == ROLE_RATING:  # noqa: F405
             # お気に入りテーブル由来の評価を優先して返す
             path = b.get("path", "") or ""
@@ -72,10 +85,27 @@ class BookListModel(QAbstractListModel):
             self._ensure_meta_cached(b)
             return b.get("meta_status", 0)
         if role == ROLE_THUMB:  # noqa: F405
-            cover = b.get("cover", "")
-            if cover in self._thumbs:
-                return self._thumbs[cover]
-            self._request_thumb(cover, index)
+            raw = b.get("cover", "") or ""
+            if not raw:
+                return None
+            path = db.resolve_cover_stored_value(raw) or raw
+            if path and not os.path.isabs(path):
+                path = os.path.normpath(os.path.join(config.APP_BASE, path))
+            if not path:
+                return None
+            if not os.path.isfile(path):
+                book_path = _safe_from_db_path(b.get("path", "") or "")
+                if book_path and os.path.isdir(book_path):
+                    alt = os.path.join(book_path, os.path.basename(path))
+                    if os.path.isfile(alt):
+                        path = alt
+                    else:
+                        return None
+                else:
+                    return None
+            if path in self._thumbs:
+                return self._thumbs[path]
+            self._request_thumb(path, index)
             return None
         if role == Qt.SizeHintRole:
             return QSize(self._card_w + config.CARD_MIN_GAP, config.CARD_HEIGHT_BASE + config.CARD_MIN_GAP)
@@ -101,7 +131,7 @@ class BookListModel(QAbstractListModel):
             return
         b["_meta_cached"] = True
 
-        path = b.get("path", "")
+        path = _safe_from_db_path(b.get("path", ""))
         if not path:
             return
         try:

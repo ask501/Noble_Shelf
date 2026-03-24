@@ -14,6 +14,18 @@ from .model import BookListModel
 from .roles import ROLE_CIRCLE, ROLE_COVER, ROLE_PAGES, ROLE_PATH, ROLE_RATING, ROLE_TITLE
 
 
+def _safe_from_db_path(path: str) -> str:
+    """DBの相対/絶対pathをビュー操作用に安全に解決する。"""
+    if not path:
+        return ""
+    if os.path.isabs(path):
+        return os.path.normpath(path)
+    try:
+        return os.path.normpath(db._from_db_path(path))
+    except Exception:
+        return os.path.normpath(path)
+
+
 class BookGridView(AutoScrollMixin, QListView):
     bookOpened = Signal(str)
     bookSelected = Signal(dict)
@@ -114,12 +126,12 @@ class BookGridView(AutoScrollMixin, QListView):
         selected_indexes = self.selectedIndexes()
         books: list[dict] = []
         for idx in selected_indexes:
-            path = idx.data(ROLE_PATH)
+            path = _safe_from_db_path(idx.data(ROLE_PATH) or "")
             if path and os.path.exists(path):
                 books.append({"path": path})
 
         if not books:
-            path = index.data(ROLE_PATH)
+            path = _safe_from_db_path(index.data(ROLE_PATH) or "")
             if not path or not os.path.exists(path):
                 QMessageBox.warning(
                     self,
@@ -153,7 +165,7 @@ class BookGridView(AutoScrollMixin, QListView):
         if not index.isValid():
             return None
         return {
-            "path": index.data(ROLE_PATH),
+            "path": _safe_from_db_path(index.data(ROLE_PATH) or ""),
             "title": index.data(ROLE_TITLE),
             "circle": index.data(ROLE_CIRCLE),
             "pages": index.data(ROLE_PAGES),
