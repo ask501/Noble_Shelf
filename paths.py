@@ -60,3 +60,29 @@ os.makedirs(PLUGINS_DIR, exist_ok=True)
 for _plugin_path in (PLUGINS_SCAN_DIR, PLUGINS_DIR):
     if _plugin_path and os.path.isdir(_plugin_path) and _plugin_path not in sys.path:
         sys.path.insert(0, _plugin_path)
+
+
+def to_rel(path, lib_root):
+    if path is None:
+        return None
+    path = os.path.normpath(path)
+    lib_root = os.path.normpath(lib_root)
+    if os.path.isabs(path):
+        try:
+            common = os.path.commonpath([path, lib_root])
+        except ValueError:
+            return path
+        if common != lib_root:
+            return path
+        rel = os.path.relpath(path, lib_root)
+    else:
+        rel = path
+    return os.path.normpath(rel)
+
+
+def normalize_path(p: str) -> str:
+    """パス比較用の正規化。大文字小文字・スラッシュ方向・末尾スラッシュを統一する。
+    None・空文字が混入しても安全に空文字を返す。"""
+    if not p:
+        return ""
+    return os.path.normcase(os.path.normpath(p))

@@ -81,12 +81,17 @@ class BookGridView(AutoScrollMixin, QListView):
 
     def scroll_to_path(self, path: str):
         """指定pathのカードが見えるようにスクロール"""
+        from paths import normalize_path
+        from PySide6.QtCore import QItemSelectionModel
+
+        norm = normalize_path(path)
         books = self._model._books
         for i, book in enumerate(books):
-            if book.get("path") == path:
+            if normalize_path(book.get("path", "")) == norm:
                 index = self._model.index(i, 0)
-                self.scrollTo(index, QAbstractItemView.PositionAtCenter)
+                self.scrollTo(index, QAbstractItemView.EnsureVisible)
                 self.setCurrentIndex(index)
+                self.selectionModel().select(index, QItemSelectionModel.ClearAndSelect)
                 break
 
     def preload_thumbs_for_books(self, books: list[dict]):

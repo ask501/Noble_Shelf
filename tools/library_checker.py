@@ -10,12 +10,16 @@ def scan_unregistered(library_path: str, db) -> list[dict]:
         return []
 
     registered_paths = {
-        os.path.normcase(os.path.normpath(os.path.abspath(path)))
+        os.path.normcase(
+            os.path.normpath(path if os.path.isabs(path) else os.path.join(base, path))
+        )
         for _, _, _, path, _, _ in db.get_all_books()
         if path
     }
     hidden_paths = {
-        os.path.normcase(os.path.normpath(os.path.abspath(path)))
+        os.path.normcase(
+            os.path.normpath(path if os.path.isabs(path) else os.path.join(base, path))
+        )
         for path in db.get_hidden_paths()
         if path
     }

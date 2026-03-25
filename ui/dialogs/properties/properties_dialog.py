@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 
 import config
 import db
+from paths import to_rel
 from ui.dialogs.properties._utils import (
     BTN_CANCEL_STYLE,
     BTN_FETCH_STYLE,
@@ -683,8 +684,10 @@ class PropertyDialog(QDialog):
             "cover":        self._cover or "",
         }
         meta["dlsite_id"] = meta.get("dojindb_url") or meta.get("id") or ""
+        meta["image_url"] = meta.get("cover_url", "")
         apply_dlg = MetaApplyDialog(current, meta, self, book_path=self._path)
-        if apply_dlg.exec() != QDialog.Accepted:
+        ret = apply_dlg.exec()
+        if ret != QDialog.Accepted:
             return
 
         applied = apply_dlg.selected_keys()
@@ -773,10 +776,14 @@ class PropertyDialog(QDialog):
     # ── カバー画像変更 ────────────────────────────────────
 
     def _on_change_cover(self):
+        if self._cover and os.path.isabs(self._cover):
+            start_dir = os.path.dirname(self._cover)
+        else:
+            start_dir = config.COVER_CACHE_DIR
         fname, _ = QFileDialog.getOpenFileName(
             self,
             "カバー画像を選択",
-            os.path.dirname(self._cover) if self._cover else "",
+            start_dir,
             "画像ファイル (*.png *.jpg *.jpeg *.webp *.bmp *.gif)",
         )
         if not fname:
@@ -1010,6 +1017,7 @@ class PropertyDialog(QDialog):
 
         path = self._path
         original_path_for_db = path  # rename_book(old, new) で DB を更新するときの old（誤った path のままの可能性あり）
+        lib_root = (db.get_setting("library_folder") or "").strip()
 
         # パスが実在しない（昔のフォルダ名だけなどで登録されている場合）は、ライブラリ配下から正しいパスを解決する
         if path and not (os.path.isdir(path) or os.path.isfile(path)):
@@ -1140,19 +1148,21 @@ class PropertyDialog(QDialog):
 
         # 先にリネーム（誤った path から修復した場合は original_path_for_db で DB の行を特定する）
         try:
-            db.rename_book(original_path_for_db, new_path, new_name, new_circle, new_title, new_cover or "")
+            old_db_path = to_rel(original_path_for_db, lib_root)
+            new_db_path = to_rel(new_path, lib_root)
+            db.rename_book(old_db_path, new_db_path, new_name, new_circle, new_title, new_cover or "")
         except Exception as e:
             QMessageBox.critical(self, "DB更新エラー", str(e))
             return
 
         # カバー変更時は必ず DB に保存してから cleanup（保存前にクリアされないよう順序を保証）
         if self._new_cover_path:
-            db.set_cover_custom(new_path, self._new_cover_path)
+            db.set_cover_custom(new_db_path, self._new_cover_path)
 
         # メタ情報を保存
         t1 = time.time()
         db.set_book_meta(
-            new_path,
+            new_db_path,
             author=author,
             type_="",
             series=series,
@@ -1188,6 +1198,7 @@ class PropertyDialog(QDialog):
         """一括編集: プレースホルダーでない項目だけ上書き。プレースホルダーのままなら各作品の元の値を保持。"""
         import re as _re
         bookmarks = db.get_all_bookmarks()
+        lib_root = (db.get_setting("library_folder") or "").strip()
 
         def _get(form_val: str, multi_key: str, orig_val: str):
             if multi_key in self._multi_fields and (form_val.strip() == MULTI_PLACEHOLDER or form_val.strip() == ""):
@@ -1208,6 +1219,7 @@ class PropertyDialog(QDialog):
             p = _safe_from_db_path(b.get("path", ""))
             if not p:
                 continue
+            p_db = to_rel(p, lib_root)
             meta = db.get_book_meta(p) or {}
             orig_circle = (b.get("circle") or "").strip()
             orig_title = (b.get("title") or b.get("name") or "").strip()
@@ -1260,9 +1272,9 @@ class PropertyDialog(QDialog):
                 apply_rating = self._rating
 
             try:
-                db.update_book_display(p, circle=nc, title=nt)
+                db.update_book_display(p_db, circle=nc, title=nt)
                 db.set_book_meta(
-                    p,
+                    p_db,
                     author=author,
                     type_="",
                     series=series,
@@ -1277,7 +1289,7 @@ class PropertyDialog(QDialog):
                     memo=memo or None,
                     meta_source=meta_src,
                 )
-                db.set_bookmark(p, apply_rating)
+                db.set_bookmark(p_db, apply_rating)
             except Exception as e:
                 QMessageBox.critical(self, "DB更新エラー", "パス: %s\n%s" % (p, str(e)))
                 return

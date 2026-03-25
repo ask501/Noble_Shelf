@@ -1,6 +1,8 @@
 # config.py - アプリ全体で共有する定数・設定の一元管理
 # 全モジュールはここを参照し、マジックナンバーを排除する。
-from paths import APP_BASE, CACHE_DIR, COVER_CACHE_DIR
+import os
+
+from paths import APP_BASE, APP_DATA_DIR, CACHE_DIR, COVER_CACHE_DIR
 
 # ── UIスタイル共通定数 ────────────────────────────────────
 BORDER_RADIUS = 6        # ウィジェット共通の角丸半径(px)
@@ -555,6 +557,9 @@ SETTINGS_BACKUP_COUNT_MIN = 1
 SETTINGS_BACKUP_COUNT_MAX = 99
 SETTINGS_BACKUP_COUNT_DEFAULT = 10
 SETTINGS_BACKUP_SPIN_WIDTH = 80
+BACKUP_INTERVAL_SEC = 60 * 60 * 24  # 24時間
+DB_BACKUP_DAILY_PATH = os.path.join(APP_DATA_DIR, "library_daily.db")
+APP_LOCK_FILE_PATH = os.path.join(APP_DATA_DIR, "app.lock")
 # カード表示タブ：見出し等のフォントサイズ(px)
 SETTINGS_SECTION_LABEL_FONT_SIZE_PX = 11
 # カード表示タブ：プレビュー外周の余白(px)（左右上下同じ）

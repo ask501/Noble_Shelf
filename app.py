@@ -32,6 +32,7 @@ import time
 
 import config
 import db
+from paths import normalize_path, to_rel
 from ui.dialogs.library_folder_dialog import LibraryFolderDialog
 from version import VERSION
 from grid import BookGridView
@@ -58,15 +59,22 @@ def _resolve_cover(path: str, cover: str) -> str:
     """
     if not cover or not str(cover).strip():
         return cover or ""
+    library_folder = (db.get_setting("library_folder") or "").strip()
+    if not os.path.isabs(cover.strip()) and library_folder:
+        candidate = os.path.normpath(os.path.join(library_folder, cover.strip()))
+        if os.path.exists(candidate):
+            return candidate
     c = db.resolve_cover_stored_value(cover)
     if not c:
         return cover.strip()
     if os.path.exists(c):
         return c
-    if not os.path.isabs(c):
-        resolved = os.path.normpath(os.path.join(config.APP_BASE, c))
-        if os.path.exists(resolved):
-            return resolved
+    # 相対パスをライブラリフォルダ基準で解決
+    library_folder = (db.get_setting("library_folder") or "").strip()
+    if library_folder:
+        alt = os.path.normpath(os.path.join(library_folder, cover.strip()))
+        if os.path.exists(alt):
+            return alt
     if path and os.path.isdir(path):
         alt = os.path.join(path, os.path.basename(c))
         if os.path.exists(alt):
@@ -79,6 +87,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         """メインウィンドウを初期化しUIとDBを準備する。"""
         super().__init__()
+        self._startup_t0 = time.perf_counter()
         self.setWindowTitle(f"{config.APP_TITLE} v{VERSION}")
         self.resize(config.WINDOW_WIDTH, config.WINDOW_HEIGHT)
 
@@ -123,6 +132,17 @@ class MainWindow(QMainWindow):
         self.menuBar().installEventFilter(self)
         self.centralWidget().installEventFilter(self)
         self.installEventFilter(self)
+
+    def _resolve_cover_fast(self, path: str, cover: str, library_folder: str) -> str:
+        """I/Oゼロ版。パス組み立てのみ。存在確認は描画時に委譲。"""
+        if not cover:
+            return ""
+        clean_cover = cover.strip()
+        if os.path.isabs(clean_cover):
+            return clean_cover
+        if library_folder:
+            return os.path.normpath(os.path.join(library_folder, clean_cover))
+        return db.resolve_cover_stored_value(clean_cover)
 
     def eventFilter(self, obj, event):
         """フォーカス解除とタイトルバー等の最大化ダブルクリックを処理する。"""
@@ -499,7 +519,7 @@ class MainWindow(QMainWindow):
                     if not (resolved and os.path.isfile(resolved)):
                         saved_path = _save_cover(cover_url, found_path)
                         if saved_path:
-                            db.update_book_cover_path(found_path, saved_path)
+                            db.set_cover_custom(found_path, saved_path)
                 db.add_bookmarklet_queue(
                     url=q_url,
                     site=q_site,
@@ -514,6 +534,7 @@ class MainWindow(QMainWindow):
                     store_url=q_store_url,
                     status="applied",
                 )
+                self.on_book_updated(found_path)
             else:
                 # 一致あり＋自動適用OFF → matched で止める
                 db.add_bookmarklet_queue(
@@ -541,11 +562,28 @@ class MainWindow(QMainWindow):
             self._bookmarklet_window.refresh()
 
     def closeEvent(self, event) -> None:
-        """終了時にローカルHTTPサーバーを停止する。"""
+        """終了時にバックアップを非同期実行してから終了する。"""
+        self.hide()
+        event.ignore()
+        QTimer.singleShot(0, self._do_backup_and_quit)
+
+    def _do_backup_and_quit(self) -> None:
+        import time
         import local_server
 
+        last = db.get_last_backup_time()
+        if time.time() - last >= config.BACKUP_INTERVAL_SEC:
+            try:
+                db.backup_daily(config.DB_BACKUP_DAILY_PATH)
+                db.set_last_backup_time(time.time())
+            except Exception:
+                pass
+        try:
+            os.remove(config.APP_LOCK_FILE_PATH)
+        except Exception:
+            pass
         local_server.stop()
-        super().closeEvent(event)
+        QApplication.quit()
 
     def _on_restore_backup(self):
         """バックアップ一覧からDBを復元し再起動を案内する。"""
@@ -915,8 +953,8 @@ class MainWindow(QMainWindow):
     # ═══ ライブラリ管理 ═══
     def _load_library(self):
         """DBから一覧を表示しバックグラウンドでスキャンする。"""
-        folder = (db.get_setting("library_folder") or "").strip()
-        if not folder or not os.path.isdir(folder):
+        library_folder = (db.get_setting("library_folder") or "").strip()
+        if not library_folder or not os.path.isdir(library_folder):
             # ライブラリ未設定: グリッドを隠し、中央ボタンのみ表示
             if hasattr(self, "_grid"):
                 self._grid.hide()
@@ -934,13 +972,15 @@ class MainWindow(QMainWindow):
         except Exception:
             rows = []
         if rows:
+            t_rows = time.perf_counter()
+            _resolve_fast = self._resolve_cover_fast
             books = [
                 {
-                    "path":   self._safe_from_db_path(row[3] or ""),
+                    "path": os.path.normpath(os.path.join(library_folder, row[3])) if library_folder else row[3],
                     "name":   row[0],
                     "title":  row[2] or row[0],
                     "circle": row[1] or "",
-                    "cover":  row[4] or "",
+                    "cover":  _resolve_fast(row[3], row[4], library_folder) if row[4] else "",
                     "pages":  0,
                     "rating": 0,
                 }
@@ -949,6 +989,7 @@ class MainWindow(QMainWindow):
             ]
             self._all_books = books
             if hasattr(self, "_sidebar"):
+                t_sort = time.perf_counter()
                 self._apply_startup_sort_from_settings()
             else:
                 self._sort_key = "title"
@@ -956,7 +997,7 @@ class MainWindow(QMainWindow):
             self._apply_filters()
 
         # 裏でスキャン
-        self._start_scan(folder)
+        self._start_scan(library_folder)
 
         # 起動時にもカード表示設定を反映
         self._grid.apply_display_settings()
@@ -1127,26 +1168,31 @@ class MainWindow(QMainWindow):
         """DBから一覧を再取得してグリッド・サイドバー・タイトルを更新する。"""
         try:
             self._meta_cache = db.get_all_book_metas()
+            self._norm_meta_cache = {}
         except Exception:
             self._meta_cache = {}
+            self._norm_meta_cache = {}
         try:
             rows = db.get_all_books()
         except Exception:
             rows = []
-        books = [
-            {
-                "path": self._safe_from_db_path(row[3] or ""),
-                "name": row[0],
-                "title": row[2] or row[0],
-                "circle": row[1] or "",
-                "cover": row[4] or "",
-                "pages": 0,
-                "rating": 0,
-                "is_dlst": int(row[5]) if len(row) > 5 else 0,
-            }
-            for row in rows
-            if row[3]
-        ]
+        books = []
+        for row in rows:
+            if not row[3]:
+                continue
+            resolved = _resolve_cover(row[3], row[4]) if row[4] else ""
+            books.append(
+                {
+                    "path": self._safe_from_db_path(row[3] or ""),
+                    "name": row[0],
+                    "title": row[2] or row[0],
+                    "circle": row[1] or "",
+                    "cover": resolved,
+                    "pages": 0,
+                    "rating": 0,
+                    "is_dlst": int(row[5]) if len(row) > 5 else 0,
+                }
+            )
         self._all_books = books
         build_haystack_cache(books)
         self._apply_filters()
@@ -1187,8 +1233,10 @@ class MainWindow(QMainWindow):
         # メタデータキャッシュ: 更新後は全件を一括再取得して最新状態にする
         try:
             self._meta_cache = db.get_all_book_metas()
+            self._norm_meta_cache = {}
         except Exception:
             self._meta_cache = {}
+            self._norm_meta_cache = {}
 
         # DBから最新のbooks一覧を取得して _all_books を更新
         try:
@@ -1333,6 +1381,7 @@ class MainWindow(QMainWindow):
     # ═══ フィルター・ソート ═══
     def _apply_filters(self):
         """各種フィルタとソートを合成しグリッドへ反映する。"""
+        t0 = time.perf_counter()
         # 元の全件リスト
         all_books = self._all_books
         # サイドバー（作品名一覧）用に、フィルタ前の並び順を準備
@@ -1343,6 +1392,18 @@ class MainWindow(QMainWindow):
         # サイドバーフィルタ
         if self._sidebar_filter:
             mode, value = self._sidebar_filter
+            if mode in ("author", "series", "character", "tag"):
+                if (
+                    not hasattr(self, "_norm_meta_cache")
+                    or len(self._norm_meta_cache) != len(self._meta_cache)
+                ):
+                    lib_root = (db.get_setting("library_folder") or "").strip()
+                    self._norm_meta_cache = {
+                        normalize_path(
+                            k if os.path.isabs(k or "") else os.path.join(lib_root, k or "")
+                        ): v
+                        for k, v in self._meta_cache.items()
+                    }
             books = self._apply_sidebar_filter(books, mode, value)
 
         # ストアファイルフィルタ（DLSiteのみ / FANZAのみ、重複可）
@@ -1458,7 +1519,7 @@ class MainWindow(QMainWindow):
                 "tag": "タグ",
                 "metadata": "メタデータ",
                 "favorite": "お気に入り",
-                "added_date": "追加順",
+                "added_date": "最終更新順",
                 "history": "履歴",
             }
             key = self._sort_key or "title"
@@ -1549,13 +1610,26 @@ class MainWindow(QMainWindow):
         if not self._meta_cache:
             try:
                 self._meta_cache = db.get_all_book_metas()
+                self._norm_meta_cache = {}
             except Exception:
                 self._meta_cache = {}
+                self._norm_meta_cache = {}
+        if (
+            not hasattr(self, "_norm_meta_cache")
+            or len(self._norm_meta_cache) != len(self._meta_cache)
+        ):
+            lib_root = (db.get_setting("library_folder") or "").strip()
+            self._norm_meta_cache = {
+                normalize_path(
+                    k if os.path.isabs(k or "") else os.path.join(lib_root, k or "")
+                ): v
+                for k, v in self._meta_cache.items()
+            }
 
         def match_condition(book: dict, field: str, value: str) -> bool:
             """1条件がブックのメタと一致するか判定する。"""
             path = book.get("path", "") or ""
-            meta = self._meta_cache.get(path) if path else {}
+            meta = self._norm_meta_cache.get(normalize_path(path)) if path else {}
             if meta is None:
                 return False
 
@@ -1635,13 +1709,16 @@ class MainWindow(QMainWindow):
 
     def _sort_books(self, books: list[dict]) -> list[dict]:
         """現在のソートキー/順序に基づいて books を並べ替える"""
+        t0 = time.perf_counter()
         if not books:
             return []
 
         # メタキャッシュが空なら先に一括ロード（1件ずつDBアクセスを防ぐ）
         if not self._meta_cache:
             try:
+                t_meta = time.perf_counter()
                 self._meta_cache = db.get_all_book_metas()
+                self._norm_meta_cache = {}
             except Exception:
                 pass
 
@@ -1657,7 +1734,15 @@ class MainWindow(QMainWindow):
         mtime_map: dict[str, float] = {}
         if key == "added_date":
             try:
-                mtime_map = db.get_known_paths()
+                t_added = time.perf_counter()
+                raw_map = db.get_books_updated_at_map()
+                lib_root = (db.get_setting("library_folder") or "").strip()
+                mtime_map = {
+                    normalize_path(
+                        k if os.path.isabs(k or "") else os.path.join(lib_root, k or "")
+                    ): v
+                    for k, v in raw_map.items()
+                }
             except Exception:
                 mtime_map = {}
 
@@ -1721,7 +1806,7 @@ class MainWindow(QMainWindow):
 
             if key == "added_date":
                 # mtime が大きいほど新しい
-                return mtime_map.get(path, 0.0)
+                return mtime_map.get(normalize_path(path or ""), 0.0)
 
             if key == "history":
                 # recent_books にないものは末尾
@@ -1990,18 +2075,20 @@ class MainWindow(QMainWindow):
         self, books: list, mode: str, value: str | set[str]
     ) -> list:
         """サイドバー選択に応じてブック一覧を絞り込む。"""
+        lib_root = os.path.normpath((db.get_setting("library_folder") or "").strip())
         if mode == "circle":
             if value == "__unknown__":
                 return [b for b in books if not (b.get("circle") or "").strip()]
             return [b for b in books if b["circle"] == value]
         elif mode == "title":
-            return [b for b in books if b["path"] == value]
+            return books
         elif mode in ("author", "series", "character", "tag"):
+            norm_cache = getattr(self, "_norm_meta_cache", {}) or {}
             result = []
             for b in books:
-                meta = (self._meta_cache.get(b["path"]) or {}) if self._meta_cache else {}
+                norm_key = normalize_path(b.get("path", ""))
+                meta = norm_cache.get(norm_key) or {}
                 if value == "__unknown__":
-                    # フィールドが未設定の本を抽出
                     if mode == "author" and not (meta.get("author") or ""):
                         result.append(b)
                     elif mode == "series" and not (meta.get("series") or ""):
@@ -2015,34 +2102,32 @@ class MainWindow(QMainWindow):
                     continue
                 if mode == "author":
                     author_val = meta.get("author")
-                    # author が文字列でもリストでもマッチするようにする
                     if isinstance(author_val, str) and author_val == value:
                         result.append(b)
                     elif isinstance(author_val, (list, tuple)) and value in author_val:
                         result.append(b)
-                elif mode == "series"  and meta.get("series") == value:
+                elif mode == "series" and meta.get("series") == value:
                     result.append(b)
                 elif mode == "character" and value in (meta.get("characters") or []):
                     result.append(b)
-                elif mode == "tag"     and value in (meta.get("tags") or []):
+                elif mode == "tag" and value in (meta.get("tags") or []):
                     result.append(b)
             return result
         elif mode == "history_all":
             # value は path の set
-            return [b for b in books if b["path"] in value]
+            norm_value = {normalize_path(p) for p in value}
+            return [b for b in books if normalize_path(b["path"]) in norm_value]
         elif mode == "history":
-            return [b for b in books if b["path"] == value]
+            return books
         elif mode == "added_date":
-            if not value:
-                return books
-            return [b for b in books if b["path"] == value]
+            return books
         elif mode == "metadata":
             if value == "__unknown__":
                 return books
             try:
                 rows = db.get_books_by_meta_source(value)
-                paths = {r[3] for r in rows}
-                return [b for b in books if b.get("path") in paths]
+                paths = {normalize_path(r[3]) for r in rows}
+                return [b for b in books if normalize_path(b.get("path", "")) in paths]
             except Exception:
                 return books
         elif mode == "favorite":
@@ -2050,17 +2135,28 @@ class MainWindow(QMainWindow):
                 return books
             try:
                 bookmarks = db.get_all_bookmarks()
+                norm_bookmarks = {normalize_path(k): v for k, v in bookmarks.items()}
                 rating = int(value) if value.isdigit() else 0
                 if rating == 0:
-                    return [b for b in books if bookmarks.get(b.get("path"), 0) == 0]
-                return [b for b in books if bookmarks.get(b.get("path"), 0) == rating]
+                    return [b for b in books if norm_bookmarks.get(normalize_path(b.get("path", "")), 0) == 0]
+                return [b for b in books if norm_bookmarks.get(normalize_path(b.get("path", "")), 0) == rating]
             except Exception:
                 return books
         return books
 
     def _on_filter_changed(self, mode: str, value: str):
         """サイドバー選択に合わせフィルタ状態を更新する。"""
+        scroll_modes = {"title", "added_date", "history"}
         self._sidebar_filter = (mode, value)
+        if mode in scroll_modes:
+            lib_root = (db.get_setting("library_folder") or "").strip()
+            abs_value = value if os.path.isabs(value) else os.path.join(lib_root, value)
+            norm = normalize_path(abs_value)
+            QTimer.singleShot(
+                config.CONTEXT_MENU_SCROLL_FALLBACK_DELAY_MS,
+                lambda: self._grid.scroll_to_path(norm),
+            )
+            return
         self._apply_filters()
 
     def _on_filter_cleared(self):

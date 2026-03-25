@@ -23,7 +23,7 @@ from theme import THEME_COLORS, COLOR_BORDER, COLOR_WHITE, COLOR_BADGE_BG
 def _build_sidebar_modes():
     from plugin_loader import has_enabled_plugins
     modes = [
-        ("added_date", "追加順"),
+        ("added_date", "最終更新順"),
         ("title", "作品名"),
         ("circle", "サークル"),
         ("author", "作者"),

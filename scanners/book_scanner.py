@@ -272,6 +272,37 @@ class BookScannerWorker(QRunnable):
                             "suggested_title": suggested_title,
                         })
                     _emit_progress(i + 1)
+                elif name.lower().endswith(".pdf"):
+                    try:
+                        rel_pdf = os.path.normpath(db._to_db_path(path))
+                    except ValueError:
+                        rel_pdf = os.path.normpath(os.path.relpath(path, folder))
+                    rel_pdf_key = os.path.normcase(os.path.normpath(rel_pdf))
+                    found_paths.add(rel_pdf_key)
+                    try:
+                        mtime = os.path.getmtime(path)
+                    except OSError:
+                        _emit_progress(i + 1)
+                        continue
+                    known_key = os.path.normcase(os.path.normpath(rel_pdf))
+                    if (
+                        known_key in known
+                        and abs((known.get(known_key) or 0) - mtime) < config.MTIME_TOLERANCE
+                    ):
+                        _emit_progress(i + 1)
+                        continue
+                    # PDF登録処理
+                    from drop_handler import _get_pdf_cover_and_pages
+                    abs_path = path  # すでに絶対パスで構築済み
+                    cover, pages = _get_pdf_cover_and_pages(abs_path)
+                    stem = os.path.splitext(name)[0]
+                    circle, title = db.parse_display_name(stem)
+                    if not title:
+                        title = stem
+                    book_name = db.format_book_name(circle, title)
+                    db.upsert_store_file_book(rel_pdf, book_name, circle, title, cover, mtime, 0, pages)
+                    _emit_progress(i + 1)
+                    continue
                 continue
             try:
                 rel_path = db._to_db_path(path)

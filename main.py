@@ -5,6 +5,8 @@ main.py - エントリーポイント
 import os
 import sys
 import logging
+import json
+import time
 from PySide6.QtCore import QLoggingCategory
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QFont, QIcon
@@ -37,7 +39,28 @@ def _apply_dark_titlebar(window):
 def main(on_startup=None):
     logging.basicConfig(level=logging.WARNING, format="%(name)s %(levelname)s: %(message)s", stream=sys.stderr)
     db.init_db()  # get_setting より前にテーブルを作っておく（exe を別フォルダで起動したときも必須）
-    db.backup_on_startup()  # 起動時自動バックアップ
+    lock_path = config.APP_LOCK_FILE_PATH
+    if os.path.exists(lock_path):
+        try:
+            with open(lock_path, encoding="utf-8") as f:
+                lock_data = json.load(f)
+            pid = int(lock_data.get("pid") or 0)
+            started_at = float(lock_data.get("started_at") or 0)
+            is_zombie = (time.time() - started_at > config.BACKUP_INTERVAL_SEC)
+            if not is_zombie and pid > 0:
+                try:
+                    os.kill(pid, 0)
+                except OSError:
+                    is_zombie = True
+            if not is_zombie:
+                pass
+        except Exception:
+            pass
+    try:
+        with open(lock_path, "w", encoding="utf-8") as f:
+            json.dump({"pid": os.getpid(), "started_at": time.time()}, f)
+    except Exception:
+        pass
     # libpng の ICC プロファイル警告（GRAY on RGB PNG 等）を抑止
     QLoggingCategory.setFilterRules("qt.gui.imageio.warning=false")
     app = QApplication(sys.argv)

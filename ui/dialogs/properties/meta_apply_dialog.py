@@ -384,9 +384,8 @@ class MetaApplyDialog(QDialog):
         os.makedirs(cover_dir, exist_ok=True)
         key = hashlib.md5(self._book_path.encode()).hexdigest()
         out_path = os.path.join(cover_dir, f"{key}_fetched.jpg")
-        if pix.save(out_path, "JPEG", quality=90):
-            return out_path
-        return None
+        saved = pix.save(out_path, "JPEG", quality=90)
+        return out_path if saved else None
 
     def selected_keys(self) -> dict:
         return self._result or {}

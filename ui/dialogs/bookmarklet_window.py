@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QMenu,
 )
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QCloseEvent
+from PySide6.QtGui import QAction, QCloseEvent, QPixmapCache
 import config
 from theme import (
     apply_dark_titlebar,
@@ -319,6 +319,8 @@ class BookmarkletWindow(QWidget):
         result = dlg.exec()
         if result:
             applied = dlg.selected_keys()
+            lib_root = (db.get_setting("library_folder") or "").strip()
+            found_path_db = db.to_rel(found_path, lib_root)
 
             # release_dateの正規化
             import re as _re
@@ -332,7 +334,7 @@ class BookmarkletWindow(QWidget):
             _to_int = lambda s: int(str(s).strip()) if s and str(s).strip().isdigit() else None
 
             db.set_book_meta(
-                found_path,
+                found_path_db,
                 author=applied.get("author") or None,
                 series=applied.get("series") or None,
                 characters=_to_list(applied.get("characters")) or None,
@@ -348,15 +350,21 @@ class BookmarkletWindow(QWidget):
             new_title = applied.get("title", "") or ""
             new_circle = applied.get("circle", "") or ""
             if new_title or new_circle:
-                db.update_book_display(found_path, circle=new_circle, title=new_title)
+                db.update_book_display(found_path_db, circle=new_circle, title=new_title)
 
             # カバー画像の更新
             cover_path = applied.get("cover_path")
             if cover_path:
-                db.update_book_cover_path(found_path, cover_path)
+                db.set_cover_custom(found_path_db, cover_path)
 
             # キューのステータス更新
             db.update_bookmarklet_queue_status(row["id"], "applied")
+            QPixmapCache.clear()
+            on_updated = getattr(self._main_window, "on_book_updated", None)
+            if not callable(on_updated):
+                on_updated = getattr(self.parent(), "on_book_updated", None)
+            if callable(on_updated):
+                on_updated(found_path)
             self.refresh()
             self._found_path = None
 

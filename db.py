@@ -14,13 +14,16 @@ import sqlite3
 import os
 import shutil
 import sys
+import time
 import unicodedata
 import uuid as uuid_lib
 from contextlib import contextmanager
 from datetime import datetime
 import config
-from paths import DB_FILE, BACKUP_DIR
+from paths import DB_FILE, BACKUP_DIR, to_rel
 import cache
+
+UNSET = object()
 
 MAX_BACKUPS = 10
 LIBRARY_FOLDER_SETTING_KEY = "library_folder"
@@ -248,6 +251,29 @@ def _consume_debug_force_db_recreate_once() -> bool:
 
 def init_db():
     """テーブル作成・マイグレーション。起動時に1回呼ぶ。"""
+    has_settings = False
+    conn_pre = get_conn()
+    try:
+        has_settings = conn_pre.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='settings'"
+        ).fetchone() is not None
+    finally:
+        conn_pre.close()
+
+    if has_settings:
+        from version import VERSION
+
+        last_version = get_last_launch_version()
+        if last_version and last_version != VERSION:
+            pre_migration_backup_path = os.path.join(
+                config.APP_DATA_DIR,
+                f"library_v{last_version}_pre_migration.db",
+            )
+            try:
+                backup_pre_migration(pre_migration_backup_path)
+            except Exception:
+                pass
+
     conn = get_conn()
     try:
         c = conn.cursor()
@@ -425,6 +451,13 @@ def init_db():
         migrate_release_date_format()
     finally:
         conn.close()
+
+    from version import VERSION
+
+    try:
+        set_last_launch_version(VERSION)
+    except Exception:
+        pass
 
 
 
@@ -665,6 +698,58 @@ def backup_on_startup() -> None:
     _trim_backups_with_setting()
 
 
+def _safe_backup(backup_path: str) -> None:
+    """アトミックなバックアップ。tmp出力後にos.replaceで移動する。"""
+    tmp_path = backup_path + ".tmp"
+    if os.path.exists(tmp_path):
+        os.remove(tmp_path)
+    safe_path = tmp_path.replace("'", "''")
+    conn = get_conn()
+    try:
+        conn.execute(f"VACUUM INTO '{safe_path}'")
+    finally:
+        conn.close()
+    for _ in range(3):
+        try:
+            os.replace(tmp_path, backup_path)
+            break
+        except PermissionError:
+            time.sleep(0.5)
+
+
+def backup_daily(backup_path: str) -> None:
+    """通常終了時の24時間バックアップ。"""
+    _safe_backup(backup_path)
+
+
+def backup_pre_migration(backup_path: str) -> None:
+    """バージョンアップ前のマイグレーション保険バックアップ。"""
+    _safe_backup(backup_path)
+
+
+def get_last_backup_time() -> float:
+    try:
+        return float(get_setting("last_backup_time") or 0)
+    except Exception:
+        return 0.0
+
+
+def set_last_backup_time(t: float) -> None:
+    set_setting("last_backup_time", str(t))
+
+
+def get_last_launch_version() -> str:
+    """settings テーブルが存在しない初回起動時は空文字を返す。"""
+    try:
+        return get_setting("last_launch_version") or ""
+    except Exception:
+        return ""
+
+
+def set_last_launch_version(version: str) -> None:
+    set_setting("last_launch_version", version)
+
+
 def _trim_backups_with_setting() -> None:
     """バックアップ件数が上限を超えたら古いものから削除する（backup_max_count 設定を優先）。"""
     try:
@@ -853,6 +938,18 @@ def get_known_paths():
         conn.close()
 
 
+def get_books_updated_at_map() -> dict[str, float]:
+    """path -> updated_at のマップを返す（追加順ソート用）"""
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT path, COALESCE(CAST(strftime('%s', updated_at) AS REAL), mtime, 0) AS v FROM books"
+        ).fetchall()
+        return {r["path"]: r["v"] for r in rows}
+    finally:
+        conn.close()
+
+
 def is_path_registered(path: str) -> bool:
     """指定パスが books に登録済みなら True（二重登録防止用）。パスは正規化して比較する。"""
     if not path or not str(path).strip():
@@ -1001,6 +1098,11 @@ def bulk_upsert_and_delete_books(
 
 
 def rename_book(old_path, new_path, new_name, new_circle, new_title, new_cover_path):
+    if not old_path:
+        return
+    lib_root = os.path.normpath((get_setting("library_folder") or "").strip())
+    old_path = to_rel(old_path, lib_root)
+    new_path = to_rel(new_path, lib_root)
     conn = get_conn()
     try:
         # 新しいパスに既存のエントリがある場合は先に削除（UNIQUE制約エラー回避）
@@ -1050,10 +1152,12 @@ def repair_wrong_paths(library_folder: str, on_progress=None):
     if not lib or not os.path.isdir(lib):
         return (0, "ライブラリフォルダが設定されていません。", [])
 
-    def _path_is_wrong(p):
-        if not p or not str(p).strip():
+    def _path_is_wrong(p, lib_root):
+        if not p:
             return True
-        # 実在しないパス（フォルダ名だけなどで登録された場合）は修復対象
+        if os.path.isabs(p):
+            return not (os.path.isdir(p) or os.path.isfile(p))
+        p = os.path.join(lib_root, p)
         return not (os.path.isdir(p) or os.path.isfile(p))
 
     def _find_correct_path(name, circle, title, wrong_path):
@@ -1100,12 +1204,13 @@ def repair_wrong_paths(library_folder: str, on_progress=None):
         name, circle, title, path, cover_path, _ = r[0], r[1], r[2], r[3], r[4], r[5]
         if on_progress:
             on_progress(i + 1, len(rows), path)
-        if not _path_is_wrong(path):
+        if not _path_is_wrong(path, lib):
             continue
-        new_path = _find_correct_path(name, circle, title, path)
-        if not new_path:
+        found_path = _find_correct_path(name, circle, title, path)
+        if not found_path:
             continue
         try:
+            new_path = to_rel(found_path, lib)
             rename_book(path, new_path, name, circle or "", title or "", cover_path or "")
             repaired.append((path, new_path))
         except Exception as e:
@@ -1283,6 +1388,8 @@ def update_book_display(path: str, circle: str | None = None, title: str | None 
     """books テーブルの表示用フィールドのみ更新（フォルダのリネームは行わない）。一括編集用。"""
     if not path:
         return
+    lib_root = os.path.normpath((get_setting("library_folder") or "").strip())
+    path = to_rel(path, lib_root)
     conn = get_conn()
     try:
         row = conn.execute("SELECT name, circle, title FROM books WHERE path=?", (path,)).fetchone()
@@ -1323,6 +1430,10 @@ def get_all_bookmarks():
 
 
 def set_bookmark(path, rating):
+    if not path:
+        return
+    lib_root = os.path.normpath((get_setting("library_folder") or "").strip())
+    path = to_rel(path, lib_root)
     conn = get_conn()
     try:
         if rating == 0:
@@ -1896,22 +2007,27 @@ def set_book_meta(
     series: str = "",
     characters=None,
     tags=None,
-    dlsite_id=None,
-    title_kana: str | None = None,
-    circle_kana: str | None = None,
-    pages: int | None = None,
-    release_date: str | None = None,
-    price: int | None = None,
-    memo: str | None = None,
-    meta_source: str | None = None,
-    store_url: str | None = None,
+    dlsite_id=UNSET,
+    title_kana: str | None = UNSET,
+    circle_kana: str | None = UNSET,
+    pages: int | None = UNSET,
+    release_date: str | None = UNSET,
+    price: int | None = UNSET,
+    memo: str | None = UNSET,
+    meta_source: str | None = UNSET,
+    store_url: str | None = UNSET,
 ):
     """
     メタ情報を保存。characters/tagsはリスト。
-    dlsite_id / title_kana / circle_kana / pages / release_date / price / memo / meta_source が None の場合は既存値を維持する。
+    dlsite_id / title_kana / circle_kana / pages / release_date / price / memo / meta_source / store_url が
+    UNSET の場合は既存値を維持する。None を渡すと明示的に NULL で上書きする。
     meta_source は dlsite, fanza, とらのあな, 同人DB, other のいずれか（取得元の振り分け用）。
     同時にbooksテーブルのcover_customも必要なら別途set_cover_custom()を呼ぶ。
     """
+    if not path:
+        return
+    lib_root = os.path.normpath((get_setting("library_folder") or "").strip())
+    path = to_rel(path, lib_root)
     conn = get_conn()
     try:
         lookup_path = path
@@ -1945,15 +2061,15 @@ def set_book_meta(
         cur_meta_source = (cur["meta_source"] or "") if cur else ""
         cur_store_url   = (cur["store_url"] or "") if cur else ""
 
-        new_dlsite_id   = dlsite_id   if dlsite_id   is not None else cur_dlsite_id
-        new_title_kana  = title_kana  if title_kana  is not None else cur_title_kana
-        new_circle_kana = circle_kana if circle_kana is not None else cur_circle_kana
-        new_pages       = pages       if pages       is not None else cur_pages
-        new_release     = release_date if release_date is not None else cur_release
-        new_price       = price       if price       is not None else cur_price
-        new_memo        = memo        if memo        is not None else cur_memo
-        new_meta_source = (meta_source.strip() if meta_source is not None and meta_source.strip() else cur_meta_source or "")
-        new_store_url   = store_url   if store_url   is not None else cur_store_url
+        new_dlsite_id   = dlsite_id   if dlsite_id   is not UNSET else cur_dlsite_id
+        new_title_kana  = title_kana  if title_kana  is not UNSET else cur_title_kana
+        new_circle_kana = circle_kana if circle_kana is not UNSET else cur_circle_kana
+        new_pages       = pages       if pages       is not UNSET else cur_pages
+        new_release     = release_date if release_date is not UNSET else cur_release
+        new_price       = price       if price       is not UNSET else cur_price
+        new_memo        = memo        if memo        is not UNSET else cur_memo
+        new_meta_source = (meta_source.strip() if meta_source is not UNSET and meta_source and meta_source.strip() else cur_meta_source or "")
+        new_store_url   = store_url   if store_url   is not UNSET else cur_store_url
 
         conn.execute(
             """INSERT INTO book_meta(
@@ -2016,6 +2132,10 @@ def set_book_meta(
 
 def set_cover_custom(path, cover_path):
     """カスタムカバー画像パスをbooksテーブルに保存。cover_cache 内は ID のみ保存する。"""
+    if not path:
+        return
+    lib_root = os.path.normpath((get_setting("library_folder") or "").strip())
+    path = to_rel(path, lib_root)
     store = _normalize_cover_for_save(cover_path) if cover_path else ""
     conn = get_conn()
     try:
