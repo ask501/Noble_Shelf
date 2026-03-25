@@ -194,6 +194,8 @@ SCAN_STALE_DELETE_SKIP_FRACTION_DENOMINATOR = 2
 DB_BUSY_TIMEOUT_MS = 3000
 # scanners/book_scanner.py: 進捗シグナル発火間隔（件）
 SCAN_PROGRESS_EMIT_INTERVAL = 10
+# scanners/book_scanner.py: mtime比較の許容誤差（秒）
+MTIME_TOLERANCE = 2.0
 
 # scanners/book_scanner.py: 作品フォルダ内の永続UUID（.noble-shelf-id）
 NOBLE_SHELF_ID_FILENAME = ".noble-shelf-id"
@@ -384,6 +386,9 @@ RESTORE_BACKUP_DIALOG_SIZE = (420, 280)
 # app.py: コンテキストメニューのスクロール保護タイマー(ms)
 CONTEXT_MENU_SCROLL_RESET_DELAY_MS = 600
 CONTEXT_MENU_SCROLL_FALLBACK_DELAY_MS = 400
+
+# app.py / PropertyDialog: プロパティ保存〜グリッド反映までの計測ログのプレフィックス
+PROPERTY_SAVE_PERF_LOG_PREFIX = "[PERF] property_save"
 
 # app.py: 最近開いたブックの表示上限（別用途）
 RECENT_BOOKS_LIST_LIMIT = 100

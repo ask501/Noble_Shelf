@@ -49,36 +49,40 @@ from ui.dialogs.first_run import LibrarySetupOverlay
 from ui.widgets.statusbar import setup_statusbar
 
 
-def _resolve_cover(path: str, cover: str) -> str:
+def _cover_has_path_segment(clean: str) -> bool:
+    """相対パス文字列がライブラリ配下のサブパスとして扱えるか（区切りを含むか）。"""
+    if os.sep in clean:
+        return True
+    if "/" in clean:
+        return True
+    if os.altsep and os.altsep in clean:
+        return True
+    return False
+
+
+def _resolve_cover(path: str, cover: str, library_folder: str = "") -> str:
     """
-    DBのカバーパスを表示・参照用に解決する。
-    - DB に ID のみ保存されている場合は cover_cache と結合してフルパスに変換。
-    - 絶対パスで存在すればそのまま返す。
-    - 相対パスなら APP_BASE 基準で解決して存在すれば返す（cover_cache 等）。
-    - リネームでフォルダだけ変わった場合は path 配下の同名ファイルを試す。
+    DBのカバーパスを表示・参照用に解決する（文字列結合のみ。実在確認はグリッド側）。
+    優先: 絶対パス → 相対かつサブパスなら library_folder 結合 → resolve_cover_stored_value
+    → library_folder 結合 → 作品 path 配下。
     """
     if not cover or not str(cover).strip():
         return cover or ""
-    library_folder = (db.get_setting("library_folder") or "").strip()
-    if not os.path.isabs(cover.strip()) and library_folder:
-        candidate = os.path.normpath(os.path.join(library_folder, cover.strip()))
-        if os.path.exists(candidate):
-            return candidate
+    clean = str(cover).strip()
+    lf = (library_folder or "").strip()
+    if os.path.isabs(clean):
+        return os.path.normpath(clean)
+    if lf and _cover_has_path_segment(clean):
+        return os.path.normpath(os.path.join(lf, clean))
     c = db.resolve_cover_stored_value(cover)
     if not c:
-        return cover.strip()
-    if os.path.exists(c):
+        return clean
+    if lf and not _cover_has_path_segment(clean):
         return c
-    # 相対パスをライブラリフォルダ基準で解決
-    library_folder = (db.get_setting("library_folder") or "").strip()
-    if library_folder:
-        alt = os.path.normpath(os.path.join(library_folder, cover.strip()))
-        if os.path.exists(alt):
-            return alt
-    if path and os.path.isdir(path):
-        alt = os.path.join(path, os.path.basename(c))
-        if os.path.exists(alt):
-            return alt
+    if lf:
+        return os.path.normpath(os.path.join(lf, clean))
+    if path:
+        return os.path.normpath(os.path.join(path, os.path.basename(c)))
     return c
 
 
@@ -140,7 +144,8 @@ class MainWindow(QMainWindow):
         clean_cover = cover.strip()
         if os.path.isabs(clean_cover):
             return clean_cover
-        if library_folder:
+        # パス区切りを含む場合のみ library_folder と結合する（IDのみの場合は cover_cache 経由）
+        if library_folder and _cover_has_path_segment(clean_cover):
             return os.path.normpath(os.path.join(library_folder, clean_cover))
         return db.resolve_cover_stored_value(clean_cover)
 
@@ -1176,11 +1181,12 @@ class MainWindow(QMainWindow):
             rows = db.get_all_books()
         except Exception:
             rows = []
+        lib_root = (db.get_setting("library_folder") or "").strip()
         books = []
         for row in rows:
             if not row[3]:
                 continue
-            resolved = _resolve_cover(row[3], row[4]) if row[4] else ""
+            resolved = _resolve_cover(row[3], row[4], lib_root) if row[4] else ""
             books.append(
                 {
                     "path": self._safe_from_db_path(row[3] or ""),
@@ -1202,6 +1208,27 @@ class MainWindow(QMainWindow):
         self._status_label.setText(f"{len(books)} 冊")
 
     # ── 単一ブック更新（プロパティ保存などから呼ばれる） ────────────
+
+    def _property_save_perf_start(self) -> None:
+        """PropertyDialog の保存処理開始時のみ呼ぶ（計測起点）。"""
+        self._property_save_perf_t0 = time.perf_counter()
+
+    def _property_save_perf_cancel(self) -> None:
+        """保存中断・失敗時に計測だけ打ち切る（ログなし）。"""
+        self._property_save_perf_t0 = None
+
+    def _property_save_perf_log(self, phase: str) -> None:
+        """中間フェーズの経過時間をログ（未計測時は何もしない）。"""
+        t0 = getattr(self, "_property_save_perf_t0", None)
+        if t0 is None:
+            return
+        dt = time.perf_counter() - t0
+        print(f"{config.PROPERTY_SAVE_PERF_LOG_PREFIX} {phase} +{dt:.3f}s")
+
+    def _property_save_perf_finish(self, phase: str = "stable") -> None:
+        """計測終了（ログ＋起点クリア）。"""
+        self._property_save_perf_log(phase)
+        self._property_save_perf_t0 = None
 
     def on_book_updated(self, path: str | None = None):
         """
@@ -1243,13 +1270,17 @@ class MainWindow(QMainWindow):
             rows = db.get_all_books()
         except Exception:
             rows = []
+        lib_root = (db.get_setting("library_folder") or "").strip()
         books = [
             {
-                "path":   self._safe_from_db_path(row[3] or ""),
+                "path": (
+                    _p := os.path.normpath(os.path.join(lib_root, (row[3] or "").strip()))
+                    if lib_root else (row[3] or "").strip()
+                ),
                 "name":   row[0],
                 "title":  row[2] or row[0],
                 "circle": row[1] or "",
-                "cover":  _resolve_cover(self._safe_from_db_path(row[3] or ""), row[4] or ""),
+                "cover":  _resolve_cover(_p, row[4] or "", lib_root),
                 "pages":  0,
                 "rating": 0,
                 "is_dlst": int(row[5]) if len(row) > 5 else 0,
@@ -1278,6 +1309,11 @@ class MainWindow(QMainWindow):
         ):
             self._filter_panel.repopulate_all_combos()
 
+        if getattr(self, "_property_save_perf_t0", None) is not None:
+            self._property_save_perf_log("after_filters")
+            if v_scroll is None or h_scroll is None:
+                QTimer.singleShot(0, lambda: self._property_save_perf_finish("stable"))
+
         # コンテキストメニュー展開時に保存したスクロール位置があれば、レイアウト確定後に復元
         # rangeChanged で「max が十分になった瞬間」に復元（最速）。フォールバックで遅延復元も行う
         if v_scroll is not None and h_scroll is not None:
@@ -1288,6 +1324,7 @@ class MainWindow(QMainWindow):
                 if g:
                     g.setUpdatesEnabled(True)
                 self._context_menu_scroll = None
+                self._property_save_perf_finish("stable")
             else:
                 hb = g.horizontalScrollBar()
                 done = [False]
@@ -1306,6 +1343,7 @@ class MainWindow(QMainWindow):
                         h_apply = min(h_scroll, h_max)
                         hb.setValue(h_apply)
                     g.setUpdatesEnabled(True)
+                    self._property_save_perf_finish("stable")
                     # 2回目以降の on_book_updated で _apply_filters が再度走るとグリッドがリセットされるため、
                     # 即クリアせず遅延クリアする（複数回の更新後も最後の復元が効くようにする）
                     QTimer.singleShot(
@@ -1368,6 +1406,7 @@ class MainWindow(QMainWindow):
 
     def _on_scan_error(self, msg: str):
         """エラー時もウィンドウタイトルを既定の短い表記に戻す。"""
+        print(f"[SCAN_ERROR] msg={msg!r}")
         self._is_startup_scan = False
         self._hide_scan_progress_ui()
         self.setWindowTitle(config.APP_TITLE)
@@ -1382,6 +1421,7 @@ class MainWindow(QMainWindow):
     def _apply_filters(self):
         """各種フィルタとソートを合成しグリッドへ反映する。"""
         t0 = time.perf_counter()
+        lib_root = (db.get_setting("library_folder") or "").strip()
         # 元の全件リスト
         all_books = self._all_books
         # サイドバー（作品名一覧）用に、フィルタ前の並び順を準備
@@ -1397,7 +1437,6 @@ class MainWindow(QMainWindow):
                     not hasattr(self, "_norm_meta_cache")
                     or len(self._norm_meta_cache) != len(self._meta_cache)
                 ):
-                    lib_root = (db.get_setting("library_folder") or "").strip()
                     self._norm_meta_cache = {
                         normalize_path(
                             k if os.path.isabs(k or "") else os.path.join(lib_root, k or "")

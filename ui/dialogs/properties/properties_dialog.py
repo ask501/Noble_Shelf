@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import re
-import time
 from typing import Callable, Optional
 
 from PySide6.QtCore import Qt, QThread, Signal, QObject, QEvent
@@ -130,6 +129,13 @@ class PropertyDialog(QDialog):
 
         self._setup_ui()
         self._load_initial_values()
+
+    def _property_save_perf_cancel_if(self) -> None:
+        """保存失敗で MainWindow の計測起点だけクリアする。"""
+        parent = self.parent()
+        _c = getattr(parent, "_property_save_perf_cancel", None)
+        if callable(_c):
+            _c()
 
     def _collect_multi_fields(self):
         """一括編集時、選択作品間で値が異なる項目を self._multi_fields に集める。"""
@@ -1013,7 +1019,10 @@ class PropertyDialog(QDialog):
             self.accept()
             return
 
-        t0 = time.time()
+        parent = self.parent()
+        _perf_start = getattr(parent, "_property_save_perf_start", None)
+        if callable(_perf_start):
+            _perf_start()
 
         path = self._path
         original_path_for_db = path  # rename_book(old, new) で DB を更新するときの old（誤った path のままの可能性あり）
@@ -1035,6 +1044,7 @@ class PropertyDialog(QDialog):
                     "保存できません",
                     "この作品のパスが無効です。\n設定の「誤ったパスを修復」を実行するか、正しいフォルダがライブラリ内に存在するか確認してください。",
                 )
+                self._property_save_perf_cancel_if()
                 return
 
         # リネーム用の表示名: フォルダ名を手動変更していなければサークル・作品名から組み立て（サークル追加で自動リネーム）
@@ -1062,6 +1072,7 @@ class PropertyDialog(QDialog):
                     # フォルダのリネーム: path がライブラリルートそのものなら禁止
                     if _is_library_root(path):
                         QMessageBox.critical(self, "リネーム不可", "ライブラリフォルダ自体の名前は変更できません。")
+                        self._property_save_perf_cancel_if()
                         return
                     base_dir = os.path.dirname(path)
                     new_path = os.path.join(base_dir, new_name)
@@ -1085,6 +1096,7 @@ class PropertyDialog(QDialog):
                         new_path = os.path.join(new_parent, os.path.basename(path))
             except Exception as e:
                 QMessageBox.critical(self, "リネームエラー", str(e))
+                self._property_save_perf_cancel_if()
                 return
 
         # カバー（set_cover_custom は rename_book の後に実行し、必ず DB 保存後に cleanup が動くようにする）
@@ -1153,6 +1165,7 @@ class PropertyDialog(QDialog):
             db.rename_book(old_db_path, new_db_path, new_name, new_circle, new_title, new_cover or "")
         except Exception as e:
             QMessageBox.critical(self, "DB更新エラー", str(e))
+            self._property_save_perf_cancel_if()
             return
 
         # カバー変更時は必ず DB に保存してから cleanup（保存前にクリアされないよう順序を保証）
@@ -1160,7 +1173,6 @@ class PropertyDialog(QDialog):
             db.set_cover_custom(new_db_path, self._new_cover_path)
 
         # メタ情報を保存
-        t1 = time.time()
         db.set_book_meta(
             new_db_path,
             author=author,
@@ -1189,6 +1201,9 @@ class PropertyDialog(QDialog):
             db.cleanup_unused_cover_cache()
 
         # 保存完了後のUI更新（単一ブックのみ）
+        _perf_log = getattr(parent, "_property_save_perf_log", None)
+        if callable(_perf_log):
+            _perf_log("dialog_saved")
         if self._on_saved:
             self._on_saved(new_path)
 
@@ -1292,12 +1307,15 @@ class PropertyDialog(QDialog):
                 db.set_bookmark(p_db, apply_rating)
             except Exception as e:
                 QMessageBox.critical(self, "DB更新エラー", "パス: %s\n%s" % (p, str(e)))
+                self._property_save_perf_cancel_if()
                 return
+        _perf_log = getattr(self.parent(), "_property_save_perf_log", None)
+        if callable(_perf_log):
+            _perf_log("dialog_saved")
         if self._on_saved:
             self._on_saved(None)
         self.accept()
 
     def _on_cancel(self):
-        t0 = time.time()
         self.reject()
 

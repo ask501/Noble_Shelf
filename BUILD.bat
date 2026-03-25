@@ -22,6 +22,9 @@ echo バージョン取得中...
 for /f "delims=" %%i in ('python -c "from version import VERSION; print(VERSION)"') do set VERSION=%%i
 echo バージョン: %VERSION%
 
+echo PyInstaller直後のファイルロック解放を待機...
+timeout /t 3 /nobreak > nul
+
 echo Zip作成中...
 del /f /q "dist\Noble_Shelf_v%VERSION%.zip" > nul 2>&1
 powershell -Command "Compress-Archive -Path 'dist\Noble Shelf' -DestinationPath 'dist\Noble_Shelf_v%VERSION%.zip'"
