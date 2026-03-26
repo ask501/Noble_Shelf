@@ -57,6 +57,8 @@ class SidebarItemDelegate(QStyledItemDelegate):
         # 背景（選択のみ。ホバー時は色を変えない）
         if option.state & QStyle.State_Selected:
             bg = QColor(THEME_COLORS["accent"])
+        elif option.state & QStyle.State_MouseOver:
+            bg = QColor(THEME_COLORS["hover"])
         else:
             bg = QColor(0, 0, 0, 0)
         if bg.alpha() > 0:
@@ -142,7 +144,7 @@ class SidebarWidget(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedWidth(config.SIDEBAR_WIDTH)
+        self.setMinimumWidth(config.SIDEBAR_WIDTH)
         self.setObjectName("Sidebar")
         self.setStyleSheet(f"""
             QWidget#Sidebar {{
@@ -209,6 +211,7 @@ class SidebarWidget(QWidget):
 
         # リスト
         self._list = AutoScrollListWidget()
+        self._list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._list.setFocusPolicy(Qt.NoFocus)
         self._list.setStyleSheet(f"""
             QListWidget {{
@@ -227,7 +230,7 @@ class SidebarWidget(QWidget):
                 color: {COLOR_WHITE};
             }}
             QListWidget::item:hover:!selected {{
-                background: transparent;
+                background: {THEME_COLORS['hover']};
             }}
         """)
         self._list.itemClicked.connect(self._on_item_clicked)

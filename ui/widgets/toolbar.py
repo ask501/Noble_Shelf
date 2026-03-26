@@ -228,6 +228,12 @@ class ToolBar(QWidget):
             QSizePolicy.Policy.Fixed,
             QSizePolicy.Policy.Minimum,
         )
+        _spacer_fixed_after_bookmarklet = QSpacerItem(
+            _fixed_icon_w,
+            0,
+            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Minimum,
+        )
         _spacer_expanding_before_hamburger = QSpacerItem(
             0,
             0,
@@ -235,15 +241,16 @@ class ToolBar(QWidget):
             QSizePolicy.Policy.Minimum,
         )
 
-        # [固定][サイド][タイトル][検索][フィルター][固定][ランダム][キュー] [拡張] [ハンバーガー][設定]
+        # [固定][サイド][タイトル][検索][固定][フィルター][キュー][固定][ランダム] [拡張] [ハンバーガー][設定]
         tb_layout.addItem(_spacer_fixed_leading)
         tb_layout.addWidget(self._btn_sidebar)
         tb_layout.addWidget(self._btn_ghostbar)
         tb_layout.addWidget(self._btn_search)
-        tb_layout.addWidget(self._btn_filter)
         tb_layout.addItem(_spacer_fixed_middle)
-        tb_layout.addWidget(self._btn_random)
+        tb_layout.addWidget(self._btn_filter)
         tb_layout.addWidget(self._btn_bookmarklet_help)
+        tb_layout.addItem(_spacer_fixed_after_bookmarklet)
+        tb_layout.addWidget(self._btn_random)
         tb_layout.addItem(_spacer_expanding_before_hamburger)
         tb_layout.addWidget(self._btn_hamburger_menu)
         tb_layout.addWidget(self._btn_settings)

@@ -47,6 +47,7 @@ from ui.dialogs.properties import _auto_kana, _needs_kana_conversion, StoreFileI
 from ui.widgets.menubar import setup_menubar, refresh_shortcuts
 from ui.dialogs.first_run import LibrarySetupOverlay
 from ui.widgets.statusbar import setup_statusbar
+from ui.widgets.toast import ToastWidget
 
 
 def _cover_has_path_segment(clean: str) -> bool:
@@ -87,7 +88,7 @@ def _resolve_cover(path: str, cover: str, library_folder: str = "") -> str:
 
 
 class MainWindow(QMainWindow):
-    bookmarkletReceived = Signal()  # ブックマークレット受信通知（既存のSignalインポートを使用）
+    bookmarkletReceived = Signal(str)  # ブックマークレット受信通知（found_path、空文字=自動適用なし）
     def __init__(self):
         """メインウィンドウを初期化しUIとDBを準備する。"""
         super().__init__()
@@ -117,7 +118,6 @@ class MainWindow(QMainWindow):
         # 起動後最初のスキャン完了まで True（ストアファイル登録ダイアログを抑止する判定に使用）
         self._is_startup_scan: bool = True
         self._open_viewers: list = []  # 内置ビューワー（すべて閉じる用）
-        self._bookmarklet_window = None
         self._scan_blocking = False
 
         self._setup_menubar()
@@ -402,31 +402,37 @@ class MainWindow(QMainWindow):
         ) == QMessageBox.StandardButton.Yes:
             self.close()
 
-    def _open_bookmarklet_window(self) -> None:
-        """ブックマークレットキューウィンドウを開く"""
-        if not hasattr(self, "_bookmarklet_window") or self._bookmarklet_window is None:
-            from ui.dialogs.bookmarklet_window import BookmarkletWindow
-            from theme import apply_dark_titlebar
-            self._bookmarklet_window = BookmarkletWindow(parent=self, main_window=self)
-        self._bookmarklet_window.show()
-        from theme import apply_dark_titlebar
-        apply_dark_titlebar(self._bookmarklet_window)
-        self._bookmarklet_window.raise_()
-        self._bookmarklet_window.activateWindow()
-        self._sync_bookmarklet_toolbar_toggle(True)
-
     def _sync_bookmarklet_toolbar_toggle(self, checked: bool) -> None:
         """ツールバー上のブックマークレットボタンをウィンドウ表示状態に合わせる（紫/透明）。"""
         if hasattr(self, "_main_toolbar"):
             self._main_toolbar.set_bookmarklet_toggle_checked(checked)
 
     def _on_bookmarklet_toolbar_toggled(self, visible: bool) -> None:
-        """ブックマークレットツールバートグル：ON でキュー表示、OFF で隠す（×閉じと同じ見た目）。"""
+        """ブックマークレットツールバートグル：右パネル表示を切り替える。"""
+        if not hasattr(self, "_bookmarklet_panel") or not hasattr(self, "_splitter"):
+            return
+        # フィルターが開いていれば閉じる（初期化順ズレ対策で getattr を使う）
+        if visible and getattr(self, "_filter_panel", None) and self._filter_panel.isVisible():
+            self._on_filter_toggled(False)
+            _bf = getattr(self._main_toolbar, "_btn_filter", None)
+            if _bf is not None:
+                _bf.blockSignals(True)
+                _bf.setChecked(False)
+                _bf.blockSignals(False)
+        self._bookmarklet_panel.setVisible(visible)
+        sizes = list(self._splitter.sizes())
+        if len(sizes) < 4:
+            return
+        panel_width = config.BOOKMARKLET_PANEL_WIDTH
         if visible:
-            self._open_bookmarklet_window()
+            # グリッド幅が足りない場合に負値化しないよう実際の幅に合わせてクランプ
+            panel_width = min(panel_width, sizes[1])
+            sizes[1] -= panel_width
+            sizes[3] = panel_width
         else:
-            if self._bookmarklet_window is not None:
-                self._bookmarklet_window.hide()
+            sizes[1] = sizes[1] + sizes[3]
+            sizes[3] = 0  # 非表示時は必ず 0 にする（Qt の幅残留を防ぐ）
+        self._splitter.setSizes(sizes)
 
     # ═══ ブックマークレット ═══
     def _start_local_server(self) -> None:
@@ -440,6 +446,7 @@ class MainWindow(QMainWindow):
         ブックマークレットからの受信処理（バックグラウンドスレッドから呼ばれる）。
         メタデータ取得→DB保存→メインスレッドへシグナルemit。
         """
+        logging.debug("[bookmarklet] 受信開始 url=%s", url)
         def _save_cover(cover_url: str, book_path: str) -> str | None:
             """取得画像をカバーキャッシュにJPEGで保存する。"""
             import hashlib
@@ -490,15 +497,24 @@ class MainWindow(QMainWindow):
 
         try:
             from bookmarklet import fetch_meta
+            logging.debug("[bookmarklet] fetch_meta 開始")
             meta = fetch_meta(url=url, html=html)
+            logging.debug("[bookmarklet] fetch_meta 完了 title=%s", meta.get("title"))
             meta = _normalize_meta(meta)
         except Exception as e:
             meta = {}
+        matched = None
+        auto_apply = False
+        found_path = ""
         try:
+            logging.debug("[bookmarklet] DB検索 開始")
             matched = db.find_book_by_bookmarklet(
                 dlsite_id=meta.get("dlsite_id", ""),
                 title=meta.get("title", ""),
             )
+            logging.debug("[bookmarklet] matched full=%r", matched)
+            logging.debug("[bookmarklet] matched path=%r isabs=%s", (matched or {}).get("path"), os.path.isabs((matched or {}).get("path", "")))
+            logging.debug("[bookmarklet] DB検索 完了 matched=%s", bool(matched))
 
             auto_apply = db.get_setting("bookmarklet_auto_apply") == "1"
             q_url = url
@@ -512,6 +528,7 @@ class MainWindow(QMainWindow):
             q_release_date = meta.get("release_date", "")
             q_cover_url = meta.get("cover_url", "")
             q_store_url = meta.get("store_url", "")
+            logging.debug("[bookmarklet] 自動適用分岐 auto_apply=%s matched=%s", auto_apply, bool(matched))
             if matched is None:
                 # 一致なし → no_match
                 db.add_bookmarklet_queue(
@@ -531,6 +548,7 @@ class MainWindow(QMainWindow):
             elif auto_apply:
                 # 一致あり＋自動適用ON → メタ適用して applied
                 found_path = matched["path"]
+                logging.debug("[bookmarklet] set_book_meta 開始")
                 db.set_book_meta(
                     found_path,
                     author=meta.get("author", "") or "",
@@ -540,6 +558,7 @@ class MainWindow(QMainWindow):
                     price=meta.get("price"),
                     store_url=meta.get("store_url") or None,
                 )
+                logging.debug("[bookmarklet] set_book_meta 完了")
                 if (meta.get("title", "") or "").strip():
                     db.update_book_display(
                         found_path,
@@ -557,8 +576,11 @@ class MainWindow(QMainWindow):
                     resolved = (
                         db.resolve_cover_stored_value(existing_cover) if existing_cover else ""
                     )
-                    if not (resolved and os.path.isfile(resolved)):
+                    overwrite_thumb = db.get_setting("bookmarklet_overwrite_thumb") == "1"
+                    if overwrite_thumb or not (resolved and os.path.isfile(resolved)):
+                        logging.debug("[bookmarklet] _save_cover 開始")
                         saved_path = _save_cover(cover_url, found_path)
+                        logging.debug("[bookmarklet] _save_cover 完了 saved=%s", saved_path)
                         if saved_path:
                             db.set_cover_custom(found_path, saved_path)
                 db.add_bookmarklet_queue(
@@ -575,7 +597,7 @@ class MainWindow(QMainWindow):
                     store_url=q_store_url,
                     status="applied",
                 )
-                self.on_book_updated(found_path)
+                # UI操作はメインスレッド側で行う
             else:
                 # 一致あり＋自動適用OFF → matched で止める
                 db.add_bookmarklet_queue(
@@ -594,13 +616,86 @@ class MainWindow(QMainWindow):
                 )
         except Exception as e:
             print(f"bookmarklet apply error: {e}")
-        self.bookmarkletReceived.emit()
+        logging.debug("[bookmarklet] emit 直前")
+        self.bookmarkletReceived.emit(found_path if (matched and auto_apply) else "")
+        logging.debug("[bookmarklet] emit 完了")
 
-    def _on_bookmarklet_received(self) -> None:
-        """メインスレッド：ウィンドウを開いてリストを更新する"""
-        self._open_bookmarklet_window()
-        if self._bookmarklet_window is not None:
-            self._bookmarklet_window.refresh()
+    def _on_bookmarklet_received(self, found_path: str) -> None:
+        """メインスレッド：ブックマークレットパネルを開いてリストを更新する"""
+        logging.debug("[bookmarklet] _all_books sample=%r", self._all_books[0] if self._all_books else None)
+        if not self._bookmarklet_panel.isVisible():
+            self._on_bookmarklet_toolbar_toggled(True)
+            self._sync_bookmarklet_toolbar_toggle(True)
+        self._bookmarklet_panel.refresh()
+        if found_path:
+            self.on_book_updated(found_path)
+            target_title = next(
+                (row[2] for row in db.get_all_books() if row[3] == found_path),
+                None,
+            )
+            real_book = next(
+                (b for b in self._all_books if b.get("title") == target_title),
+                None,
+            ) if target_title else None
+            real_path = real_book["path"] if real_book else None
+
+            # グリッドに表示中なら即スクロール
+            if real_path:
+                QTimer.singleShot(
+                    config.BOOKMARKLET_SCROLL_DELAY_MS,
+                    lambda p=real_path: self._grid.scroll_to_path(p),
+                )
+
+            # トースト通知（クリックでサイドバー作品名モードへ飛ぶ）
+            if target_title and real_path:
+                def _on_toast_click(title=target_title, path=real_path):
+                    self._select_book_in_grid({"title": title})
+                ToastWidget(
+                    self,
+                    f"✅ 適用: {target_title}",
+                    on_click=_on_toast_click,
+                )
+
+    def _select_book_in_grid(self, target: dict) -> None:
+        """title一致で _all_books から実パスを引いてグリッドへスクロール。
+        グリッドに存在しない場合はフィルタ・ソートをリセットして全件表示してから飛ぶ。"""
+        target_title = (target.get("title") or "").strip()
+        if not target_title:
+            return
+
+        # まず現在のグリッド表示内から探す
+        real_book = next(
+            (b for b in self._books if b.get("title") == target_title),
+            None,
+        )
+
+        if real_book:
+            real_path = real_book["path"]
+            QTimer.singleShot(
+                config.BOOKMARKLET_SCROLL_DELAY_MS,
+                lambda p=real_path: self._grid.scroll_to_path(p),
+            )
+        else:
+            # グリッドに存在しない場合：全件から探してフィルタ・ソートリセット後にスクロール
+            real_book_all = next(
+                (b for b in self._all_books if b.get("title") == target_title),
+                None,
+            )
+            if not real_book_all:
+                return
+            real_path = real_book_all["path"]
+
+            # フィルタ・検索をリセット
+            self._active_filters = []
+            self._filter_logic = "and"
+            self._sidebar_filter = None
+            self._searchbar.clear_search()
+            self._apply_filters()
+
+            QTimer.singleShot(
+                config.BOOKMARKLET_SCROLL_DELAY_MS,
+                lambda p=real_path: self._grid.scroll_to_path(p),
+            )
 
     def closeEvent(self, event) -> None:
         """終了時にバックアップを非同期実行してから終了する。"""
@@ -736,6 +831,7 @@ class MainWindow(QMainWindow):
 
         # スプリッター（サイドバー | グリッド＋ソートバー）
         splitter = QSplitter(Qt.Horizontal)
+        splitter.setChildrenCollapsible(False)
 
         self._sidebar = SidebarWidget()
         self._sidebar.filterChanged.connect(self._on_filter_changed)
@@ -852,14 +948,22 @@ class MainWindow(QMainWindow):
         self._filter_panel.setVisible(False)
         splitter.addWidget(self._filter_panel)
 
+        from ui.dialogs.bookmarklet_window import BookmarkletWindow
+        self._bookmarklet_panel = BookmarkletWindow(parent=self, main_window=self)
+        self._bookmarklet_panel.setVisible(False)
+        splitter.addWidget(self._bookmarklet_panel)
+        self._bookmarklet_panel.bookSelected.connect(self._select_book_in_grid)
+
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setStretchFactor(2, 0)
+        splitter.setStretchFactor(3, 0)
         splitter.setSizes(
             [
                 config.MAIN_SPLITTER_SIDEBAR_INIT_WIDTH,
                 config.WINDOW_WIDTH - config.MAIN_SPLITTER_SIDEBAR_INIT_WIDTH,
-                0,  # 右パネル初期非表示（配分 0）
+                0,
+                0,
             ]
         )
         outer.addWidget(splitter, stretch=1)
@@ -1636,6 +1740,14 @@ class MainWindow(QMainWindow):
         """ツールバーフィルター：パネル表示とスプリッター幅を同期する。"""
         if self._filter_panel is None or not hasattr(self, "_splitter"):
             return
+        # ブックマークレットパネルが開いていれば閉じる（初期化順ズレ対策で getattr を使う）
+        if visible and getattr(self, "_bookmarklet_panel", None) and self._bookmarklet_panel.isVisible():
+            self._on_bookmarklet_toolbar_toggled(False)
+            _bb = getattr(self._main_toolbar, "_btn_bookmarklet_help", None)
+            if _bb is not None:
+                _bb.blockSignals(True)
+                _bb.setChecked(False)
+                _bb.blockSignals(False)
         # showEvent 内の _emit_apply より先に論理・条件を同期する（順序逆だと AND に戻る等の不整合）
         if visible:
             self._filter_panel.sync_from_parent(
@@ -1643,7 +1755,7 @@ class MainWindow(QMainWindow):
             )
         self._filter_panel.setVisible(visible)
         sizes = list(self._splitter.sizes())
-        if len(sizes) < 3:
+        if len(sizes) < 4:
             return
         if visible:
             sizes[1] = max(0, sizes[1] - config.FILTER_POPOVER_WIDTH)

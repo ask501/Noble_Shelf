@@ -238,7 +238,7 @@ def setup_menubar(window):
     tool_menu.addAction(act_repair_pdf)
     tool_menu.addSeparator()
     act_bookmarklet = QAction("ブックマークレットキュー", window)
-    act_bookmarklet.triggered.connect(window._open_bookmarklet_window)
+    act_bookmarklet.triggered.connect(lambda: window._on_bookmarklet_toolbar_toggled(True))
     tool_menu.addAction(act_bookmarklet)
     window._act_tool_library_check = QAction("ライブラリ整合性チェック...", window)
     tool_menu.addAction(window._act_tool_library_check)

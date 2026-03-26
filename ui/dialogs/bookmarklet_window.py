@@ -10,14 +10,15 @@ from PySide6.QtWidgets import (
     QLabel,
     QMenu,
 )
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QCloseEvent, QPixmapCache
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QAction, QPixmapCache
 import config
 from theme import (
-    apply_dark_titlebar,
     APP_BAR_SEPARATOR_RGBA,
     BOOKMARKLET_THUMB_BG,
     BOOKMARKLET_THUMB_BORDER,
+    THEME_COLORS,
+    COLOR_WHITE,
 )
 import db
 
@@ -39,31 +40,19 @@ STATUS_LABEL = {
 
 
 class BookmarkletWindow(QWidget):
-    """ブックマークレットキューウィンドウ"""
+    bookSelected = Signal(dict)  # matched row を emit
+    """ブックマークレットキューパネル"""
 
     def __init__(self, parent=None, main_window=None) -> None:
-        super().__init__(parent, Qt.Window)
+        super().__init__(parent)
         self._main_window = main_window
-        apply_dark_titlebar(self)
-        self.setWindowTitle(config.BOOKMARKLET_WINDOW_TITLE)
-        self.resize(*config.BOOKMARKLET_WINDOW_SIZE)
         self._build_ui()
         self.refresh()
 
-    def closeEvent(self, event: QCloseEvent) -> None:
-        """×で閉じたときツールバーの紫トグルを外す（透明背景に戻す）"""
-        mw = self._main_window
-        if mw is not None and hasattr(mw, "_sync_bookmarklet_toolbar_toggle"):
-            mw._sync_bookmarklet_toolbar_toggle(False)
-        super().closeEvent(event)
-
     def _build_ui(self) -> None:
-        from PySide6.QtWidgets import QFrame
+        from PySide6.QtWidgets import QFrame, QScrollArea
 
-        columns = QHBoxLayout(self)
-
-        # ── 左ペイン ──
-        left = QVBoxLayout()
+        outer = QVBoxLayout(self)
 
         copy_row = QHBoxLayout()
         self._btn_copy = QPushButton("ブックマークレットをコピー")
@@ -76,13 +65,18 @@ class BookmarkletWindow(QWidget):
         self._btn_help.clicked.connect(self._open_help)
         copy_row.addWidget(self._btn_help)
 
-        left.addLayout(copy_row)
+        outer.addLayout(copy_row)
 
         self._chk_auto_apply = QCheckBox("完全一致時に自動適用")
         self._chk_auto_apply.toggled.connect(self._on_auto_apply_toggled)
         val = db.get_setting("bookmarklet_auto_apply")
         self._chk_auto_apply.setChecked(val == "1" if val is not None else True)
-        left.addWidget(self._chk_auto_apply)
+        outer.addWidget(self._chk_auto_apply)
+        self._chk_overwrite_thumb = QCheckBox("サムネイルを上書きする")
+        self._chk_overwrite_thumb.toggled.connect(self._on_overwrite_thumb_toggled)
+        val = db.get_setting("bookmarklet_overwrite_thumb")
+        self._chk_overwrite_thumb.setChecked(val == "1" if val is not None else False)
+        outer.addWidget(self._chk_overwrite_thumb)
 
         btn_row = QHBoxLayout()
         self._btn_del_applied = QPushButton("🟢 削除")
@@ -91,45 +85,80 @@ class BookmarkletWindow(QWidget):
         self._btn_del_all = QPushButton("全削除")
         for btn in (self._btn_del_applied, self._btn_del_pending, self._btn_del_added, self._btn_del_all):
             btn_row.addWidget(btn)
-        left.addLayout(btn_row)
+        outer.addLayout(btn_row)
+
+        sep_top = QFrame()
+        sep_top.setObjectName("BookmarkletPaneSep")
+        sep_top.setFrameShape(QFrame.Shape.NoFrame)
+        sep_top.setFixedHeight(1)
+        sep_top.setStyleSheet(
+            f"QFrame#BookmarkletPaneSep {{ background-color: {APP_BAR_SEPARATOR_RGBA}; border: none; }}"
+        )
+        outer.addWidget(sep_top)
 
         self._list = QListWidget()
+        self._list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._list.setStyleSheet(f"""
+            QListWidget {{
+                background: transparent;
+                border: none;
+                outline: none;
+            }}
+            QListWidget::item {{
+                color: {THEME_COLORS['text_main']};
+                border-radius: {config.SIDEBAR_ITEM_RADIUS}px;
+                padding: {config.SIDEBAR_ITEM_PADDING_Y}px {config.SIDEBAR_ITEM_PADDING_X}px;
+            }}
+            QListWidget::item:selected {{
+                background: {THEME_COLORS['accent']};
+                color: {COLOR_WHITE};
+            }}
+            QListWidget::item:hover:!selected {{
+                background: {THEME_COLORS['hover']};
+            }}
+        """)
         self._list.setContextMenuPolicy(Qt.CustomContextMenu)
         self._list.customContextMenuRequested.connect(self._on_context_menu)
         self._list.currentItemChanged.connect(self._on_item_selected)
-        left.addWidget(self._list, stretch=1)
-        columns.addLayout(left, stretch=2)
+        outer.addWidget(self._list, stretch=1)
 
-        sep = QFrame()
-        sep.setObjectName("BookmarkletPaneSep")
-        sep.setFrameShape(QFrame.Shape.NoFrame)
-        sep.setFixedWidth(1)
-        sep.setStyleSheet(
+        sep_bottom = QFrame()
+        sep_bottom.setObjectName("BookmarkletPaneSep")
+        sep_bottom.setFrameShape(QFrame.Shape.NoFrame)
+        sep_bottom.setFixedHeight(1)
+        sep_bottom.setStyleSheet(
             f"QFrame#BookmarkletPaneSep {{ background-color: {APP_BAR_SEPARATOR_RGBA}; border: none; }}"
         )
-        columns.addWidget(sep)
+        outer.addWidget(sep_bottom)
 
-        # 右: 詳細パネル
-        right = QVBoxLayout()
-        columns.addLayout(right, stretch=1)
+        detail_widget = QWidget()
+        detail_widget.setFixedHeight(config.BOOKMARKLET_DETAIL_HEIGHT)
+        detail_layout = QHBoxLayout(detail_widget)
+        outer.addWidget(detail_widget)
 
         self._thumb = QLabel()
         self._thumb.setFixedSize(*config.BOOKMARKLET_THUMB_SIZE)
         self._thumb.setAlignment(Qt.AlignCenter)
         self._thumb.setStyleSheet(f"background: {BOOKMARKLET_THUMB_BG}; border: 1px solid {BOOKMARKLET_THUMB_BORDER};")
-        right.addWidget(self._thumb)
+        detail_layout.addWidget(self._thumb)
+
+        info_col = QVBoxLayout()
+        detail_layout.addLayout(info_col, stretch=1)
 
         self._detail = QLabel()
         self._detail.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         self._detail.setWordWrap(True)
         self._detail.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        right.addWidget(self._detail)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(self._detail)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        info_col.addWidget(scroll, stretch=1)
 
         self._btn_apply = QPushButton("メタデータを適用")
         self._btn_apply.clicked.connect(self._apply_meta)
         self._btn_apply.setEnabled(False)
-        right.addWidget(self._btn_apply)
-        right.addStretch()
+        info_col.addWidget(self._btn_apply)
 
         # シグナル接続
         self._btn_del_applied.clicked.connect(lambda: self._delete_by_status(STATUS_APPLIED))
@@ -147,6 +176,12 @@ class BookmarkletWindow(QWidget):
         dlg.show()
         dlg.raise_()
         dlg.activateWindow()
+
+    def _on_overwrite_thumb_toggled(self, checked: bool) -> None:
+        db.set_setting("bookmarklet_overwrite_thumb", "1" if checked else "0")
+
+    def is_overwrite_thumb(self) -> bool:
+        return self._chk_overwrite_thumb.isChecked()
 
     def _on_item_selected(self, current, previous) -> None:
         """リスト選択時に右パネルを更新する"""
@@ -214,6 +249,8 @@ class BookmarkletWindow(QWidget):
         self._found_path = result["path"] if result else None
         self._current_row = row
         self._update_apply_button()
+        if result:
+            self.bookSelected.emit(result)
 
     def _update_apply_button(self) -> None:
         """適用ボタンの有効/無効を更新する"""
