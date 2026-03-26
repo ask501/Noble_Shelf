@@ -2109,21 +2109,23 @@ def set_book_meta(
                 new_store_url or "",
             ),
         )
-        # キャラクター・タグは全削除→再挿入
-        conn.execute("DELETE FROM book_characters WHERE uuid=?", (book_uuid,))
-        for c in (characters or []):
-            c = c.strip()
-            if c:
-                conn.execute(
-                    "INSERT OR IGNORE INTO book_characters(uuid, character) VALUES(?,?)", (book_uuid, c)
-                )
-        conn.execute("DELETE FROM book_tags WHERE uuid=?", (book_uuid,))
-        for t in (tags or []):
-            t = t.strip()
-            if t:
-                conn.execute(
-                    "INSERT OR IGNORE INTO book_tags(uuid, tag) VALUES(?,?)", (book_uuid, t)
-                )
+        # キャラクター・タグは全削除→再挿入（None のときはスキップ）
+        if characters is not None:
+            conn.execute("DELETE FROM book_characters WHERE uuid=?", (book_uuid,))
+            for c in characters:
+                c = c.strip()
+                if c:
+                    conn.execute(
+                        "INSERT OR IGNORE INTO book_characters(uuid, character) VALUES(?,?)", (book_uuid, c)
+                    )
+        if tags is not None:
+            conn.execute("DELETE FROM book_tags WHERE uuid=?", (book_uuid,))
+            for t in tags:
+                t = t.strip()
+                if t:
+                    conn.execute(
+                        "INSERT OR IGNORE INTO book_tags(uuid, tag) VALUES(?,?)", (book_uuid, t)
+                    )
         conn.commit()
     finally:
         conn.close()

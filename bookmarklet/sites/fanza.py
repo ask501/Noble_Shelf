@@ -1,6 +1,5 @@
 from __future__ import annotations
 import json
-import re
 from bs4 import BeautifulSoup
 from bookmarklet.base import BookmarkletParser
 
@@ -13,7 +12,7 @@ class FanzaParser(BookmarkletParser):
     def parse(self, url: str, html: str) -> dict:
         soup = BeautifulSoup(html, "html.parser")
 
-        # JSON-LDからメタデータ取得
+        # JSON-LDからname/brand/sku/offers/imageを取得
         ld: dict = {}
         for script in soup.find_all("script", type="application/ld+json"):
             try:
@@ -27,6 +26,7 @@ class FanzaParser(BookmarkletParser):
                 continue
 
         title = ld.get("name", "") if isinstance(ld, dict) else ""
+
         brand = ld.get("brand", "") if isinstance(ld, dict) else ""
         if isinstance(brand, dict):
             circle = brand.get("name", "")
@@ -35,54 +35,48 @@ class FanzaParser(BookmarkletParser):
         else:
             circle = ""
 
-        # subjectOf から詳細情報を取得
-        subject = ld.get("subjectOf", {}) if isinstance(ld, dict) else {}
+        fanza_id = ld.get("sku", "") if isinstance(ld, dict) else ""
 
-        # 作者
-        author = ""
-        author_data = subject.get("author", {}) if isinstance(subject, dict) else {}
-        if isinstance(author_data, dict):
-            names = author_data.get("name", "")
-            if isinstance(names, list):
-                author = ", ".join(names)
-            else:
-                author = names
-        elif isinstance(author_data, list):
-            author = ", ".join(a.get("name", "") for a in author_data if isinstance(a, dict))
-
-        # 発売日
-        release_date = subject.get("dateCreated", "") if isinstance(subject, dict) else ""
-
-        # タグ
-        tags: list[str] = []
-        if isinstance(subject, dict):
-            genre = subject.get("genre", [])
-            if isinstance(genre, list):
-                tags = [g for g in genre if g]
-            elif isinstance(genre, str):
-                tags = [genre] if genre else []
+        offers = ld.get("offers", {}) if isinstance(ld, dict) else {}
+        try:
+            price = int(float(offers.get("price", 0))) if isinstance(offers, dict) else None
+            price = price or None
+        except (ValueError, TypeError):
+            price = None
 
         cover_url = ld.get("image", "") if isinstance(ld, dict) else ""
-        if cover_url and isinstance(cover_url, str) and cover_url.startswith("//"):
+        if isinstance(cover_url, list):
+            cover_url = cover_url[0] if cover_url else ""
+        if isinstance(cover_url, str) and cover_url.startswith("//"):
             cover_url = "https:" + cover_url
 
-        # 価格（offers から）
-        price = None
-        offers = ld.get("offers", {}) if isinstance(ld, dict) else {}
-        if isinstance(offers, dict):
-            try:
-                price = int(float(offers.get("price", 0))) or None
-            except (ValueError, TypeError):
-                price = None
+        store_url = url
 
-        # FANZA ID（URLから抽出）
-        fanza_id = ""
-        m = re.search(r"/product/\d+/([a-z0-9]+)/?", url)
-        if m:
-            fanza_id = m.group(1)
+        # HTMLのinformationListから作者・発売日を取得
+        author = ""
+        release_date = ""
+        for dl in soup.find_all("dl", class_=lambda c: c and "informationList" in c):
+            dt = dl.find("dt")
+            dd = dl.find("dd")
+            if not dt or not dd:
+                continue
+            label = dt.get_text(strip=True)
+            value = dd.get_text(strip=True)
+            if label == "作者" and not author:
+                author = value
+            elif label == "配信開始日" and not release_date:
+                # "2021/08/13 00:00" -> "2021-08-13"
+                release_date = value.split()[0].replace("/", "-")
 
-        # ストアURL: クエリパラメータを除いたURL
-        store_url = url.split("?")[0].rstrip("/") + "/"
+        # タグはgenreTagListから取得
+        tags: list[str] = []
+        ul = soup.find("ul", class_="genreTagList")
+        if ul:
+            tags = [
+                a.get_text(strip=True)
+                for a in ul.find_all("a", class_="genreTag__txt")
+                if a.get_text(strip=True)
+            ]
 
         return {
             "title":        title,

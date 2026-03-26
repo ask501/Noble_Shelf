@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from collections import deque
 import os
 from typing import Optional
 
-from PySide6.QtCore import QAbstractListModel, QModelIndex, QSize, Qt, QThreadPool
+from PySide6.QtCore import QAbstractListModel, QModelIndex, QSize, Qt, QThreadPool, Signal
 from PySide6.QtGui import QPixmap
 
 import config
@@ -28,14 +29,21 @@ def _safe_from_db_path(path: str) -> str:
 
 
 class BookListModel(QAbstractListModel):
+    thumbQueueChanged = Signal(int)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._books: list[dict] = []
         self._thumbs: dict[str, QPixmap] = {}
         self._pending: set[str] = set()
+        self._queue: deque[tuple[str, QModelIndex]] = deque()
+        self._queued: set[str] = set()
         self._pool = QThreadPool.globalInstance()
         self._card_w = config.CARD_WIDTH_BASE
         self._bookmarks: dict[str, int] = {}
+
+    def _emit_thumb_queue_changed(self) -> None:
+        self.thumbQueueChanged.emit(len(self._pending) + len(self._queue))
 
     def rowCount(self, parent=QModelIndex()) -> int:
         return len(self._books)
@@ -165,8 +173,14 @@ class BookListModel(QAbstractListModel):
         if not cover or cover in self._pending:
             return
         if len(self._pending) >= 16:
+            if cover in self._queued:
+                return
+            self._queue.append((cover, index))
+            self._queued.add(cover)
+            self._emit_thumb_queue_changed()
             return
         self._pending.add(cover)
+        self._emit_thumb_queue_changed()
         w = ThumbWorker(cover)
         w.signals.done.connect(self._on_thumb_done)
         self._pool.start(w)
@@ -179,6 +193,20 @@ class BookListModel(QAbstractListModel):
                 idx = self.index(row)
                 self.dataChanged.emit(idx, idx, [ROLE_THUMB])  # noqa: F405
                 break
+        self._flush_queue()
+        self._emit_thumb_queue_changed()
+
+    def _flush_queue(self):
+        while len(self._pending) < 16 and self._queue:
+            cover, index = self._queue.popleft()
+            if cover in self._thumbs or cover in self._pending:
+                self._queued.discard(cover)
+                continue
+            self._pending.add(cover)
+            self._queued.discard(cover)
+            w = ThumbWorker(cover)
+            w.signals.done.connect(self._on_thumb_done)
+            self._pool.start(w)
 
     def invalidate_thumb(self, cover: str) -> None:
         """特定coverのメモリ・ディスクキャッシュを破棄して再描画をトリガーする"""

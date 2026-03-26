@@ -249,6 +249,11 @@ class MainWindow(QMainWindow):
             })
         return books
 
+    def get_selected_book_path(self) -> str | None:
+        """グリッドで選択中の書籍パスを1件返す（なければNone）"""
+        books = self._get_selected_books()
+        return books[0]["path"] if books else None
+
     def _on_file_menu_about_to_show(self):
         """ファイルメニュー表示直前に有効/無効を更新"""
         selected = self._get_selected_books()
@@ -435,7 +440,6 @@ class MainWindow(QMainWindow):
         ブックマークレットからの受信処理（バックグラウンドスレッドから呼ばれる）。
         メタデータ取得→DB保存→メインスレッドへシグナルemit。
         """
-
         def _save_cover(cover_url: str, book_path: str) -> str | None:
             """取得画像をカバーキャッシュにJPEGで保存する。"""
             import hashlib
@@ -452,10 +456,43 @@ class MainWindow(QMainWindow):
                 return out_path
             return None
 
+        def _normalize_meta(meta: dict) -> dict:
+            def to_str(x):
+                if isinstance(x, list):
+                    x = x[0] if x else ""
+                return str(x).strip() if x is not None else ""
+
+            def to_list_str(x):
+                if x is None:
+                    return []
+                if not isinstance(x, list):
+                    x = [x]
+
+                out = []
+                for v in x:
+                    if isinstance(v, list):
+                        out.extend(v)
+                    else:
+                        out.append(v)
+
+                return [str(v).strip() for v in out if str(v).strip()]
+
+            return {
+                **meta,
+                "title": to_str(meta.get("title")),
+                "circle": to_str(meta.get("circle")),
+                "author": to_str(meta.get("author")),
+                "dlsite_id": to_str(meta.get("dlsite_id")),
+                "release_date": to_str(meta.get("release_date")),
+                "store_url": to_str(meta.get("store_url")),
+                "tags": to_list_str(meta.get("tags")),
+            }
+
         try:
             from bookmarklet import fetch_meta
             meta = fetch_meta(url=url, html=html)
-        except Exception:
+            meta = _normalize_meta(meta)
+        except Exception as e:
             meta = {}
         try:
             matched = db.find_book_by_bookmarklet(
@@ -475,7 +512,6 @@ class MainWindow(QMainWindow):
             q_release_date = meta.get("release_date", "")
             q_cover_url = meta.get("cover_url", "")
             q_store_url = meta.get("store_url", "")
-
             if matched is None:
                 # 一致なし → no_match
                 db.add_bookmarklet_queue(
@@ -556,8 +592,8 @@ class MainWindow(QMainWindow):
                     store_url=q_store_url,
                     status="matched",
                 )
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"bookmarklet apply error: {e}")
         self.bookmarkletReceived.emit()
 
     def _on_bookmarklet_received(self) -> None:
@@ -902,8 +938,23 @@ class MainWindow(QMainWindow):
 
         self._size_slider = setup_statusbar(self, sb)
         self._size_slider.valueChanged.connect(self._on_card_size_changed)
+        model = self._grid.model() if hasattr(self, "_grid") else None
+        if model and hasattr(model, "thumbQueueChanged"):
+            model.thumbQueueChanged.connect(self._on_thumb_queue_changed)
 
         self._grid.ctrlWheelZoom.connect(self._on_ctrl_wheel_zoom)
+
+    def _on_thumb_queue_changed(self, active_count: int) -> None:
+        """サムネイルの非同期読み込み状態をステータスバーに表示する。"""
+        if not hasattr(self, "_statusbar"):
+            return
+        prefix = "サムネイル読み込み中"
+        if active_count > 0:
+            self._statusbar.showMessage(f"{prefix}... {active_count} 件", 0)
+            return
+        current = self._statusbar.currentMessage()
+        if current.startswith(prefix):
+            self._statusbar.clearMessage()
 
     def _on_card_size_changed(self, value: int):
         """スライダー値に合わせてカード幅を更新する。"""
@@ -2165,7 +2216,12 @@ class MainWindow(QMainWindow):
                 return books
             try:
                 rows = db.get_books_by_meta_source(value)
-                paths = {normalize_path(r[3]) for r in rows}
+                paths = {
+                    normalize_path(
+                        p if os.path.isabs(p) else os.path.join(lib_root, p)
+                    )
+                    for _, _, _, p, _ in rows
+                }
                 return [b for b in books if normalize_path(b.get("path", "")) in paths]
             except Exception:
                 return books
@@ -2174,7 +2230,12 @@ class MainWindow(QMainWindow):
                 return books
             try:
                 bookmarks = db.get_all_bookmarks()
-                norm_bookmarks = {normalize_path(k): v for k, v in bookmarks.items()}
+                norm_bookmarks = {
+                    normalize_path(
+                        k if os.path.isabs(k) else os.path.join(lib_root, k)
+                    ): v
+                    for k, v in bookmarks.items()
+                }
                 rating = int(value) if value.isdigit() else 0
                 if rating == 0:
                     return [b for b in books if norm_bookmarks.get(normalize_path(b.get("path", "")), 0) == 0]

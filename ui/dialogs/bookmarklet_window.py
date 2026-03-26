@@ -212,8 +212,22 @@ class BookmarkletWindow(QWidget):
             url=row.get("url", ""),
         )
         self._found_path = result["path"] if result else None
-        self._btn_apply.setEnabled(True)
-        self._current_row = row  # 現在選択中のrowを保持
+        self._current_row = row
+        self._update_apply_button()
+
+    def _update_apply_button(self) -> None:
+        """適用ボタンの有効/無効を更新する"""
+        row = getattr(self, "_current_row", None)
+        if not row:
+            self._btn_apply.setEnabled(False)
+            return
+        if self._found_path:
+            # 黄・緑など：従来どおり
+            self._btn_apply.setEnabled(True)
+        else:
+            # 赤：グリッドで書籍が選択されているときだけ有効
+            path = getattr(self._main_window, "get_selected_book_path", lambda: None)()
+            self._btn_apply.setEnabled(path is not None)
 
     def _on_auto_apply_toggled(self, checked: bool) -> None:
         db.set_setting("bookmarklet_auto_apply", "1" if checked else "0")
@@ -274,10 +288,13 @@ class BookmarkletWindow(QWidget):
     def _apply_meta(self) -> None:
         row = getattr(self, "_current_row", None)
         found_path = getattr(self, "_found_path", None)
+        if not found_path:
+            # 赤アイテム：グリッド選択から取得
+            found_path = getattr(self._main_window, "get_selected_book_path", lambda: None)()
         if not row or not found_path:
             from PySide6.QtWidgets import QMessageBox
 
-            QMessageBox.information(self, "未検索", "ライブラリに一致する作品が見つかりませんでした。")
+            QMessageBox.information(self, "未選択", "グリッドで適用先の作品を選択してください。")
             return
         import os
 
