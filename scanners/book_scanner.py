@@ -8,15 +8,32 @@ import os
 import re
 import time
 import uuid as uuid_lib
+from collections import defaultdict
+from dataclasses import dataclass
+from datetime import datetime
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 
 import config
 import db
+import noble_shelf.store_file_resolver as store_resolver
+from drop_handler import _get_pdf_cover_and_pages
+from noble_shelf.store_file_resolver import ActionResult, FileContext, resolve_store_file_action
 from scanners.base_scanner import BaseScanner
 
 
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp")
+
+
+def _preview_path_list(paths: list[str], limit: int) -> str:
+    """診断ログ用に path リストを短く整形する。"""
+    if not paths:
+        return "[]"
+    sorted_paths = sorted(paths)
+    if len(sorted_paths) <= limit:
+        return repr(sorted_paths)
+    head = sorted_paths[:limit]
+    return repr(head) + f" ... (+{len(sorted_paths) - limit} 件)"
 
 # DMM/DLSiteの専用ファイル形式
 STORE_FILE_EXTS = (".dmmb", ".dmme", ".dmmr", ".dlst")
@@ -24,11 +41,35 @@ STORE_FILE_EXTS = (".dmmb", ".dmme", ".dmmr", ".dlst")
 
 class ScannerSignals(QObject):
     progress = Signal(int, int)  # scanned, total_found
-    finished = Signal(list)  # books (list of dict)
-    storeFilesPending = Signal(list)  # [{"path", "name", "mtime", ...}, ...]
+    finished = Signal(list, list)  # books, duplicate_results
+    storeActionSummary = Signal(list, list)  # rename_results, error_results
     error = Signal(str)
     # UUID重複（先勝ちで後から来たフォルダを振り直した）ときのトースト用
     uuidDuplicateToast = Signal(str)
+
+
+@dataclass(frozen=True)
+class RootFsEntry:
+    """ライブラリ直下のストアファイル／PDF（Phase1 の列挙結果）。"""
+
+    abs_path: str
+    db_path: str
+    content_hash: str
+    size: int
+    mtime: float
+    is_pdf: bool
+
+
+def _fs_dict_to_root_entry(d: dict) -> RootFsEntry:
+    """Phase1 の dict を RootFsEntry に変換する。"""
+    return RootFsEntry(
+        abs_path=str(d["abs_path"]),
+        db_path=os.path.normpath(str(d["path"])),
+        content_hash=str(d["hash"]),
+        size=int(d["size"]),
+        mtime=float(d["mtime"]),
+        is_pdf=bool(d.get("is_pdf", False)),
+    )
 
 
 def _atomic_write_noble_shelf_id(folder_path: str, uid: str) -> bool:
@@ -125,6 +166,28 @@ def _library_abs_path(library_root: str, rel_or_abs: str) -> str:
     return os.path.normpath(os.path.join(library_root, p))
 
 
+def _is_root_level_store_or_pdf(db_path: str) -> bool:
+    """DB path がライブラリ直下のストア拡張子／PDF か。"""
+    p = os.path.normpath(db_path)
+    if os.path.dirname(p) not in ("", "."):
+        return False
+    base = os.path.basename(p).lower()
+    if base.endswith(STORE_FILE_EXTS):
+        return True
+    return base.endswith(".pdf")
+
+
+def _row_under_scan_library(library_folder: str, path: str) -> bool:
+    """path が当該スキャンルート配下のブックとして扱うか。"""
+    path = (path or "").strip()
+    if not path:
+        return False
+    abs_row = _library_abs_path(library_folder, path)
+    scan_root_norm = os.path.normcase(os.path.normpath(library_folder))
+    p_norm = os.path.normcase(os.path.normpath(abs_row))
+    return p_norm == scan_root_norm or p_norm.startswith(scan_root_norm + os.sep)
+
+
 class BookScannerWorker(QRunnable):
     """
     指定フォルダ直下を差分スキャンしてDBを更新するワーカー。
@@ -144,8 +207,8 @@ class BookScannerWorker(QRunnable):
 
     def run(self) -> None:
         try:
-            books = self._scan()
-            self.signals.finished.emit(books)
+            books, duplicate_candidates = self._scan()
+            self.signals.finished.emit(books, duplicate_candidates)
         except Exception as e:
             self.signals.error.emit(str(e))
 
@@ -203,13 +266,377 @@ class BookScannerWorker(QRunnable):
         """DB上の path とディスク上の相対パスがずれていれば更新（移動・リネーム）。"""
         row = db.get_book_by_uuid(book_uuid)
         if not row:
+            # 初回登録前のウォークでは行が無い（正常）。初回 bulk 後は DB に載る。
             return
         db_path = (row.get("path") or "").strip()
         if os.path.normpath(db_path) == os.path.normpath(rel_folder):
             return
+        logging.info(
+            "[SCAN] path_sync_move APPLY uuid=%s old_path=%s new_rel=%s",
+            book_uuid,
+            db_path,
+            rel_folder,
+        )
         db.update_book_path_by_uuid(book_uuid, rel_folder)
 
-    def _scan(self) -> list[dict]:
+    def _collect_fs_files(
+        self, library_path: str
+    ) -> tuple[list[dict], set[str], list[ActionResult]]:
+        """
+        Phase1: ライブラリ直下の対象ファイルを列挙し path・hash・size を計算する（SQLite に触らない）。
+        戻り値の各 dict は path / hash / size / mtime / abs_path / is_pdf を含む。
+        """
+        try:
+            entries = [e for e in os.listdir(library_path)]
+        except PermissionError as e:
+            raise RuntimeError(f"フォルダを開けません: {e}")
+        out: list[dict] = []
+        hash_failed_paths: set[str] = set()
+        error_results: list[ActionResult] = []
+
+        for name in entries:
+            path = os.path.join(library_path, name)
+            if os.path.isdir(path):
+                continue
+            low = name.lower()
+            if not (low.endswith(STORE_FILE_EXTS) or low.endswith(".pdf")):
+                continue
+            rel = os.path.normpath(os.path.relpath(path, library_path))
+            try:
+                st = os.stat(path)
+                size = int(st.st_size)
+                mtime = float(st.st_mtime)
+            except OSError as e:
+                error_results.append(
+                    ActionResult(
+                        status="error",
+                        db_path=rel,
+                        error_type="IO_ERROR",
+                        error_message=str(e),
+                    )
+                )
+                continue
+            content_hash = db._compute_store_content_hash(path)
+            if not content_hash:
+                hash_failed_paths.add(rel)
+                error_results.append(
+                    ActionResult(
+                        status="error",
+                        db_path=rel,
+                        error_type="HASH_ERROR",
+                        error_message="content hash unavailable",
+                    )
+                )
+                continue
+            out.append(
+                {
+                    "path": rel,
+                    "hash": content_hash,
+                    "size": size,
+                    "mtime": mtime,
+                    "abs_path": path,
+                    "is_pdf": low.endswith(".pdf"),
+                }
+            )
+        return out, hash_failed_paths, error_results
+
+    def _classify(
+        self,
+        fs_files: list[dict],
+        db_rows: list[dict],
+        library_folder: str,
+        hash_failed_paths: set[str],
+    ) -> tuple[
+        dict[str, list[dict]],
+        list[dict],
+        list[tuple[dict, dict]],
+        list[tuple[dict, dict]],
+    ]:
+        """
+        Phase2: メモリ上の DB 行と FS 一覧を path キーで比較（SQLite に触らない）。
+        戻り値: missing_map, created_candidates, existing, updated
+        """
+        fs_by_path: dict[str, dict] = {}
+        for d in fs_files:
+            fs_by_path[os.path.normpath(str(d["path"]))] = d
+
+        root_rows_by_path: dict[str, dict] = {}
+        for row in db_rows:
+            p = (row.get("path") or "").strip()
+            if not p:
+                continue
+            if not _row_under_scan_library(library_folder, p):
+                continue
+            np = os.path.normpath(p)
+            if not _is_root_level_store_or_pdf(np):
+                continue
+            root_rows_by_path[np] = row
+
+        missing_map: dict[str, list[dict]] = defaultdict(list)
+        for db_path, row in root_rows_by_path.items():
+            if db_path in fs_by_path:
+                continue
+            if db_path in hash_failed_paths:
+                continue
+            h = (row.get("content_hash") or "").strip() or None
+            key = h if h else config.SCAN_MISSING_HASH_MAP_KEY
+            missing_map[key].append(row)
+        for key in list(missing_map.keys()):
+            missing_map[key].sort(key=lambda r: int(r.get("rowid") or 0))
+
+        created_candidates: list[dict] = []
+        for db_path, d in fs_by_path.items():
+            if db_path not in root_rows_by_path:
+                created_candidates.append(d)
+
+        existing: list[tuple[dict, dict]] = []
+        updated_pairs: list[tuple[dict, dict]] = []
+        for db_path, d in fs_by_path.items():
+            row = root_rows_by_path.get(db_path)
+            if not row:
+                continue
+            db_hash = (row.get("content_hash") or "").strip() or None
+            fs_hash = str(d.get("hash") or "")
+            if db_hash and fs_hash == db_hash:
+                existing.append((row, d))
+                continue
+            if not db_hash and fs_hash:
+                updated_pairs.append((row, d))
+                continue
+            if db_hash and fs_hash and db_hash != fs_hash:
+                updated_pairs.append((row, d))
+                continue
+            if not db_hash and not fs_hash:
+                rm = row.get("mtime")
+                if rm is not None and abs(float(rm) - float(d["mtime"])) < config.MTIME_TOLERANCE:
+                    existing.append((row, d))
+                    continue
+                updated_pairs.append((row, d))
+
+        return dict(missing_map), created_candidates, existing, updated_pairs
+
+    def _resolve_renames(
+        self,
+        created_candidates: list[dict],
+        missing_map: dict[str, list[dict]],
+    ) -> tuple[list[tuple[dict, dict]], list[dict], dict[str, list[dict]]]:
+        """
+        Phase3: created と missing を hash で突き合わせ rename を解決する。
+        missing_map は破壊せずコピーして消費する。
+        """
+        mm = {k: list(v) for k, v in missing_map.items()}
+        renames: list[tuple[dict, dict]] = []
+        true_created: list[dict] = []
+
+        for c in sorted(created_candidates, key=lambda x: str(x["path"])):
+            h = str(c.get("hash") or "")
+            if h in mm and mm[h]:
+                row = mm[h].pop(0)
+                renames.append((row, c))
+                if not mm[h]:
+                    del mm[h]
+            else:
+                true_created.append(c)
+        return renames, true_created, mm
+
+    def _apply_missing_ttl_for_rows(
+        self,
+        rows: list[dict],
+        delete_paths_out: list[str],
+    ) -> None:
+        """missing_since_date と MISSING_BOOK_TTL_DAYS に基づき、TTL 経過分の path を delete_paths_out に追加する。
+
+        - missing が未記録 → mark_missing_since_if_null のみ（削除しない）
+        - TTL 未満 → 何もしない
+        - TTL 以上 → delete_paths_out に path を追加
+        """
+        now_iso = datetime.utcnow().isoformat()
+        for r in rows:
+            p = (r.get("path") or "").strip()
+            if not p:
+                continue
+            missing_since = (r.get("missing_since_date") or "").strip()
+            if not missing_since:
+                db.mark_missing_since_if_null(p, now_iso)
+                continue
+            try:
+                dt_missing = datetime.fromisoformat(missing_since)
+                elapsed_days = (datetime.utcnow() - dt_missing).days
+            except Exception:
+                elapsed_days = config.MISSING_BOOK_TTL_DAYS
+            if elapsed_days >= config.MISSING_BOOK_TTL_DAYS:
+                delete_paths_out.append(p)
+
+    def _apply_changes(
+        self,
+        renames: list[tuple[dict, dict]],
+        created: list[dict],
+        existing: list[tuple[dict, dict]],
+        updated: list[tuple[dict, dict]],
+        remaining_missing: dict[str, list[dict]],
+        *,
+        duplicate_out: list[ActionResult],
+        rename_out: list[ActionResult],
+        error_out: list[ActionResult],
+        delete_paths_root: list[str],
+    ) -> None:
+        """Phase4: ルートストア／PDF の DB 一括適用（rename → updated → created → missing TTL）。"""
+        folder = self.library_folder
+
+        # FS上で再検出された行は missing_since_date をクリアする。
+        rediscovered_paths = {
+            os.path.normpath((row.get("path") or "").strip())
+            for row, _ in (existing + updated)
+            if (row.get("path") or "").strip()
+        }
+        if rediscovered_paths:
+            db.clear_missing_since_for_paths(sorted(rediscovered_paths))
+
+        for row, fs_dict in renames:
+            fs_entry = _fs_dict_to_root_entry(fs_dict)
+            uuid = str(row.get("uuid") or "").strip()
+            old_path = (row.get("path") or "").strip()
+            new_path = fs_entry.db_path
+            db_mtime = float(row["mtime"]) if row.get("mtime") is not None else None
+            db.rename_book_path(
+                uuid,
+                new_path,
+                db_mtime,
+                fs_entry.content_hash,
+            )
+            rename_out.append(
+                ActionResult(
+                    status="rename",
+                    db_path=new_path,
+                    existing_uuid=uuid,
+                    existing_path=old_path,
+                )
+            )
+
+        for row, fs_dict in updated:
+            fs_entry = _fs_dict_to_root_entry(fs_dict)
+            db_path = os.path.normpath((row.get("path") or "").strip())
+            uuid = str(row.get("uuid") or "").strip()
+            db_mtime = float(row["mtime"]) if row.get("mtime") is not None else None
+            is_dlst = 1 if db_path.lower().endswith(config.STORE_FILE_EXT_DLSITE) else 0
+            stem = os.path.splitext(os.path.basename(db_path))[0]
+            suggested_circle, suggested_title = db.parse_display_name(stem)
+            if not suggested_title:
+                suggested_title = stem
+            display_name = db.format_book_name(suggested_circle, suggested_title) or stem
+
+            if fs_entry.is_pdf:
+                cover, pages = _get_pdf_cover_and_pages(fs_entry.abs_path)
+            else:
+                cover, pages = "", None
+
+            result = ActionResult(
+                status="updated",
+                db_path=db_path,
+                existing_uuid=uuid,
+                existing_path=db_path,
+            )
+            db.apply_action_result(
+                result,
+                {
+                    "name": display_name,
+                    "circle": suggested_circle,
+                    "title": suggested_title,
+                    "cover_path": cover,
+                    "mtime": db_mtime,
+                    "is_dlst": bool(is_dlst),
+                    "pages": pages,
+                    "content_hash": fs_entry.content_hash,
+                },
+            )
+
+        if created:
+            index_rows = db.fetch_all_rows_for_index()
+            store_index = store_resolver.build_db_index(index_rows, library_root=folder)
+
+            for fs_dict in created:
+                fs_entry = _fs_dict_to_root_entry(fs_dict)
+                mtime = fs_entry.mtime
+                stem = os.path.splitext(os.path.basename(fs_entry.db_path))[0]
+                is_dlst = 1 if fs_entry.db_path.lower().endswith(config.STORE_FILE_EXT_DLSITE) else 0
+                if fs_entry.is_pdf:
+                    cover, pages = _get_pdf_cover_and_pages(fs_entry.abs_path)
+                    circle, title = db.parse_display_name(stem)
+                    if not title:
+                        title = stem
+                    book_name = db.format_book_name(circle, title)
+                    result = resolve_store_file_action(
+                        FileContext(
+                            abs_path=fs_entry.abs_path,
+                            db_path=fs_entry.db_path,
+                            content_hash=fs_entry.content_hash,
+                            mtime=mtime,
+                            file_ext=os.path.splitext(fs_entry.db_path)[1].lower(),
+                            is_dlst=False,
+                        ),
+                        store_index,
+                    )
+                    book_data = {
+                        "name": book_name,
+                        "circle": circle,
+                        "title": title,
+                        "cover_path": cover,
+                        "mtime": mtime,
+                        "is_dlst": False,
+                        "pages": pages,
+                        "content_hash": fs_entry.content_hash,
+                    }
+                else:
+                    suggested_circle, suggested_title = db.parse_display_name(stem)
+                    if not suggested_title:
+                        suggested_title = stem
+                    display_name = (
+                        db.format_book_name(suggested_circle, suggested_title)
+                        or os.path.basename(fs_entry.db_path)
+                    )
+                    result = resolve_store_file_action(
+                        FileContext(
+                            abs_path=fs_entry.abs_path,
+                            db_path=fs_entry.db_path,
+                            content_hash=fs_entry.content_hash,
+                            mtime=mtime,
+                            file_ext=os.path.splitext(fs_entry.db_path)[1].lower(),
+                            is_dlst=bool(is_dlst),
+                        ),
+                        store_index,
+                    )
+                    book_data = {
+                        "name": display_name,
+                        "circle": suggested_circle,
+                        "title": suggested_title,
+                        "cover_path": "",
+                        "mtime": mtime,
+                        "is_dlst": bool(is_dlst),
+                        "pages": None,
+                        "content_hash": fs_entry.content_hash,
+                    }
+
+                if result.status == "duplicate":
+                    duplicate_out.append(result)
+                elif result.status == "error":
+                    error_out.append(result)
+                elif result.status in {"created", "updated"}:
+                    db.apply_action_result(result, book_data)
+                elif result.status == "rename":
+                    rename_out.append(result)
+                elif result.status == "unchanged":
+                    pass
+
+                if result.status in {"created", "updated", "rename"}:
+                    index_rows = db.fetch_all_rows_for_index()
+                    store_index = store_resolver.build_db_index(index_rows, library_root=folder)
+
+        flat_remaining: list[dict] = []
+        for _key, rows in remaining_missing.items():
+            flat_remaining.extend(rows)
+        self._apply_missing_ttl_for_rows(flat_remaining, delete_paths_root)
+
+    def _scan(self) -> tuple[list[dict], list[ActionResult]]:
         folder = self.library_folder
         if not os.path.isdir(folder):
             raise RuntimeError(f"ライブラリフォルダが見つかりません（外付けHDD切断等）: {folder}")
@@ -217,92 +644,74 @@ class BookScannerWorker(QRunnable):
         _cleanup_tmp_id_files(folder)
         t1 = time.perf_counter()
         logging.info("[SCAN] phase=cleanup_tmp %.3fs", t1 - t_start)
-        raw_known = db.get_known_paths()
-        t2 = time.perf_counter()
-        logging.info("[SCAN] phase=get_known_paths %.3fs", t2 - t1)
-        known = {os.path.normcase(os.path.normpath(k)): v for k, v in raw_known.items()}
-        found_paths: set[str] = set()
-        pending_store_files: list[dict] = []
+
+        duplicate_results: list[ActionResult] = []
+        rename_results: list[ActionResult] = []
+        error_results: list[ActionResult] = []
         uuid_first_rel: dict[str, str] = {}
         upsert_queue: list[tuple] = []
 
-        entries = []
         try:
             entries = [e for e in os.listdir(folder)]
         except PermissionError as e:
             raise RuntimeError(f"フォルダを開けません: {e}")
 
+        fs_files, hash_failed_paths, phase1_errors = self._collect_fs_files(folder)
+        error_results.extend(phase1_errors)
+
+        try:
+            db_rows = db.fetch_all_rows_for_index()
+        except Exception as e:
+            raise RuntimeError(f"DB行の取得に失敗しました: {e}")
+
+        missing_map, created_candidates, existing_pairs, updated_pairs = self._classify(
+            fs_files, db_rows, folder, hash_failed_paths
+        )
+        renames, true_created, missing_remainder = self._resolve_renames(
+            created_candidates, missing_map
+        )
+        delete_paths_root: list[str] = []
+        self._apply_changes(
+            renames,
+            true_created,
+            existing_pairs,
+            updated_pairs,
+            missing_remainder,
+            duplicate_out=duplicate_results,
+            rename_out=rename_results,
+            error_out=error_results,
+            delete_paths_root=delete_paths_root,
+        )
+
         total = len(entries)
         t3 = time.perf_counter()
-        logging.info("[SCAN] phase=listdir_root entries=%d %.3fs", total, t3 - t2)
+        logging.info("[SCAN] phase=listdir_root entries=%d %.3fs", total, t3 - t1)
 
         def _emit_progress(current: int) -> None:
-            """進捗通知を間引いて発火する。"""
             if (
                 current % config.SCAN_PROGRESS_EMIT_INTERVAL == 0
                 or current == total
             ):
                 self.signals.progress.emit(current, total)
 
+        found_paths: set[str] = set()
+        fs_by_path_keys = {os.path.normpath(str(f["path"])) for f in fs_files}
+
+        index_rows = db.fetch_all_rows_for_index()
+        store_index = store_resolver.build_db_index(index_rows, library_root=folder)
+
         for i, name in enumerate(entries):
             path = os.path.join(folder, name)
             if not os.path.isdir(path):
-                if name.lower().endswith(STORE_FILE_EXTS):
+                if name.lower().endswith(STORE_FILE_EXTS) or name.lower().endswith(".pdf"):
                     try:
                         rel_store = os.path.normpath(db._to_db_path(path))
                     except ValueError:
                         rel_store = os.path.normpath(os.path.relpath(path, folder))
-                    rel_store_key = os.path.normcase(os.path.normpath(rel_store))
-                    found_paths.add(rel_store_key)
-                    try:
-                        mtime = os.path.getmtime(path)
-                    except OSError:
-                        _emit_progress(i + 1)
-                        continue
-                    if rel_store_key not in known or known.get(rel_store_key) != mtime:
-                        stem = os.path.splitext(name)[0]
-                        suggested_circle, suggested_title = db.parse_display_name(stem)
-                        if not suggested_title:
-                            suggested_title = stem
-                        pending_store_files.append({
-                            "path": path,
-                            "name": name,
-                            "mtime": mtime,
-                            "suggested_circle": suggested_circle,
-                            "suggested_title": suggested_title,
-                        })
-                    _emit_progress(i + 1)
-                elif name.lower().endswith(".pdf"):
-                    try:
-                        rel_pdf = os.path.normpath(db._to_db_path(path))
-                    except ValueError:
-                        rel_pdf = os.path.normpath(os.path.relpath(path, folder))
-                    rel_pdf_key = os.path.normcase(os.path.normpath(rel_pdf))
-                    found_paths.add(rel_pdf_key)
-                    try:
-                        mtime = os.path.getmtime(path)
-                    except OSError:
-                        _emit_progress(i + 1)
-                        continue
-                    known_key = os.path.normcase(os.path.normpath(rel_pdf))
-                    if (
-                        known_key in known
-                        and abs((known.get(known_key) or 0) - mtime) < config.MTIME_TOLERANCE
-                    ):
-                        _emit_progress(i + 1)
-                        continue
-                    # PDF登録処理
-                    from drop_handler import _get_pdf_cover_and_pages
-                    abs_path = path  # すでに絶対パスで構築済み
-                    cover, pages = _get_pdf_cover_and_pages(abs_path)
-                    stem = os.path.splitext(name)[0]
-                    circle, title = db.parse_display_name(stem)
-                    if not title:
-                        title = stem
-                    book_name = db.format_book_name(circle, title)
-                    db.upsert_store_file_book(rel_pdf, book_name, circle, title, cover, mtime, 0, pages)
-                    _emit_progress(i + 1)
-                    continue
+                    if os.path.normpath(rel_store) in fs_by_path_keys:
+                        rel_store_key = os.path.normcase(os.path.normpath(rel_store))
+                        found_paths.add(rel_store_key)
+                _emit_progress(i + 1)
                 continue
             try:
                 rel_path = db._to_db_path(path)
@@ -317,7 +726,6 @@ class BookScannerWorker(QRunnable):
                 _emit_progress(i + 1)
                 continue
 
-            # ディスク上にある作品フォルダはすべて「スキャンで見つかった」扱い（画像なしも削除判定用）
             found_paths.add(rel_path_key)
 
             try:
@@ -342,7 +750,8 @@ class BookScannerWorker(QRunnable):
 
             self._maybe_sync_db_path_for_move(book_uuid, rel_path)
 
-            if rel_path_key in known and known.get(rel_path_key) == mtime:
+            meta_folder = store_index.meta_by_path.get(rel_path)
+            if meta_folder and meta_folder[0] == mtime:
                 _emit_progress(i + 1)
                 continue
 
@@ -357,7 +766,7 @@ class BookScannerWorker(QRunnable):
                 title = name.strip()
             display_name = db.format_book_name(circle, title)
 
-            if rel_path_key not in known or known.get(rel_path_key) != mtime:
+            if not meta_folder or meta_folder[0] != mtime:
                 upsert_queue.append(
                     (
                         book_uuid,
@@ -375,16 +784,61 @@ class BookScannerWorker(QRunnable):
 
         t_after_walk = time.perf_counter()
         logging.info("[SCAN] phase=walk_loop %.3fs", t_after_walk - t3)
-        if pending_store_files:
-            self.signals.storeFilesPending.emit(pending_store_files)
+        if rename_results or error_results:
+            self.signals.storeActionSummary.emit(rename_results, error_results)
         scan_root_norm = os.path.normcase(os.path.normpath(folder))
-        all_books = db.get_all_books()
+        # ウォークの upsert（移動後の path 含む）と Phase4 削除を先に反映してから index を取る。
+        # fetch を先にやると古い path の行で判定し、移動直後に else 側の即削除に落ちる。
+        logging.info(
+            "[SCAN] bulk_db_upsert_phase4 delete_paths_root (%d): %s",
+            len(delete_paths_root),
+            _preview_path_list(list(delete_paths_root), config.SCAN_LOG_PATH_LIST_MAX),
+        )
+        db.bulk_upsert_and_delete_books(upsert_queue, delete_paths_root)
+        t_bulk1 = time.perf_counter()
+        logging.info(
+            "[SCAN] phase=bulk_db_upsert_phase4 upsert=%d delete_phase4=%d %.3fs",
+            len(upsert_queue),
+            len(delete_paths_root),
+            t_bulk1 - t_after_walk,
+        )
+
+        try:
+            index_rows = db.fetch_all_rows_for_index()
+        except Exception as e:
+            raise RuntimeError(f"DB行の取得に失敗しました: {e}")
         t4 = time.perf_counter()
-        logging.info("[SCAN] phase=get_all_books %.3fs", t4 - t_after_walk)
+        logging.info("[SCAN] phase=fetch_index_rows %.3fs", t4 - t_bulk1)
+
+        # フォルダ作品が found_paths に戻った場合は missing_since_date をリセット（ルートストア/PDFと同様）
+        folder_rediscovered: list[str] = []
+        for r in index_rows:
+            path = (r.get("path") or "").strip()
+            if not path:
+                continue
+            abs_row = _library_abs_path(folder, path)
+            p_norm = os.path.normcase(os.path.normpath(abs_row))
+            if p_norm != scan_root_norm and not p_norm.startswith(scan_root_norm + os.sep):
+                continue
+            if not os.path.isdir(abs_row):
+                continue
+            norm_key = os.path.normcase(os.path.normpath(path))
+            if norm_key in found_paths:
+                folder_rediscovered.append(path)
+        if folder_rediscovered:
+            db.clear_missing_since_for_paths(sorted(set(folder_rediscovered)))
+
+        # Phase4 削除は既に bulk 済み。ここからはフォルダ欠落TTL・ファイル欠落のみ。
         delete_paths: list[str] = []
         under_scan_root_count = 0
-        for row in all_books:
-            path = row[3]
+        folder_missing_candidates: list[dict] = []
+        cnt_isdir_in_found = 0
+        cnt_isdir_missing = 0
+        cnt_file_root_skip = 0
+        cnt_file_immediate = 0
+        immediate_file_paths: list[str] = []
+        for r in index_rows:
+            path = (r.get("path") or "").strip()
             if not path:
                 continue
             abs_row = _library_abs_path(folder, path)
@@ -395,10 +849,42 @@ class BookScannerWorker(QRunnable):
             norm_key = os.path.normcase(os.path.normpath(path))
             if os.path.isdir(abs_row):
                 if norm_key not in found_paths:
-                    delete_paths.append(path)
+                    folder_missing_candidates.append(r)
+                    cnt_isdir_missing += 1
+                else:
+                    cnt_isdir_in_found += 1
             else:
+                # ルート直下のストア/PDFは missing_since_date による遅延削除で扱う。
+                if _is_root_level_store_or_pdf(path):
+                    cnt_file_root_skip += 1
+                    continue
                 if not os.path.exists(abs_row):
                     delete_paths.append(path)
+                    immediate_file_paths.append(path)
+                    cnt_file_immediate += 1
+
+        fm_paths = [(x.get("path") or "").strip() for x in folder_missing_candidates]
+        logging.info(
+            "[SCAN] delete_loop branch_counts under_scan_root=%d isdir_in_found=%d "
+            "isdir_missing_ttl=%d file_root_store_skip=%d file_immediate=%d",
+            under_scan_root_count,
+            cnt_isdir_in_found,
+            cnt_isdir_missing,
+            cnt_file_root_skip,
+            cnt_file_immediate,
+        )
+        logging.info(
+            "[SCAN] folder_missing_candidates (%d): %s",
+            len(fm_paths),
+            _preview_path_list(fm_paths, config.SCAN_LOG_PATH_LIST_MAX),
+        )
+        logging.info(
+            "[SCAN] immediate_file_delete_paths (%d): %s",
+            len(immediate_file_paths),
+            _preview_path_list(immediate_file_paths, config.SCAN_LOG_PATH_LIST_MAX),
+        )
+
+        self._apply_missing_ttl_for_rows(folder_missing_candidates, delete_paths)
 
         t5 = time.perf_counter()
         logging.info("[SCAN] phase=delete_check %.3fs", t5 - t4)
@@ -416,11 +902,15 @@ class BookScannerWorker(QRunnable):
             )
             delete_paths = []
 
-        db.bulk_upsert_and_delete_books(upsert_queue, delete_paths)
+        logging.info(
+            "[SCAN] bulk_db_delete_folder_file delete_paths (%d, TTL含む): %s",
+            len(delete_paths),
+            _preview_path_list(delete_paths, config.SCAN_LOG_PATH_LIST_MAX),
+        )
+        db.bulk_upsert_and_delete_books([], delete_paths)
         t6 = time.perf_counter()
         logging.info(
-            "[SCAN] phase=bulk_db upsert=%d delete=%d %.3fs",
-            len(upsert_queue),
+            "[SCAN] phase=bulk_db_delete_folder_file done delete=%d %.3fs",
             len(delete_paths),
             t6 - t5,
         )
@@ -439,7 +929,7 @@ class BookScannerWorker(QRunnable):
         rows = db.get_all_books()
         t7 = time.perf_counter()
         logging.info("[SCAN] phase=final_fetch %.3fs", t7 - t_after_db)
-        return [
+        books = [
             {
                 "path": row[3],
                 "name": row[0],
@@ -452,6 +942,7 @@ class BookScannerWorker(QRunnable):
             for row in rows
             if row[3]
         ]
+        return books, duplicate_results
 
 
 class BookScanner(BaseScanner):
@@ -481,15 +972,15 @@ class BookScanner(BaseScanner):
         on_finished,
         on_progress=None,
         on_error=None,
-        on_store_files_pending=None,
+        on_store_action_summary=None,
         on_uuid_duplicate_toast=None,
     ) -> None:
         worker = BookScannerWorker(folder)
 
-        def _on_finished_and_release(books: list) -> None:
+        def _on_finished_and_release(books: list, duplicate_candidates: list) -> None:
             if worker in self._active_workers:
                 self._active_workers.remove(worker)
-            on_finished(books)
+            on_finished(books, duplicate_candidates)
 
         def _on_error_and_release(msg: str) -> None:
             if worker in self._active_workers:
@@ -501,8 +992,8 @@ class BookScanner(BaseScanner):
         if on_progress:
             worker.signals.progress.connect(on_progress)
         worker.signals.error.connect(_on_error_and_release)
-        if on_store_files_pending:
-            worker.signals.storeFilesPending.connect(on_store_files_pending)
+        if on_store_action_summary:
+            worker.signals.storeActionSummary.connect(on_store_action_summary)
         if on_uuid_duplicate_toast:
             worker.signals.uuidDuplicateToast.connect(on_uuid_duplicate_toast)
         self._active_workers.append(worker)

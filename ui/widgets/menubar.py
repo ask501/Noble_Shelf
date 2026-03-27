@@ -228,6 +228,15 @@ def setup_menubar(window):
     window._act_filter_no_cover.triggered.connect(window._set_filter_no_cover_only)
     view_menu.addAction(window._act_filter_no_cover)
 
+    view_menu.addSeparator()
+    window._act_view_missing_books = QAction(config.VIEW_MENU_MISSING_BOOKS_ACTION_LABEL, window)
+    window._act_view_missing_books.setCheckable(True)
+    window._act_view_missing_books.setChecked(
+        getattr(window, "_filter_missing_books_only", False)
+    )
+    window._act_view_missing_books.triggered.connect(window._set_filter_missing_books_only)
+    view_menu.addAction(window._act_view_missing_books)
+
     # ── ツールメニュー（ふりがな・PDF修復）──
     tool_menu = menubar.addMenu("ツール(&L)")
     act_kana = QAction("ふりがな一括取得", window)
@@ -242,6 +251,8 @@ def setup_menubar(window):
     tool_menu.addAction(act_bookmarklet)
     window._act_tool_library_check = QAction("ライブラリ整合性チェック...", window)
     tool_menu.addAction(window._act_tool_library_check)
+    window._act_tool_missing_books = QAction("見つからない本を確認...", window)
+    tool_menu.addAction(window._act_tool_missing_books)
 
     # ── 設定メニュー ──
     setting_menu = menubar.addMenu("設定(&T)")

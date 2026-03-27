@@ -10,6 +10,7 @@ BORDER_WIDTH  = 1       # ボーダー幅(px)
 
 # ── アプリ名（全ウィンドウのタイトルに使用）─────────────────
 APP_TITLE = "Noble Shelf"
+STORE_FILE_NAMESPACE = "9f4a5f5f-52f1-4b13-9db0-9ad7b4df7f1a"
 
 WINDOW_WIDTH = 1600
 WINDOW_HEIGHT = 900
@@ -202,8 +203,21 @@ SCAN_STALE_DELETE_SKIP_FRACTION_DENOMINATOR = 2
 DB_BUSY_TIMEOUT_MS = 3000
 # scanners/book_scanner.py: 進捗シグナル発火間隔（件）
 SCAN_PROGRESS_EMIT_INTERVAL = 10
+# scanners/book_scanner.py: 診断ログで path 一覧を省略する際の最大件数
+SCAN_LOG_PATH_LIST_MAX = 40
 # scanners/book_scanner.py: mtime比較の許容誤差（秒）
 MTIME_TOLERANCE = 2.0
+# scanners/book_scanner.py: Phase2 missing_map で content_hash が NULL の行を束ねるキー
+SCAN_MISSING_HASH_MAP_KEY = "__NULL__"
+# scanners/book_scanner.py: missing本を自動削除するまでの日数
+MISSING_BOOK_TTL_DAYS = 30
+# ui/widgets/menubar.py: 「見つからない本を表示...」OFF=通常グリッドでは非表示、ON=missing のみ表示
+VIEW_MENU_MISSING_BOOKS_ACTION_LABEL = "見つからない本を表示..."
+# ui/dialogs/missing_books_dialog.py: 行クリック／今すぐ削除の確認（{title}=作品タイトル）
+MISSING_BOOKS_DIALOG_ROW_DELETE_TEXT_TEMPLATE = '"{title}" をライブラリから削除しますか？'
+MISSING_BOOKS_DIALOG_ROW_DELETE_INFO = "この操作は取り消せません。"
+MISSING_BOOKS_DIALOG_BTN_DELETE = "削除"
+MISSING_BOOKS_DIALOG_BTN_CANCEL = "キャンセル"
 
 # scanners/book_scanner.py: 作品フォルダ内の永続UUID（.noble-shelf-id）
 NOBLE_SHELF_ID_FILENAME = ".noble-shelf-id"

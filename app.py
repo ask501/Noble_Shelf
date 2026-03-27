@@ -43,11 +43,12 @@ from ui.widgets.toolbar import ToolBar
 from drop_handler import handle_drop, _get_pdf_cover_and_pages
 from ui.dialogs.filter_popover import FilterPopover
 from theme import THEME_COLORS, COLOR_BORDER, apply_dark_titlebar, get_statusbar_scan_progress_qss
-from ui.dialogs.properties import _auto_kana, _needs_kana_conversion, StoreFileInputDialog
+from ui.dialogs.properties import _auto_kana, _needs_kana_conversion
 from ui.widgets.menubar import setup_menubar, refresh_shortcuts
 from ui.dialogs.first_run import LibrarySetupOverlay
 from ui.widgets.statusbar import setup_statusbar
 from ui.widgets.toast import ToastWidget
+from noble_shelf.store_file_resolver import ActionResult
 
 
 def _cover_has_path_segment(clean: str) -> bool:
@@ -115,6 +116,8 @@ class MainWindow(QMainWindow):
         self._filter_dlsite_only: bool = False
         self._filter_fanza_only: bool = False
         self._filter_no_cover_only: bool = False  # 表示メニュー「サムネイル未設定」選択時
+        # 表示メニュー「見つからない本を表示...」OFF=通常グリッドでは missing を出さない / ON=missing のみ
+        self._filter_missing_books_only: bool = False
         # 起動後最初のスキャン完了まで True（ストアファイル登録ダイアログを抑止する判定に使用）
         self._is_startup_scan: bool = True
         self._open_viewers: list = []  # 内置ビューワー（すべて閉じる用）
@@ -206,6 +209,8 @@ class MainWindow(QMainWindow):
                 break
         if hasattr(self, "_act_tool_library_check"):
             self._act_tool_library_check.triggered.connect(self._open_library_check_dialog)
+        if hasattr(self, "_act_tool_missing_books"):
+            self._act_tool_missing_books.triggered.connect(self._open_missing_books_dialog)
 
     def _on_open_settings(self):
         """設定ダイアログを開きショートカットとカード表示を反映する。"""
@@ -227,6 +232,13 @@ class MainWindow(QMainWindow):
         from ui.dialogs.library_check_dialog import LibraryCheckDialog
 
         dlg = LibraryCheckDialog(library_folder, self)
+        dlg.exec()
+
+    def _open_missing_books_dialog(self) -> None:
+        """見つからない本一覧ダイアログを開く。"""
+        from ui.dialogs.missing_books_dialog import MissingBooksDialog
+
+        dlg = MissingBooksDialog(self)
         dlg.exec()
 
     # ── ファイルメニュー ────────────────────────────────────
@@ -1204,11 +1216,11 @@ class MainWindow(QMainWindow):
             on_finished=self._on_scan_finished,
             on_progress=self._on_scan_progress,
             on_error=self._on_scan_error,
-            on_store_files_pending=self._on_store_files_pending,
+            on_store_action_summary=self._on_store_action_summary,
             on_uuid_duplicate_toast=self._on_uuid_duplicate_toast,
         )
 
-    def _on_scan_finished(self, books: list):
+    def _on_scan_finished(self, books: list, duplicate_results: list):
         """スキャン完了時に一覧・件数・サイドバーを更新する。"""
         try:
             # スキャン結果の cover は DB の生値（ID/相対パス）なので表示用に解決する（サムネ設定が剥がれて見えない問題を防ぐ）
@@ -1259,70 +1271,185 @@ class MainWindow(QMainWindow):
             self._set_scan_blocked(False)
             if hasattr(self, "_scan_stale_flag"):
                 self._scan_stale_flag.setVisible(False)
+            if duplicate_results:
+                self._handle_store_file_duplicates(duplicate_results)
+            self._show_missing_books_toast_if_needed()
         finally:
             # 起動時スキャンは1回完了したら終了（以降のスキャンではストアダイアログを通常表示）
             self._is_startup_scan = False
             self._hide_scan_progress_ui()
 
-    def _on_store_files_pending(self, pending_list: list):
-        """ストアファイル追加時に入力ダイアログで登録。起動後最初のスキャン中はダイアログを出さずファイル名から登録する。"""
-        if self._is_startup_scan:
-            for item in pending_list:
-                path = item["path"]
-                name = item["name"]
-                mtime = item["mtime"]
-                sc = (item.get("suggested_circle") or "").strip()
-                st = (item.get("suggested_title") or name).strip()
-                display_name = db.format_book_name(sc, st) or name
-                ext = os.path.splitext(name)[1].lower()
-                is_dlst = 1 if ext == config.STORE_FILE_EXT_DLSITE else 0
-                db.upsert_store_file_book(
-                    path, display_name, sc, st, "", mtime, is_dlst, None
-                )
-            return
-        for item in pending_list:
-            path = item["path"]
-            name = item["name"]
-            mtime = item["mtime"]
-            suggested_circle = item.get("suggested_circle", "")
-            suggested_title = item.get("suggested_title", name)
-            dlg = StoreFileInputDialog(
-                path, name, mtime, suggested_circle, suggested_title, self
-            )
-            if dlg.exec() != QDialog.Accepted or not dlg.result:
+    def _on_store_action_summary(self, rename_results: list, error_results: list) -> None:
+        if rename_results:
+            self._handle_store_file_renames(rename_results)
+        if error_results:
+            self._handle_store_file_errors(error_results)
+
+    def _handle_store_file_duplicates(self, duplicate_results: list[ActionResult]) -> None:
+        from ui.dialogs.properties import MetaApplyDialog
+        import re as _re
+
+        books_rows = db.get_all_books()
+        row_by_path = {r[3]: r for r in books_rows}
+
+        for result in duplicate_results:
+            winner_path = (result.existing_path or "").strip()
+            loser_path = (result.db_path or "").strip()
+            if not winner_path or not loser_path:
                 continue
-            book_tuple, meta = dlg.result
-            disp_name, circle, title, abs_path, _cover_empty, mtime, _tuple_is_dlst = book_tuple
-            ext = os.path.splitext(name)[1].lower()
-            is_dlst = 1 if ext == config.STORE_FILE_EXT_DLSITE else 0
-            cover_arg = ""
-            if meta and meta.get("cover_path"):
-                cover_arg = meta["cover_path"]
-            db.upsert_store_file_book(
-                abs_path,
-                disp_name,
-                circle,
-                title,
-                cover_arg,
-                mtime,
-                is_dlst,
-                None,
+            if winner_path == loser_path:
+                continue
+
+            winner_row = row_by_path.get(winner_path)
+            loser_row = row_by_path.get(loser_path)
+            if not winner_row:
+                continue
+            winner_abs = self._safe_from_db_path(winner_path)
+            if not loser_row:
+                loser_abs = self._safe_from_db_path(loser_path)
+                if loser_abs and os.path.exists(loser_abs):
+                    # 旧パスが実在しない場合は「重複」ではなく実質リネームとして扱い、削除せずDBのpathを新規側へ移す
+                    if not (winner_abs and os.path.exists(winner_abs)):
+                        db.rename_book(
+                            winner_path,
+                            loser_path,
+                            winner_row[0] or "",
+                            winner_row[1] or "",
+                            winner_row[2] or (winner_row[0] or ""),
+                            winner_row[4] or "",
+                        )
+                        self.on_book_updated(loser_abs)
+                    else:
+                        msg = (
+                            "同一内容のファイルが既に登録されています。\n\n"
+                            f"既存: {winner_path}\n"
+                            f"新規: {loser_path}\n\n"
+                            "新規側ファイルを削除しますか？"
+                        )
+                        if QMessageBox.question(
+                            self,
+                            "重複ファイル検出",
+                            msg,
+                            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                            QMessageBox.StandardButton.Yes,
+                        ) == QMessageBox.StandardButton.Yes:
+                            try:
+                                os.remove(loser_abs)
+                            except Exception:
+                                pass
+                continue
+
+            loser_abs = self._safe_from_db_path(loser_path)
+            winner_meta = db.get_book_meta(winner_abs) or {}
+            loser_meta = db.get_book_meta(loser_abs) or {}
+
+            winner_cover = db.resolve_cover_stored_value(winner_row[4] or "")
+            loser_cover = db.resolve_cover_stored_value(loser_row[4] or "")
+            winner_has_cover = bool(winner_cover and os.path.isfile(winner_cover))
+            loser_has_cover = bool(loser_cover and os.path.isfile(loser_cover))
+            current = {
+                "title": winner_row[2] or winner_row[0] or "",
+                "circle": winner_row[1] or "",
+                "author": winner_meta.get("author", ""),
+                "series": winner_meta.get("series", ""),
+                "characters": winner_meta.get("characters", []),
+                "tags": winner_meta.get("tags", []),
+                "pages": winner_meta.get("pages"),
+                "release_date": winner_meta.get("release_date", ""),
+                "price": winner_meta.get("price"),
+                "dlsite_id": winner_meta.get("dlsite_id", ""),
+                "store_url": winner_meta.get("store_url", ""),
+                "cover": winner_cover if winner_has_cover else "",
+            }
+            fetched = {
+                "title": loser_row[2] or loser_row[0] or "",
+                "circle": loser_row[1] or "",
+                "author": loser_meta.get("author", ""),
+                "series": loser_meta.get("series", ""),
+                "characters": loser_meta.get("characters", []),
+                "tags": loser_meta.get("tags", []),
+                "pages": loser_meta.get("pages"),
+                "release_date": loser_meta.get("release_date", ""),
+                "price": loser_meta.get("price"),
+                "dlsite_id": loser_meta.get("dlsite_id", ""),
+                "store_url": loser_meta.get("store_url", ""),
+                "image_url": loser_cover if loser_has_cover else "",
+                "site": "",
+            }
+
+            dlg = MetaApplyDialog(current=current, fetched=fetched, parent=self, book_path=winner_abs)
+            if dlg.exec() != QDialog.Accepted:
+                continue
+
+            applied = dlg.selected_keys()
+            rd = applied.get("release_date", "")
+            m = _re.match(r"(\d{4})[-/\.](\d{1,2})[-/\.](\d{1,2})", rd)
+            if m:
+                rd = f"{m.group(1)}年{int(m.group(2))}月{int(m.group(3))}日"
+            _to_list = lambda s: [t.strip() for t in (s or "").split(",") if t.strip()]
+            _to_int = lambda s: int(str(s).strip()) if s and str(s).strip().isdigit() else None
+
+            db.set_book_meta(
+                winner_path,
+                author=applied.get("author") or None,
+                series=applied.get("series") or None,
+                characters=_to_list(applied.get("characters")) or None,
+                tags=_to_list(applied.get("tags")) or None,
+                pages=_to_int(applied.get("pages")),
+                release_date=rd or None,
+                price=_to_int(applied.get("price")),
+                dlsite_id=applied.get("dlsite_id") or None,
+                store_url=applied.get("store_url") or None,
             )
-            if meta:
-                meta_src = db._effective_meta_source("", (meta.get("dlsite_id") or "").strip())
-                db.set_book_meta(
-                    path,
-                    author=meta.get("author", ""),
-                    series=meta.get("series", ""),
-                    characters=meta.get("characters"),
-                    tags=meta.get("tags"),
-                    pages=meta.get("pages"),
-                    release_date=meta.get("release_date") or None,
-                    price=meta.get("price"),
-                    memo=meta.get("memo") or None,
-                    dlsite_id=meta.get("dlsite_id") or None,
-                    meta_source=meta_src,
-                )
+            db.update_book_display(
+                winner_path,
+                circle=applied.get("circle") or "",
+                title=applied.get("title") or "",
+            )
+            cover_path = applied.get("cover_path")
+            if cover_path:
+                db.set_cover_custom(winner_path, cover_path)
+            elif (not winner_has_cover) and loser_has_cover:
+                # ダイアログでカバー未選択でも、採用側にカバーが無い場合は重複側のカバーを引き継ぐ
+                db.update_book_cover_path(winner_path, loser_cover)
+
+            db.delete_book(loser_path)
+            try:
+                if loser_abs and os.path.exists(loser_abs):
+                    os.remove(loser_abs)
+            except Exception:
+                pass
+            self.on_book_updated(winner_abs)
+
+    def _handle_store_file_renames(self, rename_results: list[ActionResult]) -> None:
+        if not rename_results:
+            return
+        first = rename_results[0]
+        old_path = (first.existing_path or "").strip()
+        new_path = (first.db_path or "").strip()
+        msg = f"リネーム検出: {len(rename_results)}件"
+        if old_path and new_path:
+            msg += f"（例: {old_path} -> {new_path}）"
+        self._status_label.setText(msg)
+
+    def _handle_store_file_errors(self, error_results: list[ActionResult]) -> None:
+        if not error_results:
+            return
+        if len(error_results) == 1:
+            e = error_results[0]
+            e_type = (e.error_type or "ERROR").strip()
+            e_msg = (e.error_message or "").strip()
+            self._status_label.setText(f"スキャンエラー: {e_type} {e_msg}")
+            return
+        text = "\n".join(
+            f"- {(e.error_type or 'ERROR')}: {(e.error_message or '').strip()} ({(e.db_path or '').strip()})"
+            for e in error_results[:20]
+        )
+        QMessageBox.warning(
+            self,
+            "スキャンエラー",
+            f"{len(error_results)}件のエラーが発生しました。\n\n{text}",
+        )
 
     def _refresh_books_from_db(self):
         """DBから一覧を再取得してグリッド・サイドバー・タイトルを更新する。"""
@@ -1559,6 +1686,21 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_statusbar"):
             self._statusbar.showMessage(message, config.SCAN_TOAST_DURATION_MS)
 
+    def _show_missing_books_toast_if_needed(self) -> None:
+        """missing本の件数トーストを表示し、クリックで詳細を開く。"""
+        count = db.get_missing_books_count()
+        if count <= 0:
+            return
+        msg = (
+            f"見つからない本が{count}件あります"
+            f"（{config.MISSING_BOOK_TTL_DAYS}日後に自動削除されます）"
+        )
+        ToastWidget(
+            self,
+            msg,
+            on_click=self._open_missing_books_dialog,
+        )
+
     def _on_scan_error(self, msg: str):
         """エラー時もウィンドウタイトルを既定の短い表記に戻す。"""
         print(f"[SCAN_ERROR] msg={msg!r}")
@@ -1605,6 +1747,9 @@ class MainWindow(QMainWindow):
 
         # サムネイル未設定フィルタ（表示メニュー）
         books = self._apply_no_cover_filter(books)
+
+        # 見つからない本：通常はグリッドから除外、メニューON時のみ missing のみ表示
+        books = self._apply_missing_books_filter(books)
 
         # 検索フィルタ
         query = self._searchbar._input.text()
@@ -2265,6 +2410,67 @@ class MainWindow(QMainWindow):
             if not cover or not os.path.exists(cover):
                 result.append(b)
         return result
+
+    def _norm_path_for_missing_filter(self, path: str) -> str:
+        """missing 判定用にパスを正規化する（空なら空文字）。"""
+        p = (path or "").strip()
+        if not p:
+            return ""
+        try:
+            return os.path.normpath(os.path.abspath(p))
+        except OSError:
+            return os.path.normpath(p)
+
+    def _missing_book_paths_norm_set(self) -> set[str]:
+        """DB 上で missing とみなす path を正規化した集合。"""
+        missing_set: set[str] = set()
+        for row in db.get_missing_books():
+            raw = (row.get("path") or "").strip()
+            if not raw:
+                continue
+            resolved = self._safe_from_db_path(raw)
+            if not resolved:
+                continue
+            key = self._norm_path_for_missing_filter(resolved)
+            if key:
+                missing_set.add(key)
+        return missing_set
+
+    def _apply_missing_books_filter(self, books: list[dict]) -> list[dict]:
+        """見つからない本の表示制御。
+
+        - メニューOFF: 通常グリッドでは missing を一覧から除外する。
+        - メニューON: missing のみ表示する。
+        """
+        missing_set = self._missing_book_paths_norm_set()
+        if getattr(self, "_filter_missing_books_only", False):
+            if not missing_set:
+                return []
+            result: list[dict] = []
+            for b in books:
+                bp = (b.get("path") or "").strip()
+                if not bp:
+                    continue
+                if self._norm_path_for_missing_filter(bp) in missing_set:
+                    result.append(b)
+            return result
+        if not missing_set:
+            return books
+        result_off: list[dict] = []
+        for b in books:
+            bp = (b.get("path") or "").strip()
+            if not bp:
+                continue
+            if self._norm_path_for_missing_filter(bp) not in missing_set:
+                result_off.append(b)
+        return result_off
+
+    def _set_filter_missing_books_only(self, checked: bool) -> None:
+        """見つからない本フィルタ（通常は非表示／ONで missing のみ）を更新し再適用する。"""
+        self._filter_missing_books_only = checked
+        if hasattr(self, "_act_view_missing_books"):
+            self._act_view_missing_books.setChecked(checked)
+        self._apply_filters()
 
     def _set_filter_no_cover_only(self, checked: bool):
         """サムネ未設定のみ表示フラグを更新し再適用する。"""

@@ -17,11 +17,13 @@ import sys
 import time
 import unicodedata
 import uuid as uuid_lib
+import hashlib
 from contextlib import contextmanager
 from datetime import datetime
 import config
 from paths import DB_FILE, BACKUP_DIR, to_rel
 import cache
+from noble_shelf.store_file_resolver import ActionResult
 
 UNSET = object()
 
@@ -70,6 +72,19 @@ def transaction():
 def _new_uuid() -> str:
     """UUID v4文字列を返す。"""
     return str(uuid_lib.uuid4())
+
+
+def _compute_store_content_hash(abs_path: str) -> str | None:
+    try:
+        size = os.path.getsize(abs_path)
+        with open(abs_path, "rb") as f:
+            if size < 2 * 1024 * 1024:
+                data = f.read()
+            else:
+                data = f.read(2 * 1024 * 1024)
+        return hashlib.sha256(data).hexdigest()
+    except Exception:
+        return None
 
 
 def _get_library_root() -> str:
@@ -161,6 +176,7 @@ def upsert_book_by_uuid(
     mtime: float | None = None,
     is_dlst: int = 0,
     pages: int | None = None,
+    content_hash: str | None = None,
 ) -> None:
     """uuid指定でbooksをupsertする。pathはUNIQUEで維持する。"""
     if not book_uuid or not path:
@@ -169,13 +185,16 @@ def upsert_book_by_uuid(
     conn = get_conn()
     try:
         conn.execute(
-            """INSERT INTO books(uuid, name, circle, title, path, cover_path, mtime, is_dlst, updated_at)
-               VALUES(?,?,?,?,?,?,?,?,datetime('now','localtime'))
+            """INSERT INTO books(uuid, name, circle, title, path, cover_path, mtime, is_dlst, content_hash, updated_at)
+               VALUES(?,?,?,?,?,?,?,?,?,datetime('now','localtime'))
                ON CONFLICT(uuid) DO UPDATE SET
                  name=excluded.name, circle=excluded.circle, title=excluded.title,
                  path=excluded.path, cover_path=excluded.cover_path, mtime=excluded.mtime,
-                 is_dlst=excluded.is_dlst, updated_at=excluded.updated_at""",
-            (book_uuid, name, circle, title, path, store_cover, mtime, is_dlst),
+                 is_dlst=excluded.is_dlst,
+                 content_hash=COALESCE(excluded.content_hash, books.content_hash),
+                 missing_since_date=NULL,
+                 updated_at=excluded.updated_at""",
+            (book_uuid, name, circle, title, path, store_cover, mtime, is_dlst, content_hash),
         )
         conn.commit()
         if pages is not None:
@@ -185,49 +204,151 @@ def upsert_book_by_uuid(
     cache.invalidate()
 
 
-def upsert_store_file_book(
-    abs_path: str,
-    name: str,
-    circle: str,
-    title: str,
-    cover_path: str = "",
-    mtime: float | None = None,
-    is_dlst: int = 0,
-    pages: int | None = None,
-) -> None:
-    """
-    ストアファイル等（ライブラリ直下・.noble-shelf-id なし）を books に登録する。
-    path は _to_db_path で相対化し、uuid は既存レコードがあれば path で引き継ぎ、
-    なければ path 文字列から uuid5 で安定生成する。
-    """
-    if not abs_path or not str(abs_path).strip():
+def apply_action_result(result: ActionResult, book_data: dict) -> None:
+    status = (result.status or "").strip()
+    if status in {"duplicate", "unchanged", "error"}:
         return
-    abs_norm = os.path.normpath(os.path.abspath(str(abs_path).strip()))
-    try:
-        rel_path = _to_db_path(abs_norm)
-    except ValueError:
-        rel_path = os.path.normpath(abs_norm)
+
+    db_path = (result.db_path or "").strip()
+    if not db_path:
+        return
+
+    name = (book_data.get("name") or "").strip()
+    circle = (book_data.get("circle") or "").strip()
+    title = (book_data.get("title") or "").strip()
+    cover_path = book_data.get("cover_path") or ""
+    mtime = book_data.get("mtime")
+    is_dlst = 1 if bool(book_data.get("is_dlst")) else 0
+    pages = book_data.get("pages")
+    content_hash = (book_data.get("content_hash") or "").strip() or None
+
+    if status == "rename":
+        if not (result.existing_path or "").strip():
+            return
+        rename_book_path(
+            result.existing_uuid or "",
+            db_path,
+            mtime,
+            content_hash,
+        )
+        return
+
+    if status == "updated":
+        upsert_book_by_uuid(
+            result.existing_uuid or _new_uuid(),
+            name,
+            circle,
+            title,
+            db_path,
+            cover_path,
+            mtime,
+            is_dlst,
+            pages,
+            content_hash=content_hash,
+        )
+        return
+
+    if status == "created":
+        book_uuid = (
+            str(uuid_lib.uuid5(uuid_lib.UUID(config.STORE_FILE_NAMESPACE), content_hash))
+            if content_hash
+            else _new_uuid()
+        )
+        upsert_book_by_uuid(
+            book_uuid,
+            name,
+            circle,
+            title,
+            db_path,
+            cover_path,
+            mtime,
+            is_dlst,
+            pages,
+            content_hash=content_hash,
+        )
+
+
+def rename_book_path(
+    uuid: str,
+    new_path: str,
+    new_mtime: float | None,
+    new_content_hash: str | None,
+) -> None:
+    """rename時は path/mtime/content_hash のみ更新し、表示メタは維持する。"""
+    if not uuid or not str(uuid).strip():
+        return
+    if not new_path or not str(new_path).strip():
+        return
     conn = get_conn()
     try:
-        row = conn.execute("SELECT uuid FROM books WHERE path=?", (rel_path,)).fetchone()
-        if row:
-            book_uuid = row["uuid"]
-        else:
-            key = os.path.normcase(os.path.normpath(rel_path))
-            book_uuid = str(uuid_lib.uuid5(uuid_lib.NAMESPACE_URL, key))
+        conn.execute(
+            """
+            UPDATE books
+            SET path=?, mtime=?, content_hash=?, missing_since_date=NULL, updated_at=datetime('now','localtime')
+            WHERE uuid=?
+            """,
+            (
+                str(new_path).strip(),
+                new_mtime,
+                (str(new_content_hash).strip() if new_content_hash else None),
+                str(uuid).strip(),
+            ),
+        )
+        conn.commit()
     finally:
         conn.close()
-    upsert_book_by_uuid(
-        book_uuid,
-        name,
-        circle,
-        title,
-        rel_path,
-        cover_path or "",
-        mtime,
-        is_dlst,
-        pages,
-    )
+    cache.invalidate()
+
+
+def fetch_all_rows_for_index() -> list[dict]:
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT
+                rowid,
+                uuid,
+                path,
+                content_hash,
+                mtime,
+                missing_since_date,
+                COALESCE(is_dlst, 0) AS is_dlst
+            FROM books
+            """
+        ).fetchall()
+        return [
+            {
+                "rowid": r["rowid"],
+                "uuid": r["uuid"],
+                "path": r["path"],
+                "content_hash": r["content_hash"],
+                "mtime": r["mtime"],
+                "missing_since_date": r["missing_since_date"],
+                "file_ext": os.path.splitext(r["path"] or "")[1].lower(),
+                "is_dlst": int(r["is_dlst"] or 0),
+            }
+            for r in rows
+            if r["path"]
+        ]
+    finally:
+        conn.close()
+
+
+def update_content_hash(uuid: str, content_hash: str) -> None:
+    """books.content_hash のみ更新する。"""
+    if not uuid or not str(uuid).strip():
+        return
+    if content_hash is None:
+        return
+    conn = get_conn()
+    try:
+        conn.execute(
+            "UPDATE books SET content_hash=? WHERE uuid=?",
+            (str(content_hash).strip(), str(uuid).strip()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def _is_uuid_schema_ready(c: sqlite3.Cursor) -> bool:
@@ -298,6 +419,8 @@ def init_db():
                 title       TEXT NOT NULL,
                 cover_path  TEXT,
                 mtime       REAL,
+                content_hash TEXT,
+                missing_since_date TEXT DEFAULT NULL,
                 updated_at  TEXT DEFAULT (datetime('now','localtime'))
             )
         """)
@@ -433,10 +556,15 @@ def init_db():
         # ── booksテーブルにis_dlstカラムを追加（なければ）──
         if 'is_dlst' not in cols:
             c.execute("ALTER TABLE books ADD COLUMN is_dlst INTEGER DEFAULT 0")
+        if "content_hash" not in cols:
+            c.execute("ALTER TABLE books ADD COLUMN content_hash TEXT")
+        if "missing_since_date" not in cols:
+            c.execute("ALTER TABLE books ADD COLUMN missing_since_date TEXT DEFAULT NULL")
 
         # ── インデックス ───────────────────────────────
         c.execute("CREATE INDEX IF NOT EXISTS idx_books_circle ON books(circle)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_books_path ON books(path)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_books_content_hash ON books(content_hash)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_characters_uuid ON book_characters(uuid)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_tags_uuid ON book_tags(uuid)")
 
@@ -850,6 +978,105 @@ def get_all_books():
         conn.close()
 
 
+def clear_missing_since_for_paths(paths: list[str]) -> None:
+    """再検出されたパスの missing_since_date を NULL に戻す。"""
+    targets = [str(p).strip() for p in (paths or []) if str(p).strip()]
+    if not targets:
+        return
+    conn = get_conn()
+    try:
+        try:
+            conn.executemany(
+                "UPDATE books SET missing_since_date=NULL WHERE path=?",
+                [(p,) for p in targets],
+            )
+            conn.commit()
+        except sqlite3.OperationalError:
+            # 旧スキーマ環境（missing_since_date未追加）では何もしない。
+            pass
+    finally:
+        conn.close()
+
+
+def mark_missing_since_if_null(path: str, iso_utc: str) -> None:
+    """初回missing時のみ missing_since_date を記録する。"""
+    p = (path or "").strip()
+    ts = (iso_utc or "").strip()
+    if not p or not ts:
+        return
+    conn = get_conn()
+    try:
+        try:
+            conn.execute(
+                """
+                UPDATE books
+                SET missing_since_date=?
+                WHERE path=? AND (missing_since_date IS NULL OR missing_since_date='')
+                """,
+                (ts, p),
+            )
+            conn.commit()
+        except sqlite3.OperationalError:
+            # 旧スキーマ環境（missing_since_date未追加）では何もしない。
+            pass
+    finally:
+        conn.close()
+
+
+def delete_books_by_paths(paths: list[str]) -> None:
+    """path 指定で books と bookmarks を削除する。"""
+    unique_paths = [str(p).strip() for p in (paths or []) if str(p).strip()]
+    if not unique_paths:
+        return
+    conn = get_conn()
+    try:
+        conn.executemany("DELETE FROM books WHERE path=?", [(p,) for p in unique_paths])
+        conn.executemany("DELETE FROM bookmarks WHERE path=?", [(p,) for p in unique_paths])
+        conn.commit()
+    finally:
+        conn.close()
+    cache.invalidate()
+
+
+def get_missing_books() -> list[dict]:
+    """missing_since_date が記録された books を返す。"""
+    conn = get_conn()
+    try:
+        try:
+            rows = conn.execute(
+                """
+                SELECT uuid, name, title, path, missing_since_date
+                FROM books
+                WHERE missing_since_date IS NOT NULL AND missing_since_date <> ''
+                ORDER BY missing_since_date ASC
+                """
+            ).fetchall()
+            return [dict(r) for r in rows]
+        except sqlite3.OperationalError:
+            return []
+    finally:
+        conn.close()
+
+
+def get_missing_books_count() -> int:
+    """missing_since_date が記録された件数を返す。"""
+    conn = get_conn()
+    try:
+        try:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS cnt
+                FROM books
+                WHERE missing_since_date IS NOT NULL AND missing_since_date <> ''
+                """
+            ).fetchone()
+            return int(row["cnt"] if row else 0)
+        except sqlite3.OperationalError:
+            return 0
+    finally:
+        conn.close()
+
+
 def get_all_books_order_by_added_desc():
     """全booksを追加順（updated_at 降順）で返す。get_all_books と同じ形式。"""
     conn = get_conn()
@@ -938,6 +1165,69 @@ def get_known_paths():
         conn.close()
 
 
+def get_paths_missing_content_hash() -> set[str]:
+    """content_hash 未設定の books.path を正規化キー集合で返す。"""
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT path FROM books WHERE content_hash IS NULL OR content_hash=''"
+        ).fetchall()
+        return {
+            os.path.normcase(os.path.normpath(r["path"] or ""))
+            for r in rows
+            if r["path"]
+        }
+    finally:
+        conn.close()
+
+
+def get_store_upsert_seed(path: str) -> dict | None:
+    """store再upsert用に既存books/book_metaの値を返す。pathはDB保存形式。"""
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            """
+            SELECT
+                b.name AS name,
+                b.circle AS circle,
+                b.title AS title,
+                COALESCE(NULLIF(b.cover_custom, ''), b.cover_path, '') AS cover_path,
+                COALESCE(b.is_dlst, 0) AS is_dlst,
+                b.mtime AS mtime,
+                bm.pages AS pages
+            FROM books b
+            LEFT JOIN book_meta bm ON bm.uuid = b.uuid
+            WHERE b.path=?
+            LIMIT 1
+            """,
+            (path,),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def find_book_by_content_hash(content_hash: str) -> dict | None:
+    """content_hash 一致の books 行（先頭1件）を返す。"""
+    if not content_hash:
+        return None
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            """
+            SELECT uuid, path, name, circle, title, cover_path, mtime, COALESCE(is_dlst, 0) AS is_dlst
+            FROM books
+            WHERE content_hash=?
+            ORDER BY rowid ASC
+            LIMIT 1
+            """,
+            (content_hash,),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
 def get_books_updated_at_map() -> dict[str, float]:
     """path -> updated_at のマップを返す（追加順ソート用）"""
     conn = get_conn()
@@ -967,6 +1257,17 @@ def is_path_registered(path: str) -> bool:
 
 
 def upsert_book(name, circle, title, path, cover_path, mtime=None, is_dlst=0, pages=None):
+    # 呼び出し経路で絶対／相対が混在するため、絶対パスのみライブラリ相対に揃える（既存相対はそのまま）
+    try:
+        if path and os.path.isabs(path):
+            path = _to_db_path(path)
+    except ValueError:
+        pass
+    try:
+        if cover_path and os.path.isabs(cover_path):
+            cover_path = _to_db_path(cover_path)
+    except ValueError:
+        pass
     store_cover = _normalize_cover_for_save(cover_path) if cover_path else ""
     conn = get_conn()
     try:

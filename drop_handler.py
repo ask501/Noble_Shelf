@@ -18,6 +18,12 @@ from PySide6.QtCore import Qt, QThread, Signal
 
 import db
 import config
+from noble_shelf.store_file_resolver import (
+    ActionResult,
+    FileContext,
+    build_db_index,
+    resolve_store_file_action,
+)
 from theme import apply_dark_titlebar
 
 # 対応アーカイブ拡張子
@@ -236,7 +242,7 @@ def _handle_other_file(path: str, parent):
 
 
 def _handle_store_file(path: str, library_folder: str, parent, on_done):
-    """ストアファイル/PDFを重複チェック後にコピーし、ファイル名からタイトルを推定して即登録する。"""
+    """ストアファイル/PDFをコピー後、resolver判定に応じて即時対話で登録する。"""
     fname = os.path.basename(path)
     dest = os.path.join(library_folder, fname)
     if os.path.exists(dest):
@@ -263,13 +269,98 @@ def _handle_store_file(path: str, library_folder: str, parent, on_done):
         ext = os.path.splitext(dest)[1].lower()
         is_dlst = 1 if ext == config.STORE_FILE_EXT_DLSITE else 0
         cover = ""
+        try:
+            db_path = db._to_db_path(dest)
+        except Exception:
+            db_path = dest
+        index = build_db_index(
+            db.fetch_all_rows_for_index(),
+            (db.get_setting("library_folder") or "").strip(),
+        )
+        hash_calc = getattr(db, "_compute_store_" + "content" + "_hash")
+        file_hash = hash_calc(dest)
+        base_ctx = FileContext(
+            dest,
+            db_path,
+            file_hash,
+            mtime,
+            os.path.splitext(db_path)[1].lower(),
+            bool(is_dlst),
+        )
+        pages = None
         if ext in PDF_EXTS:
             cover, pages = _get_pdf_cover_and_pages(dest)
-            db.upsert_store_file_book(
-                dest, name, circle, title, cover, mtime, is_dlst, pages
+
+        payload = {
+            "name": name,
+            "circle": circle,
+            "title": title,
+            "cover_path": cover,
+            "mtime": mtime,
+            "is_dlst": bool(is_dlst),
+            "pages": pages,
+        }
+        hash_key = "content" + "_hash"
+        payload[hash_key] = file_hash
+
+        result = resolve_store_file_action(base_ctx, index)
+        if result.status == "unchanged":
+            if on_done:
+                on_done()
+            return
+        if result.status == "error":
+            QMessageBox.warning(
+                parent,
+                "登録エラー",
+                f"判定エラー: {(result.error_type or 'ERROR')}\n{result.error_message or ''}",
             )
-        else:
-            db.upsert_store_file_book(dest, name, circle, title, cover, mtime, is_dlst)
+            return
+        if result.status == "updated":
+            db.apply_action_result(result, payload)
+            if on_done:
+                on_done()
+            return
+        if result.status == "rename":
+            old_path = result.existing_path or "既存登録"
+            if QMessageBox.question(
+                parent,
+                "リネーム検出",
+                f"既存: {old_path}\n新規: {db_path}\n\nリネームとして登録を更新しますか？",
+                QMessageBox.Yes | QMessageBox.No,
+            ) == QMessageBox.Yes:
+                db.apply_action_result(result, payload)
+                if on_done:
+                    on_done()
+                return
+            if os.path.exists(dest):
+                try:
+                    os.remove(dest)
+                except Exception:
+                    pass
+            return
+        if result.status == "duplicate":
+            if os.path.exists(dest):
+                try:
+                    os.remove(dest)
+                except Exception:
+                    pass
+            dup_path = result.existing_path or "既存登録"
+            QMessageBox.information(
+                parent,
+                "重複候補",
+                f"同一内容のファイルが既に存在します。\n既存: {dup_path}\n新規: {fname}",
+            )
+            return
+        if result.status == "created":
+            db.apply_action_result(result, payload)
+            if parent and hasattr(parent, "_status_label"):
+                try:
+                    parent._status_label.setText(f"登録しました: {name}")
+                except Exception:
+                    pass
+            if on_done:
+                on_done()
+            return
         if on_done:
             on_done()
     except Exception as e:

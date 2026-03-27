@@ -36,7 +36,7 @@ def scan_library(
     on_finished,
     on_progress=None,
     on_error=None,
-    on_store_files_pending=None,
+    on_store_action_summary=None,
     on_uuid_duplicate_toast=None,
 ) -> None:
     """library_folder 直下の各メディアサブフォルダを対応するスキャナで非同期スキャンする。
@@ -56,7 +56,7 @@ def scan_library(
         _scanning = True
         try:
             if on_finished is not None:
-                on_finished([])
+                on_finished([], [])
         finally:
             _scanning = False
         return
@@ -73,17 +73,27 @@ def scan_library(
     total = len(targets)
     pending = [total]
     merged: list[list] = [[]]  # ミュータブルな集約バッファ
+    merged_duplicates: list[list] = [[]]
+    merged_renames: list[list] = [[]]
+    merged_errors: list[list] = [[]]
 
-    def _on_one_finished(books: list) -> None:
+    def _on_one_finished(books: list, duplicate_candidates: list) -> None:
         global _scanning
         merged[0] = merged[0] + books
+        merged_duplicates[0] = merged_duplicates[0] + (duplicate_candidates or [])
         pending[0] -= 1
         if pending[0] == 0:
             try:
                 if on_finished is not None:
-                    on_finished(merged[0])
+                    on_finished(merged[0], merged_duplicates[0])
+                if on_store_action_summary is not None:
+                    on_store_action_summary(merged_renames[0], merged_errors[0])
             finally:
                 _scanning = False
+
+    def _on_action_summary(renames: list, errors: list) -> None:
+        merged_renames[0] = merged_renames[0] + (renames or [])
+        merged_errors[0] = merged_errors[0] + (errors or [])
 
     try:
         for scanner, sub in targets:
@@ -92,7 +102,7 @@ def scan_library(
                 on_finished=_on_one_finished,
                 on_progress=on_progress,
                 on_error=_on_error_wrapped,
-                on_store_files_pending=on_store_files_pending,
+                on_store_action_summary=_on_action_summary,
                 on_uuid_duplicate_toast=on_uuid_duplicate_toast,
             )
     except Exception:
