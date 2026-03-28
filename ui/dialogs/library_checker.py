@@ -13,7 +13,7 @@ def scan_unregistered(library_path: str, db) -> list[dict]:
         os.path.normcase(
             os.path.normpath(path if os.path.isabs(path) else os.path.join(base, path))
         )
-        for _, _, _, path, _, _ in db.get_all_books()
+        for _, _, _, path, _, _, _ in db.get_all_books()
         if path
     }
     hidden_paths = {
@@ -44,4 +44,3 @@ def scan_unregistered(library_path: str, db) -> list[dict]:
             )
     results.sort(key=lambda x: x["name"].lower())
     return results
-

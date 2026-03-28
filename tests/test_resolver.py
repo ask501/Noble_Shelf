@@ -1,6 +1,6 @@
 import unittest
 
-from noble_shelf.store_file_resolver import (
+from store_file_resolver import (
     DBIndex,
     DBRowSummary,
     FileContext,

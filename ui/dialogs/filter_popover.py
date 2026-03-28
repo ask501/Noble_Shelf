@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from typing import Callable, Optional
 
@@ -273,8 +274,8 @@ class FilterPopover(QWidget):
                 items = [n for n, _c in db.get_all_characters_with_count() if n]
             elif field == "tag":
                 items = [n for n, _c in db.get_all_tags_with_count() if n]
-        except Exception:
-            pass
+        except Exception as e:
+            logging.warning("[filter_popover] DBからフィルタ項目取得失敗: %s", e)
         return items
 
     def _populate_combo(self, combo: QComboBox, field: str) -> None:

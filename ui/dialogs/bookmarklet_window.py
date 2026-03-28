@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QAction, QPixmapCache
+import logging
 import config
 from theme import (
     APP_BAR_SEPARATOR_RGBA,
@@ -21,6 +22,9 @@ from theme import (
     COLOR_WHITE,
 )
 import db
+from book_updater import update_book_meta
+
+_logger = logging.getLogger(__name__)
 
 
 # ステータス定数
@@ -373,8 +377,11 @@ class BookmarkletWindow(QWidget):
         result = dlg.exec()
         if result:
             applied = dlg.selected_keys()
-            lib_root = (db.get_setting("library_folder") or "").strip()
-            found_path_db = db.to_rel(found_path, lib_root)
+            try:
+                found_path_db = db.to_db_path_from_any(found_path)
+            except ValueError as exc:
+                _logger.warning("bookmarklet: DB 用パスに変換できず中止: %s", exc)
+                return
 
             # release_dateの正規化
             import re as _re
@@ -400,16 +407,31 @@ class BookmarkletWindow(QWidget):
                 store_url=applied.get("store_url") or None,
             )
 
-            # books テーブルのタイトル・サークルも更新
+            # books テーブルのタイトル・サークル・カバー（カスタム）を更新
             new_title = applied.get("title", "") or ""
             new_circle = applied.get("circle", "") or ""
-            if new_title or new_circle:
-                db.update_book_display(found_path_db, circle=new_circle, title=new_title)
-
-            # カバー画像の更新
             cover_path = applied.get("cover_path")
-            if cover_path:
-                db.set_cover_custom(found_path_db, cover_path)
+            if new_title or new_circle or cover_path:
+                if new_title or new_circle:
+                    new_name_bm = db.format_book_name(new_circle, new_title)
+                    update_book_meta(
+                        found_path,
+                        new_name_bm,
+                        new_circle,
+                        new_title,
+                        cover_path=cover_path if cover_path else None,
+                    )
+                elif cover_path:
+                    for row in db.get_all_books():
+                        if row[3] == found_path_db:
+                            update_book_meta(
+                                found_path,
+                                row[0],
+                                row[1],
+                                row[2] or row[0],
+                                cover_path=cover_path,
+                            )
+                            break
 
             # キューのステータス更新
             db.update_bookmarklet_queue_status(row["id"], "applied")

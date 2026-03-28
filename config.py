@@ -45,6 +45,9 @@ FONT_SIZE_SIDEBAR_ITEM    = FONT_SIZE_DEFAULT   # サイドバーリスト項目
 FONT_SIZE_SIDEBAR_BADGE   = FONT_SIZE_DEFAULT   # サイドバーの件数バッジ
 FONT_SIZE_DIALOG_LABEL    = FONT_SIZE_DEFAULT   # ダイアログ・プロパティのラベル
 FONT_SIZE_DIALOG_INPUT    = FONT_SIZE_DEFAULT   # ダイアログの入力欄
+# ui/dialogs/bookmarklet_help_dialog.py（本文・ページ番号は同サイズ）
+FONT_SIZE_BOOKMARKLET_HELP_TITLE = FONT_SIZE_XL   # ページ見出し（QFont）
+FONT_SIZE_BOOKMARKLET_HELP_BODY  = FONT_SIZE_LG    # 本文・フッタ（QSS。旧: CONTEXT_MENU と同値）
 FONT_SIZE_BTN_DEFAULT     = FONT_SIZE_DEFAULT   # 通常ボタン
 FONT_SIZE_BTN_ACTION      = FONT_SIZE_MD        # 保存・キャンセル・取得等のアクションボタン（QSS）
 FONT_SIZE_BTN_LARGE       = FONT_SIZE_LG        # 主要ボタン（より大きくしたい場合）
@@ -324,11 +327,11 @@ BOOKMARKLET_HTTP_TIMEOUT_SEC = 5
 BOOKMARKLET_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 BOOKMARKLET_REFERER_DLSITE = "https://www.dlsite.com/"
 # ui/bookmarklet_help_dialog.py: ブックマークレットヘルプ（ページ送り）
+# フォントサイズは FONT_SIZE_BOOKMARKLET_HELP_*（セマンティック層）を参照
 # ブラウザ登録ページのスクリーンショットが横長のため幅を確保
 BOOKMARKLET_HELP_DIALOG_MIN_SIZE = (560, 380)
 BOOKMARKLET_HELP_DIALOG_SIZE = (680, 560)
-# ページタイトル行のフォントサイズ（本文は FONT_SIZE_CONTEXT_MENU を参照）
-BOOKMARKLET_HELP_PAGE_TITLE_FONT_SIZE = FONT_SIZE_LG
+BOOKMARKLET_HELP_PAGE_TITLE_FONT_SIZE = FONT_SIZE_BOOKMARKLET_HELP_TITLE
 BOOKMARKLET_HELP_FOOTER_SPACING = 8
 # ヘルプ内スクリーンショットの最大表示幅（ダイアログ幅に合わせ縮小）
 # ヘルプ内スクリーンショットの最大幅（大きすぎるとはみ出しやすいため 620 の約7割）
@@ -370,6 +373,12 @@ DROP_DIALOG_SPACING = 12
 DROP_DIALOG_BTN_HEIGHT = 32
 DROP_ZIP_PROGRESS_RANGE = (0, 100)
 DROP_ZIP_PROGRESS_MIN_DURATION_MS = 0
+# app.py: スキャン中は D&D / 貼り付けを拒否するときのダイアログ文言
+DROP_SCAN_BLOCKED_DIALOG_TITLE = "スキャン中"
+DROP_SCAN_BLOCKED_DROP_MESSAGE = "スキャン完了後にもう一度ドロップしてください。"
+DROP_SCAN_BLOCKED_PASTE_MESSAGE = "スキャン完了後にもう一度お試しください。"
+# drop_handler.py: 解凍失敗ダイアログタイトル
+DROP_EXTRACT_ERROR_DIALOG_TITLE = "解凍エラー"
 # drop_handler.py: PDFカバー生成スケール（見た目維持）
 PDF_COVER_SCALE = 1.5
 
@@ -608,6 +617,10 @@ PROP_FETCH_BTN_PADDING_X = 8
 # properties/meta_apply_dialog.py: レイアウト/寸法（見た目維持）
 META_APPLY_LAYOUT_MARGINS = (16, 16, 16, 12)  # left, top, right, bottom
 META_APPLY_LAYOUT_SPACING = 8
+
+# duplicate_cover_dialog.py: サムネ比較表示
+DUPLICATE_COVER_THUMB_SIZE = (160, 220)  # サムネ表示サイズ (w, h)
+DUPLICATE_COVER_THUMB_SPACING = 24  # サムネ間のスペーシング
 META_APPLY_FIELD_COL_WIDTH = 80
 META_APPLY_VALUE_COL_WIDTH = 160
 META_APPLY_ARROW_COL_WIDTH = 20

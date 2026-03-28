@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
+import logging
 import os
 from typing import Optional
 
@@ -24,7 +25,8 @@ def _safe_from_db_path(path: str) -> str:
         return os.path.normpath(path)
     try:
         return os.path.normpath(db._from_db_path(path))
-    except Exception:
+    except Exception as e:
+        logging.debug("[grid/model] DBパス解決失敗、入力を正規化して継続: %s", e)
         return os.path.normpath(path)
 
 
@@ -72,7 +74,8 @@ class BookListModel(QAbstractListModel):
             if os.path.isdir(path):
                 try:
                     count = sum(1 for name in os.listdir(path) if os.path.splitext(name)[1].lower() in PAGE_COUNT_EXTS)
-                except Exception:
+                except Exception as e:
+                    logging.debug("[grid/model] フォルダ内ページ数カウント失敗: %s", e)
                     count = 0
                 b["pages"] = count
                 return count
@@ -216,7 +219,10 @@ class BookListModel(QAbstractListModel):
         self._pending.discard(cover)
         cp = _cache_path(cover)
         if os.path.exists(cp):
-            os.remove(cp)
+            try:
+                os.remove(cp)
+            except Exception as e:
+                logging.warning("[grid/model] サムネキャッシュ削除失敗: %s", e)
         for i, b in enumerate(self._books):
             if b.get("cover") == cover:
                 idx = self.index(i)
@@ -241,6 +247,7 @@ class BookListModel(QAbstractListModel):
                 if pix.isNull():
                     continue
                 self._thumbs[cover] = pix
-            except Exception:
+            except Exception as e:
+                logging.debug("[grid/model] プリロードサムネ読込スキップ: %s", e)
                 continue
 

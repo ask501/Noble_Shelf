@@ -101,7 +101,7 @@ class BookmarkletHelpDialog(QDialog):
         root.setSpacing(config.THUMB_CROP_LAYOUT_SPACING)
 
         self._lbl_page_title = QLabel()
-        title_font = QFont(config.FONT_FAMILY, config.BOOKMARKLET_HELP_PAGE_TITLE_FONT_SIZE)
+        title_font = QFont(config.FONT_FAMILY, config.FONT_SIZE_BOOKMARKLET_HELP_TITLE)
         title_font.setBold(True)
         self._lbl_page_title.setFont(title_font)
         self._lbl_page_title.setStyleSheet(f"color: {THEME_COLORS['text_main']};")
@@ -112,7 +112,7 @@ class BookmarkletHelpDialog(QDialog):
         self._lbl_body.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         self._lbl_body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self._lbl_body.setStyleSheet(
-            f"color: {THEME_COLORS['text_main']}; font-size: {config.FONT_SIZE_CONTEXT_MENU}px;"
+            f"color: {THEME_COLORS['text_main']}; font-size: {config.FONT_SIZE_BOOKMARKLET_HELP_BODY}px;"
         )
         root.addWidget(self._lbl_body, stretch=1)
 
@@ -131,7 +131,7 @@ class BookmarkletHelpDialog(QDialog):
         self._lbl_counter = QLabel()
         self._lbl_counter.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._lbl_counter.setStyleSheet(
-            f"color: {THEME_COLORS['text_sub']}; font-size: {config.FONT_SIZE_CONTEXT_MENU}px;"
+            f"color: {THEME_COLORS['text_sub']}; font-size: {config.FONT_SIZE_BOOKMARKLET_HELP_BODY}px;"
         )
         footer.addWidget(self._lbl_counter, stretch=1)
 

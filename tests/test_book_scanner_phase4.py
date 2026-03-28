@@ -4,7 +4,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import MagicMock, patch
 
-from noble_shelf.store_file_resolver import ActionResult
+from store_file_resolver import ActionResult
 from scanners.book_scanner import BookScannerWorker
 
 

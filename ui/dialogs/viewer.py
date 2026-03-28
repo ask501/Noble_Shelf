@@ -8,6 +8,7 @@ viewer.py - 同人誌ビューワー（PySide6版）
 - キーボード操作（方向キー・スペースでページ送り、Escapeで全画面解除/閉じる）
 """
 from __future__ import annotations
+import logging
 import os
 from typing import Optional
 
@@ -547,6 +548,6 @@ class Viewer(QDialog):
         if self._reader:
             try:
                 self._reader.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logging.debug("[viewer] リーダーclose失敗: %s", e)
         super().closeEvent(event)

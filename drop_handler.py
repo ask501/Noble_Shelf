@@ -5,6 +5,7 @@ drop_handler.py - ドラッグ&ドロップ処理
 - 解凍中はプログレスダイアログ表示
 """
 from __future__ import annotations
+import logging
 import os
 import shutil
 import tempfile
@@ -18,7 +19,7 @@ from PySide6.QtCore import Qt, QThread, Signal
 
 import db
 import config
-from noble_shelf.store_file_resolver import (
+from store_file_resolver import (
     ActionResult,
     FileContext,
     build_db_index,
@@ -26,12 +27,38 @@ from noble_shelf.store_file_resolver import (
 )
 from theme import apply_dark_titlebar
 
+_logger = logging.getLogger(__name__)
+
 # 対応アーカイブ拡張子
 ARCHIVE_EXTS  = {".zip", ".cbz", ".7z", ".cb7", ".rar", ".cbr"}
 # DMM/DLSiteストアファイルとPDF（ライブラリ直下へコピーして即登録）
 STORE_FILE_EXTS = {".dmmb", ".dmme", ".dmmr", ".dlst"}
 PDF_EXTS = {".pdf"}
 IMAGE_EXTS   = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
+
+
+def _compute_cover_hash(folder_path: str) -> str | None:
+    """フォルダ内の先頭画像（ソート済み）1枚の hash を返す。画像がなければ None。"""
+    imgs = sorted(
+        f for f in os.listdir(folder_path)
+        if os.path.splitext(f)[1].lower() in IMAGE_EXTS
+    )
+    if not imgs:
+        return None
+    cover_abs = os.path.join(folder_path, imgs[0])
+    return db._compute_store_content_hash(cover_abs)
+
+
+def _drop_path_requires_completion(path: str) -> bool:
+    """handle_drop のバッチ完了カウント用。未対応形式は False（on_done 不要）。"""
+    ext = os.path.splitext(path)[1].lower()
+    if os.path.isdir(path):
+        return True
+    if ext in ARCHIVE_EXTS:
+        return True
+    if ext in STORE_FILE_EXTS or ext in PDF_EXTS:
+        return True
+    return False
 
 
 def _get_pdf_cover_and_pages(pdf_path: str) -> tuple[str, int]:
@@ -163,23 +190,37 @@ def handle_drop(
 ):
     """
     ドロップされたパスリストを処理してDBに登録。
-    on_done: 全処理完了後に呼ぶコールバック（グリッド再スキャン用）
+    on_done: 全処理完了後に1回だけ呼ぶコールバック（グリッド再スキャン用）。
+    各アイテムの完了通知は内部で集約する（スキャンロックで2本目以降が落ちるのを防ぐ）。
     """
+    valid_paths: list[str] = []
     for path in paths:
         path = path.strip().strip("{}")
-        if not os.path.exists(path):
-            continue
+        if os.path.exists(path):
+            valid_paths.append(path)
 
+    if not valid_paths:
+        return
+
+    total = sum(1 for p in valid_paths if _drop_path_requires_completion(p))
+    remaining = [total]
+
+    def _on_item_done() -> None:
+        remaining[0] -= 1
+        if remaining[0] == 0 and on_done:
+            on_done()
+
+    for path in valid_paths:
         ext = os.path.splitext(path)[1].lower()
 
         if os.path.isdir(path):
-            _handle_folder(path, library_folder, parent, on_done)
+            _handle_folder(path, library_folder, parent, _on_item_done)
 
         elif ext in ARCHIVE_EXTS:
-            _handle_archive(path, library_folder, parent, on_done)
+            _handle_archive(path, library_folder, parent, _on_item_done)
 
         elif ext in STORE_FILE_EXTS or ext in PDF_EXTS:
-            _handle_store_file(path, library_folder, parent, on_done)
+            _handle_store_file(path, library_folder, parent, _on_item_done)
 
         else:
             _handle_other_file(path, parent)
@@ -191,13 +232,20 @@ def _handle_folder(path: str, library_folder: str, parent, on_done):
     dest = os.path.join(library_folder, folder_name)
     if os.path.exists(dest):
         QMessageBox.warning(parent, "重複", f"「{folder_name}」は既に存在します。")
+        if on_done:
+            on_done()
         return
     if db.is_path_registered(dest):
         QMessageBox.warning(parent, "重複", f"「{folder_name}」は既に登録済みです。")
+        if on_done:
+            on_done()
         return
     try:
         shutil.copytree(path, dest)
-        _register_folder(dest)
+        if _register_folder(dest, parent, dest_to_cleanup=dest) != "ok":
+            if on_done:
+                on_done()
+            return
         nested_archives = [
             f for f in os.listdir(dest)
             if os.path.splitext(f)[1].lower() in ARCHIVE_EXTS
@@ -212,6 +260,8 @@ def _handle_folder(path: str, library_folder: str, parent, on_done):
             on_done()
     except Exception as e:
         QMessageBox.critical(parent, "エラー", str(e))
+        if on_done:
+            on_done()
 
 def _handle_archive(path: str, library_folder: str, parent, on_done):
     """アーカイブを確認ダイアログ表示後に解凍してフォルダとして登録・グリッド読み込み"""
@@ -220,12 +270,16 @@ def _handle_archive(path: str, library_folder: str, parent, on_done):
     dest = os.path.join(library_folder, dest_name)
     if os.path.exists(dest) or db.is_path_registered(dest):
         QMessageBox.warning(parent, "重複", f"「{dest_name}」は既に存在または登録済みです。")
+        if on_done:
+            on_done()
         return
     dlg = ArchiveDropDialog(fname, parent)
     if parent:
         dlg.raise_()
         dlg.activateWindow()
     if dlg.exec() != QDialog.Accepted:
+        if on_done:
+            on_done()
         return
     _run_extract_with_progress(path, dest, parent, on_done)
 
@@ -247,14 +301,20 @@ def _handle_store_file(path: str, library_folder: str, parent, on_done):
     dest = os.path.join(library_folder, fname)
     if os.path.exists(dest):
         QMessageBox.warning(parent, "重複", f"「{fname}」は既にライブラリに存在します。")
+        if on_done:
+            on_done()
         return
     if db.is_path_registered(dest):
         QMessageBox.warning(parent, "重複", f"「{fname}」は既に登録済みです。")
+        if on_done:
+            on_done()
         return
     try:
         shutil.copy2(path, dest)
     except Exception as e:
         QMessageBox.critical(parent, "コピーエラー", str(e))
+        if on_done:
+            on_done()
         return
     try:
         try:
@@ -270,9 +330,15 @@ def _handle_store_file(path: str, library_folder: str, parent, on_done):
         is_dlst = 1 if ext == config.STORE_FILE_EXT_DLSITE else 0
         cover = ""
         try:
-            db_path = db._to_db_path(dest)
-        except Exception:
-            db_path = dest
+            db_path = db.to_db_path_from_any(dest)
+        except ValueError as exc:
+            _logger.warning("ストアファイル登録: DB 用パスに変換できず登録を中止: %s", exc)
+            try:
+                if os.path.exists(dest):
+                    os.remove(dest)
+            except OSError as rm_exc:
+                _logger.warning("コピー先ファイルの削除に失敗: %s (%s)", dest, rm_exc)
+            return
         index = build_db_index(
             db.fetch_all_rows_for_index(),
             (db.get_setting("library_folder") or "").strip(),
@@ -305,8 +371,6 @@ def _handle_store_file(path: str, library_folder: str, parent, on_done):
 
         result = resolve_store_file_action(base_ctx, index)
         if result.status == "unchanged":
-            if on_done:
-                on_done()
             return
         if result.status == "error":
             QMessageBox.warning(
@@ -317,8 +381,6 @@ def _handle_store_file(path: str, library_folder: str, parent, on_done):
             return
         if result.status == "updated":
             db.apply_action_result(result, payload)
-            if on_done:
-                on_done()
             return
         if result.status == "rename":
             old_path = result.existing_path or "既存登録"
@@ -329,21 +391,19 @@ def _handle_store_file(path: str, library_folder: str, parent, on_done):
                 QMessageBox.Yes | QMessageBox.No,
             ) == QMessageBox.Yes:
                 db.apply_action_result(result, payload)
-                if on_done:
-                    on_done()
                 return
             if os.path.exists(dest):
                 try:
                     os.remove(dest)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logging.warning("[drop] ロールバック削除失敗: %s", e)
             return
         if result.status == "duplicate":
             if os.path.exists(dest):
                 try:
                     os.remove(dest)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logging.warning("[drop] 重複時の一時ファイル削除失敗: %s", e)
             dup_path = result.existing_path or "既存登録"
             QMessageBox.information(
                 parent,
@@ -358,18 +418,17 @@ def _handle_store_file(path: str, library_folder: str, parent, on_done):
                     parent._status_label.setText(f"登録しました: {name}")
                 except Exception:
                     pass
-            if on_done:
-                on_done()
             return
-        if on_done:
-            on_done()
     except Exception as e:
         if os.path.exists(dest):
             try:
                 os.remove(dest)
-            except Exception:
-                pass
+            except Exception as rm_err:
+                logging.warning("[drop] 登録エラー後のロールバック削除失敗: %s", rm_err)
         QMessageBox.critical(parent, "登録エラー", str(e))
+    finally:
+        if on_done:
+            on_done()
 
 
 def _flatten_single_subdir(extract_dir: str):
@@ -384,7 +443,11 @@ def _flatten_single_subdir(extract_dir: str):
     for child_name in os.listdir(only_path):
         src_path = os.path.join(only_path, child_name)
         dst_path = os.path.join(extract_dir, child_name)
-        shutil.move(src_path, dst_path)
+        try:
+            shutil.move(src_path, dst_path)
+        except Exception as e:
+            logging.warning("[drop] 展開先1段繰り上げの移動失敗: %s", e)
+            raise
     os.rmdir(only_path)
 
 
@@ -415,33 +478,37 @@ def _run_extract_with_progress(src_path: str, dest_dir: str, parent, on_done):
         try:
             _flatten_single_subdir(tmp_path)
             shutil.copytree(tmp_path, dest_dir)
-            _register_folder(dest_dir)
-            nested_archives = [
-                f for f in os.listdir(dest_dir)
-                if os.path.splitext(f)[1].lower() in ARCHIVE_EXTS
-            ]
-            if nested_archives:
-                QMessageBox.information(
-                    parent,
-                    "アーカイブが含まれています",
-                    "解凍後のフォルダ内にアーカイブファイルが含まれています。\n必要に応じて手動で展開してください。",
-                )
-            if on_done:
-                on_done()
+            if _register_folder(dest_dir, parent, dest_to_cleanup=dest_dir) == "ok":
+                nested_archives = [
+                    f for f in os.listdir(dest_dir)
+                    if os.path.splitext(f)[1].lower() in ARCHIVE_EXTS
+                ]
+                if nested_archives:
+                    QMessageBox.information(
+                        parent,
+                        "アーカイブが含まれています",
+                        "解凍後のフォルダ内にアーカイブファイルが含まれています。\n必要に応じて手動で展開してください。",
+                    )
         except Exception as e:
             QMessageBox.critical(parent, "エラー", str(e))
         finally:
             shutil.rmtree(tmp_path, ignore_errors=True)
+            if on_done:
+                on_done()
 
     def _on_error(msg: str):
         progress_dlg.close()
         shutil.rmtree(dest_tmp, ignore_errors=True)
-        QMessageBox.warning(parent, "解凍できません", msg)
+        QMessageBox.critical(parent, config.DROP_EXTRACT_ERROR_DIALOG_TITLE, msg)
+        if on_done:
+            on_done()
 
     def _on_cancel():
         if not _finished_called[0]:
             worker.terminate()
             shutil.rmtree(dest_tmp, ignore_errors=True)
+            if on_done:
+                on_done()
 
     worker.progress.connect(_on_progress)
     worker.finished.connect(_on_finished)
@@ -460,20 +527,104 @@ def _run_extract_with_progress(src_path: str, dest_dir: str, parent, on_done):
 #  DB登録ヘルパー
 # ══════════════════════════════════════════════════════════
 
-def _register_folder(path: str):
-    """フォルダをDBに登録。表示名は[サークル名]作品名。"""
-    raw_name = os.path.basename(path)
-    circle, title = db.parse_display_name(raw_name)
+def _register_folder(
+    path: str,
+    parent=None,
+    dest_to_cleanup: str | None = None,
+) -> str:
+    """フォルダをDBに登録。表示名は[サークル名]作品名。
+
+    Returns:
+        "ok"   upsert まで完了
+        "stop" 重複ダイアログでキャンセル等（呼び出し側で on_done 等を調整）
+
+    dest_to_cleanup:
+        重複ダイアログでキャンセルしたときに削除するコピー先の絶対パス。
+        None のときは削除対象を path にフォールバックする（コピー先＝path の呼び出し向け）。
+        drop_handler 外から呼ぶ場合は、誤削除を避けるため明示的に渡すか挙動に注意すること。
+    """
+    # scanners.BookScannerWorker._resolve_folder_uuid と同一ルートで .noble-shelf-id を確定し、
+    # 直後のスキャンと UUID を一致させる（循環 import 回避のためここで遅延 import）
+    from scanners.book_scanner import BookScannerWorker
+
+    library_folder = (db.get_setting("library_folder") or "").strip()
+    folder_name = os.path.basename(path)
+    try:
+        rel_folder = db.to_db_path_from_any(path)
+    except ValueError as e:
+        _logger.warning("フォルダ登録: DB パス変換失敗、スキップ: path=%s err=%s", path, e)
+        return "stop"
+
+    worker = BookScannerWorker(library_folder)
+    book_uuid = worker._resolve_folder_uuid(path, rel_folder, folder_name, {})
+    if book_uuid is None:
+        _logger.warning("フォルダ登録をスキップ: noble-shelf-id を確定できませんでした: %s", path)
+        return "stop"
+
+    circle, title = db.parse_display_name(folder_name)
     if not title:
-        title = raw_name.strip()
+        title = folder_name.strip()
     name = db.format_book_name(circle, title)
-    imgs   = sorted(
+    imgs = sorted(
         f for f in os.listdir(path)
         if os.path.splitext(f)[1].lower() in IMAGE_EXTS
     )
-    cover  = os.path.join(path, imgs[0]) if imgs else ""
-    mtime  = os.path.getmtime(path)
+    cover_abs = os.path.join(path, imgs[0]) if imgs else ""
+    try:
+        cover_rel = db.to_db_path_from_any(cover_abs) if cover_abs else ""
+    except ValueError:
+        cover_rel = ""
+
+    cover_hash = _compute_cover_hash(path)
+    if cover_hash:
+        existing = db.get_book_by_cover_hash(cover_hash)
+        if existing and existing.get("uuid") != book_uuid:
+            from ui.dialogs.duplicate_cover_dialog import DuplicateCoverDialog
+
+            raw_cover = existing.get("cover_path") or ""
+            if raw_cover:
+                try:
+                    existing_cover_abs = (
+                        db._from_db_path(raw_cover)
+                        if not os.path.isabs(raw_cover)
+                        else raw_cover
+                    )
+                except ValueError:
+                    existing_cover_abs = db.resolve_cover_stored_value(raw_cover)
+            else:
+                existing_cover_abs = ""
+            dlg = DuplicateCoverDialog(
+                existing=existing,
+                new_name=folder_name,
+                new_cover_abs=cover_abs,
+                existing_cover_abs=existing_cover_abs,
+                parent=parent,
+            )
+            dlg.exec()
+            if dlg.result_action != "new":
+                cleanup_target = dest_to_cleanup or path
+                try:
+                    if os.path.isdir(cleanup_target):
+                        shutil.rmtree(cleanup_target, ignore_errors=True)
+                        _logger.info(
+                            "キャンセル: コピー済みフォルダを削除しました: %s",
+                            cleanup_target,
+                        )
+                except Exception as e:
+                    _logger.warning("キャンセル時のフォルダ削除に失敗: %s", e)
+                return "stop"
+            _logger.info(
+                "cover_hash 一致: 別作品として登録 new_path=%s",
+                rel_folder,
+            )
+
+    mtime = os.path.getmtime(path)
     db.upsert_book(
+        uuid=book_uuid,
         name=name, circle=circle, title=title,
-        path=path, cover_path=cover, mtime=mtime
+        path=rel_folder,
+        cover_path=cover_rel,
+        mtime=mtime,
+        cover_hash=cover_hash,
     )
+    return "ok"

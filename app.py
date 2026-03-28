@@ -32,6 +32,7 @@ import time
 
 import config
 import db
+from book_updater import BookUpdateError, rename_book as bu_rename_book, update_book_meta
 from paths import normalize_path, to_rel
 from ui.dialogs.library_folder_dialog import LibraryFolderDialog
 from version import VERSION
@@ -44,11 +45,12 @@ from drop_handler import handle_drop, _get_pdf_cover_and_pages
 from ui.dialogs.filter_popover import FilterPopover
 from theme import THEME_COLORS, COLOR_BORDER, apply_dark_titlebar, get_statusbar_scan_progress_qss
 from ui.dialogs.properties import _auto_kana, _needs_kana_conversion
+from ui.dialogs.properties._utils import _is_library_root
 from ui.widgets.menubar import setup_menubar, refresh_shortcuts
 from ui.dialogs.first_run import LibrarySetupOverlay
 from ui.widgets.statusbar import setup_statusbar
 from ui.widgets.toast import ToastWidget
-from noble_shelf.store_file_resolver import ActionResult
+from store_file_resolver import ActionResult
 
 
 def _cover_has_path_segment(clean: str) -> bool:
@@ -373,6 +375,13 @@ class MainWindow(QMainWindow):
 
     def _file_paste(self):
         """OSクリップボードから貼り付け（ドロップと同じ挙動、重複時はエラー）"""
+        if self._is_scan_blocked():
+            QMessageBox.information(
+                self,
+                config.DROP_SCAN_BLOCKED_DIALOG_TITLE,
+                config.DROP_SCAN_BLOCKED_PASTE_MESSAGE,
+            )
+            return
         folder = (db.get_setting("library_folder") or "").strip()
         if not folder or not os.path.isdir(folder):
             return
@@ -571,12 +580,7 @@ class MainWindow(QMainWindow):
                     store_url=meta.get("store_url") or None,
                 )
                 logging.debug("[bookmarklet] set_book_meta 完了")
-                if (meta.get("title", "") or "").strip():
-                    db.update_book_display(
-                        found_path,
-                        title=meta.get("title") or None,
-                        circle=meta.get("circle") or None,
-                    )
+                saved_path: str | None = None
                 cover_url = (meta.get("cover_url", "") or "").strip()
                 if cover_url:
                     # get_book_cover は無いため、get_all_books の cover 列（custom優先）で既存サムネを判定
@@ -593,8 +597,170 @@ class MainWindow(QMainWindow):
                         logging.debug("[bookmarklet] _save_cover 開始")
                         saved_path = _save_cover(cover_url, found_path)
                         logging.debug("[bookmarklet] _save_cover 完了 saved=%s", saved_path)
-                        if saved_path:
-                            db.set_cover_custom(found_path, saved_path)
+                title_t = (meta.get("title", "") or "").strip()
+                circle_t = (meta.get("circle", "") or "").strip()
+                if title_t or saved_path:
+                    try:
+                        if title_t:
+                            new_name = db.format_book_name(circle_t, title_t)
+                            abs_path = ""
+                            try:
+                                if os.path.isabs(found_path):
+                                    abs_path = os.path.normpath(found_path)
+                                else:
+                                    abs_path = os.path.normpath(db._from_db_path(found_path))
+                            except Exception as path_exc:
+                                logging.warning(
+                                    "[bookmarklet] 絶対パス解決失敗（DBのみ更新）: %s",
+                                    path_exc,
+                                )
+                                abs_path = ""
+
+                            if not abs_path:
+                                update_book_meta(
+                                    found_path,
+                                    new_name,
+                                    circle_t,
+                                    title_t,
+                                    cover_path=saved_path,
+                                )
+                            elif not os.path.exists(abs_path):
+                                logging.warning(
+                                    "[bookmarklet] 作品パスが存在しません（DBのみ更新）: %s",
+                                    abs_path,
+                                )
+                                update_book_meta(
+                                    found_path,
+                                    new_name,
+                                    circle_t,
+                                    title_t,
+                                    cover_path=saved_path,
+                                )
+                            elif os.path.isdir(abs_path):
+                                if _is_library_root(abs_path):
+                                    logging.warning(
+                                        "[bookmarklet] ライブラリルートはリネーム不可（DBのみ更新）",
+                                    )
+                                    update_book_meta(
+                                        found_path,
+                                        new_name,
+                                        circle_t,
+                                        title_t,
+                                        cover_path=saved_path,
+                                    )
+                                else:
+                                    base_dir = os.path.dirname(abs_path)
+                                    new_abs_path = os.path.join(base_dir, new_name)
+                                    try:
+                                        bu_rename_book(
+                                            abs_path,
+                                            new_abs_path,
+                                            new_name,
+                                            circle_t,
+                                            title_t,
+                                            saved_path,
+                                            skip_fs_rename=False,
+                                        )
+                                        try:
+                                            found_path = db.to_db_path_from_any(new_abs_path)
+                                        except ValueError as vp_exc:
+                                            logging.warning(
+                                                "[bookmarklet] リネーム後のDBパス化失敗: %s",
+                                                vp_exc,
+                                            )
+                                    except BookUpdateError as e:
+                                        logging.warning(
+                                            "[bookmarklet] リネーム失敗（キューには追加）: %s",
+                                            e,
+                                        )
+                            else:
+                                parent_dir = os.path.dirname(abs_path)
+                                if _is_library_root(parent_dir):
+                                    ext = os.path.splitext(abs_path)[1]
+                                    new_abs_path = os.path.join(parent_dir, new_name + ext)
+                                    try:
+                                        bu_rename_book(
+                                            abs_path,
+                                            new_abs_path,
+                                            new_name,
+                                            circle_t,
+                                            title_t,
+                                            saved_path,
+                                            skip_fs_rename=False,
+                                        )
+                                        try:
+                                            found_path = db.to_db_path_from_any(new_abs_path)
+                                        except ValueError as vp_exc:
+                                            logging.warning(
+                                                "[bookmarklet] リネーム後のDBパス化失敗: %s",
+                                                vp_exc,
+                                            )
+                                    except BookUpdateError as e:
+                                        logging.warning(
+                                            "[bookmarklet] リネーム失敗（キューには追加）: %s",
+                                            e,
+                                        )
+                                else:
+                                    grand = os.path.dirname(parent_dir)
+                                    new_parent = os.path.join(grand, new_name)
+                                    try:
+                                        if new_parent != parent_dir:
+                                            os.rename(parent_dir, new_parent)
+                                    except OSError as ose:
+                                        logging.warning(
+                                            "[bookmarklet] 親フォルダリネーム失敗（DBのみ更新）: %s",
+                                            ose,
+                                        )
+                                        update_book_meta(
+                                            found_path,
+                                            new_name,
+                                            circle_t,
+                                            title_t,
+                                            cover_path=saved_path,
+                                        )
+                                    else:
+                                        new_abs_path = os.path.join(
+                                            new_parent,
+                                            os.path.basename(abs_path),
+                                        )
+                                        try:
+                                            bu_rename_book(
+                                                abs_path,
+                                                new_abs_path,
+                                                new_name,
+                                                circle_t,
+                                                title_t,
+                                                saved_path,
+                                                skip_fs_rename=True,
+                                            )
+                                            try:
+                                                found_path = db.to_db_path_from_any(new_abs_path)
+                                            except ValueError as vp_exc:
+                                                logging.warning(
+                                                    "[bookmarklet] リネーム後のDBパス化失敗: %s",
+                                                    vp_exc,
+                                                )
+                                        except BookUpdateError as e:
+                                            logging.warning(
+                                                "[bookmarklet] リネーム失敗（キューには追加）: %s",
+                                                e,
+                                            )
+                        elif saved_path:
+                            for row in db.get_all_books():
+                                if row[3] == found_path:
+                                    update_book_meta(
+                                        found_path,
+                                        row[0],
+                                        row[1],
+                                        row[2] or row[0],
+                                        cover_path=saved_path,
+                                    )
+                                    break
+                    except BookUpdateError as exc:
+                        logging.warning(
+                            "[bookmarklet] メタ更新失敗（キューには追加）: %s",
+                            exc,
+                        )
                 db.add_bookmarklet_queue(
                     url=q_url,
                     site=q_site,
@@ -1103,6 +1269,10 @@ class MainWindow(QMainWindow):
         self._scan_blocking = blocked
         if hasattr(self, "_grid"):
             self._grid.setEnabled(not blocked)
+
+    def _is_scan_blocked(self) -> bool:
+        """ライブラリスキャン中のとき True（D&D 等の重複スキャンを防ぐ）。"""
+        return self._scan_blocking
 
     def _show_scan_progress_started(self) -> None:
         """スキャン開始時: 進捗バーを 0 にリセットして表示する。"""
@@ -2623,6 +2793,9 @@ class MainWindow(QMainWindow):
     # ═══ ドロップ処理 ═══
     def dragEnterEvent(self, event):
         """URLドロップを受け付けるか判定する。"""
+        if self._is_scan_blocked():
+            event.ignore()
+            return
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
         else:
@@ -2630,6 +2803,9 @@ class MainWindow(QMainWindow):
 
     def dragMoveEvent(self, event):
         """移動中もURLドロップ可否を維持する。"""
+        if self._is_scan_blocked():
+            event.ignore()
+            return
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
         else:
@@ -2637,13 +2813,20 @@ class MainWindow(QMainWindow):
 
     def dropEvent(self, event):
         """ドロップされたパスを取り込み処理に渡す。"""
+        if self._is_scan_blocked():
+            QMessageBox.information(
+                self,
+                config.DROP_SCAN_BLOCKED_DIALOG_TITLE,
+                config.DROP_SCAN_BLOCKED_DROP_MESSAGE,
+            )
+            event.ignore()
+            return
         urls = event.mimeData().urls()
         if not urls:
             return
         paths = [u.toLocalFile() for u in urls]
         folder = (db.get_setting("library_folder") or "").strip()
         if not folder:
-            from PySide6.QtWidgets import QMessageBox
             QMessageBox.warning(self, "未設定", "先にライブラリフォルダを設定してください。")
             return
         handle_drop(

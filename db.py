@@ -14,6 +14,7 @@ import sqlite3
 import os
 import shutil
 import sys
+import logging
 import time
 import unicodedata
 import uuid as uuid_lib
@@ -23,7 +24,9 @@ from datetime import datetime
 import config
 from paths import DB_FILE, BACKUP_DIR, to_rel
 import cache
-from noble_shelf.store_file_resolver import ActionResult
+from store_file_resolver import ActionResult
+
+_logger = logging.getLogger(__name__)
 
 UNSET = object()
 
@@ -98,6 +101,19 @@ def _to_db_path(abs_path: str) -> str:
     if not root:
         raise ValueError("ライブラリルートが未設定です")
     return os.path.normpath(os.path.relpath(abs_path, root))
+
+
+def to_db_path_from_any(path: str) -> str:
+    """ライブラリ配下の絶対パスまたは DB 相対パスを、DB 保存用の相対パスへ統一する。"""
+    root = _get_library_root()
+    if not root:
+        raise ValueError("ライブラリルートが未設定です")
+    p = (path or "").strip()
+    if not p:
+        raise ValueError("パスが空です")
+    lr = os.path.normpath(root)
+    abs_p = os.path.normpath(p if os.path.isabs(p) else os.path.join(lr, p))
+    return _to_db_path(abs_p)
 
 
 def _from_db_path(rel_path: str) -> str:
@@ -351,6 +367,23 @@ def update_content_hash(uuid: str, content_hash: str) -> None:
         conn.close()
 
 
+def update_cover_hash(uuid: str, cover_hash: str) -> None:
+    """books.cover_hash のみ更新する。"""
+    if not uuid or not str(uuid).strip():
+        return
+    if cover_hash is None:
+        return
+    conn = get_conn()
+    try:
+        conn.execute(
+            "UPDATE books SET cover_hash=? WHERE uuid=?",
+            (str(cover_hash).strip(), str(uuid).strip()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def _is_uuid_schema_ready(c: sqlite3.Cursor) -> bool:
     """books/book_metaがuuid基準スキーマならTrue。"""
     book_cols = [r[1] for r in c.execute("PRAGMA table_info(books)").fetchall()]
@@ -558,6 +591,8 @@ def init_db():
             c.execute("ALTER TABLE books ADD COLUMN is_dlst INTEGER DEFAULT 0")
         if "content_hash" not in cols:
             c.execute("ALTER TABLE books ADD COLUMN content_hash TEXT")
+        if "cover_hash" not in cols:
+            c.execute("ALTER TABLE books ADD COLUMN cover_hash TEXT DEFAULT NULL")
         if "missing_since_date" not in cols:
             c.execute("ALTER TABLE books ADD COLUMN missing_since_date TEXT DEFAULT NULL")
 
@@ -565,6 +600,7 @@ def init_db():
         c.execute("CREATE INDEX IF NOT EXISTS idx_books_circle ON books(circle)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_books_path ON books(path)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_books_content_hash ON books(content_hash)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_books_cover_hash ON books(cover_hash)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_characters_uuid ON book_characters(uuid)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_tags_uuid ON book_tags(uuid)")
 
@@ -963,17 +999,20 @@ def get_hidden_paths() -> list[str]:
 # ══════════════════════════════════════════════════════
 
 def get_all_books():
-    """全booksを (name, circle, title, path, cover_path, is_dlst) のリストで返す
+    """全booksを (name, circle, title, path, cover_path, is_dlst, uuid) のリストで返す
     cover_customが設定されていればそちらを優先"""
     conn = get_conn()
     try:
         rows = conn.execute(
-            """SELECT name, circle, title, path, 
+            """SELECT uuid, name, circle, title, path,
                COALESCE(NULLIF(cover_custom, ''), cover_path) as cover_path,
                COALESCE(is_dlst, 0) as is_dlst
                FROM books ORDER BY name"""
         ).fetchall()
-        return [(r["name"], r["circle"], r["title"], r["path"], r["cover_path"], r["is_dlst"]) for r in rows]
+        return [
+            (r["name"], r["circle"], r["title"], r["path"], r["cover_path"], r["is_dlst"], r["uuid"])
+            for r in rows
+        ]
     finally:
         conn.close()
 
@@ -1082,12 +1121,15 @@ def get_all_books_order_by_added_desc():
     conn = get_conn()
     try:
         rows = conn.execute(
-            """SELECT name, circle, title, path,
+            """SELECT uuid, name, circle, title, path,
                COALESCE(NULLIF(cover_custom, ''), cover_path) as cover_path,
                COALESCE(is_dlst, 0) as is_dlst
                FROM books ORDER BY updated_at DESC, name"""
         ).fetchall()
-        return [(r["name"], r["circle"], r["title"], r["path"], r["cover_path"], r["is_dlst"]) for r in rows]
+        return [
+            (r["name"], r["circle"], r["title"], r["path"], r["cover_path"], r["is_dlst"], r["uuid"])
+            for r in rows
+        ]
     finally:
         conn.close()
 
@@ -1228,6 +1270,28 @@ def find_book_by_content_hash(content_hash: str) -> dict | None:
         conn.close()
 
 
+def get_book_by_cover_hash(cover_hash: str) -> dict | None:
+    """cover_hash 一致の books 行（先頭1件）を返す。"""
+    if not cover_hash:
+        return None
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            """
+            SELECT uuid, path, name, circle, title, cover_path, mtime,
+                   COALESCE(is_dlst, 0) AS is_dlst, updated_at
+            FROM books
+            WHERE cover_hash=?
+            ORDER BY rowid ASC
+            LIMIT 1
+            """,
+            (cover_hash,),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
 def get_books_updated_at_map() -> dict[str, float]:
     """path -> updated_at のマップを返す（追加順ソート用）"""
     conn = get_conn()
@@ -1241,47 +1305,66 @@ def get_books_updated_at_map() -> dict[str, float]:
 
 
 def is_path_registered(path: str) -> bool:
-    """指定パスが books に登録済みなら True（二重登録防止用）。パスは正規化して比較する。"""
+    """指定パスが books に登録済みなら True（二重登録防止用）。"""
     if not path or not str(path).strip():
         return False
-    norm = os.path.normpath(os.path.abspath(path))
+    try:
+        db_path = to_db_path_from_any(path)
+    except ValueError:
+        return False
     conn = get_conn()
     try:
-        rows = conn.execute("SELECT path FROM books").fetchall()
-        for r in rows:
-            if os.path.normpath(os.path.abspath(r["path"])) == norm:
-                return True
-        return False
+        row = conn.execute("SELECT 1 FROM books WHERE path=?", (db_path,)).fetchone()
+        return row is not None
     finally:
         conn.close()
 
 
-def upsert_book(name, circle, title, path, cover_path, mtime=None, is_dlst=0, pages=None):
-    # 呼び出し経路で絶対／相対が混在するため、絶対パスのみライブラリ相対に揃える（既存相対はそのまま）
+def upsert_book(
+    name,
+    circle,
+    title,
+    path,
+    cover_path,
+    mtime=None,
+    is_dlst=0,
+    pages=None,
+    uuid=None,
+    cover_hash=None,
+):
+    if not path:
+        return
     try:
-        if path and os.path.isabs(path):
-            path = _to_db_path(path)
-    except ValueError:
-        pass
-    try:
-        if cover_path and os.path.isabs(cover_path):
-            cover_path = _to_db_path(cover_path)
-    except ValueError:
-        pass
+        path = to_db_path_from_any(path)
+        if cover_path:
+            cover_path = to_db_path_from_any(cover_path)
+    except ValueError as e:
+        _logger.warning("upsert_book: パス変換失敗、登録をスキップ: path=%s err=%s", path, e)
+        return
     store_cover = _normalize_cover_for_save(cover_path) if cover_path else ""
+    cover_hash_store = None
+    if cover_hash is not None:
+        ch = str(cover_hash).strip()
+        cover_hash_store = ch if ch else None
     conn = get_conn()
     try:
         row = conn.execute("SELECT uuid FROM books WHERE path=?", (path,)).fetchone()
-        book_uuid = row["uuid"] if row else _new_uuid()
+        if row:
+            book_uuid = row["uuid"]
+        elif uuid is not None:
+            book_uuid = uuid
+        else:
+            book_uuid = _new_uuid()
         conn.execute(
-            """INSERT INTO books(uuid, name, circle, title, path, cover_path, mtime, is_dlst, updated_at)
-               VALUES(?,?,?,?,?,?,?,?,datetime('now','localtime'))
+            """INSERT INTO books(uuid, name, circle, title, path, cover_path, mtime, is_dlst, cover_hash, updated_at)
+               VALUES(?,?,?,?,?,?,?,?,?,datetime('now','localtime'))
                ON CONFLICT(path) DO UPDATE SET
                  uuid=excluded.uuid,
                  name=excluded.name, circle=excluded.circle, title=excluded.title,
                  cover_path=excluded.cover_path, mtime=excluded.mtime, is_dlst=excluded.is_dlst,
+                 cover_hash=COALESCE(excluded.cover_hash, books.cover_hash),
                  updated_at=excluded.updated_at""",
-            (book_uuid, name, circle, title, path, store_cover, mtime, is_dlst)
+            (book_uuid, name, circle, title, path, store_cover, mtime, is_dlst, cover_hash_store)
         )
         conn.commit()
         if pages is not None:
@@ -1295,7 +1378,9 @@ def bulk_upsert_books(records):
     """
     books テーブルへの upsert をまとめて1トランザクションで実行する。
     records: [(name, circle, title, path, cover_path, mtime, is_dlst), ...]
+    または末尾に cover_hash を省略（NULL）／指定する 8 要素タプル。
     cover_path は保存時に正規化（cover_cache 内は ID のみ）される。
+    path は INSERT 前に to_db_path_from_any で DB 用相対パスへ揃える。
     """
     if not records:
         return
@@ -1303,22 +1388,44 @@ def bulk_upsert_books(records):
     conn = get_conn()
     try:
         for r in records:
-            existing = conn.execute("SELECT uuid FROM books WHERE path=?", (r[3],)).fetchone()
+            try:
+                db_path = to_db_path_from_any(r[3])
+            except ValueError as exc:
+                _logger.warning("bulk_upsert_books: 行をスキップしました: %s", exc)
+                continue
+            existing = conn.execute("SELECT uuid FROM books WHERE path=?", (db_path,)).fetchone()
             book_uuid = existing["uuid"] if existing else _new_uuid()
+            ch: str | None = None
+            if len(r) > 7 and r[7] is not None:
+                ch_s = str(r[7]).strip()
+                ch = ch_s if ch_s else None
             normalized.append(
-                (book_uuid, r[0], r[1], r[2], r[3], _normalize_cover_for_save(r[4]) if r[4] else "", r[5], r[6])
+                (
+                    book_uuid,
+                    r[0],
+                    r[1],
+                    r[2],
+                    db_path,
+                    _normalize_cover_for_save(r[4]) if r[4] else "",
+                    r[5],
+                    r[6],
+                    ch,
+                )
             )
     finally:
         conn.close()
+    if not normalized:
+        return
     conn = get_conn()
     try:
         conn.executemany(
-            """INSERT INTO books(uuid, name, circle, title, path, cover_path, mtime, is_dlst, updated_at)
-               VALUES(?,?,?,?,?,?,?,?,datetime('now','localtime'))
+            """INSERT INTO books(uuid, name, circle, title, path, cover_path, mtime, is_dlst, cover_hash, updated_at)
+               VALUES(?,?,?,?,?,?,?,?,?,datetime('now','localtime'))
                ON CONFLICT(path) DO UPDATE SET
                  uuid=excluded.uuid,
                  name=excluded.name, circle=excluded.circle, title=excluded.title,
                  cover_path=excluded.cover_path, mtime=excluded.mtime, is_dlst=excluded.is_dlst,
+                 cover_hash=COALESCE(excluded.cover_hash, books.cover_hash),
                  updated_at=excluded.updated_at""",
             normalized,
         )
@@ -1364,7 +1471,7 @@ def bulk_upsert_and_delete_books(
 ) -> None:
     """
     upsertとdeleteを1トランザクションで実行する。
-    upsert_records: (uuid, name, circle, title, path, cover_path, mtime, is_dlst) のタプルリスト
+    upsert_records: (uuid, name, circle, title, path, cover_path, mtime, is_dlst, cover_hash) のタプルリスト
     delete_paths: 削除対象のpathリスト
     """
     if not upsert_records and not delete_paths:
@@ -1373,12 +1480,15 @@ def bulk_upsert_and_delete_books(
     try:
         for args in upsert_records:
             conn.execute(
-                """INSERT INTO books(uuid, name, circle, title, path, cover_path, mtime, is_dlst, updated_at)
-                   VALUES(?,?,?,?,?,?,?,?,datetime('now','localtime'))
+                """INSERT INTO books(uuid, name, circle, title, path, cover_path, mtime, is_dlst, cover_hash, updated_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,datetime('now','localtime'))
                    ON CONFLICT(uuid) DO UPDATE SET
                      name=excluded.name, circle=excluded.circle, title=excluded.title,
                      path=excluded.path, cover_path=excluded.cover_path, mtime=excluded.mtime,
-                     is_dlst=excluded.is_dlst, updated_at=excluded.updated_at""",
+                     is_dlst=excluded.is_dlst,
+                     cover_hash=COALESCE(excluded.cover_hash, books.cover_hash),
+                     missing_since_date=NULL,
+                     updated_at=excluded.updated_at""",
                 args,
             )
         if delete_paths:
@@ -1401,27 +1511,37 @@ def bulk_upsert_and_delete_books(
 def rename_book(old_path, new_path, new_name, new_circle, new_title, new_cover_path):
     if not old_path:
         return
-    lib_root = os.path.normpath((get_setting("library_folder") or "").strip())
-    old_path = to_rel(old_path, lib_root)
-    new_path = to_rel(new_path, lib_root)
+    try:
+        old_rel = to_db_path_from_any(old_path)
+        new_rel = to_db_path_from_any(new_path)
+    except ValueError as exc:
+        _logger.warning("rename_book: パス相対化に失敗したため中止: %s", exc)
+        return
     conn = get_conn()
     try:
         # 新しいパスに既存のエントリがある場合は先に削除（UNIQUE制約エラー回避）
-        conn.execute("DELETE FROM books WHERE path=? AND path!=?", (new_path, old_path))
-        conn.execute("DELETE FROM bookmarks WHERE path=? AND path!=?", (new_path, old_path))
-        conn.execute("DELETE FROM recent_books WHERE path=? AND path!=?", (new_path, old_path))
+        conn.execute("DELETE FROM books WHERE path=? AND path!=?", (new_rel, old_rel))
+        conn.execute("DELETE FROM bookmarks WHERE path=? AND path!=?", (new_rel, old_rel))
+        conn.execute("DELETE FROM recent_books WHERE path=? AND path!=?", (new_rel, old_rel))
 
         # cover_custom が旧パス配下なら新パスに差し替え（参照切れ防止）。ID のみの場合はそのまま。
-        row = conn.execute("SELECT cover_custom FROM books WHERE path=?", (old_path,)).fetchone()
+        row = conn.execute("SELECT cover_custom FROM books WHERE path=?", (old_rel,)).fetchone()
         new_cover_custom = None
         if row and row["cover_custom"]:
             cc = row["cover_custom"].strip()
             if os.sep in cc or (len(cc) >= 2 and cc[1] == ":"):
-                ob = os.path.normpath(old_path if os.path.isdir(old_path) else os.path.dirname(old_path))
-                nb = os.path.normpath(new_path if os.path.isdir(new_path) else os.path.dirname(new_path))
-                cc_norm = os.path.normpath(cc)
-                if cc_norm == ob or cc_norm.startswith(ob + os.sep):
-                    new_cover_custom = nb + cc_norm[len(ob):]
+                try:
+                    old_fs = _from_db_path(old_rel)
+                    new_fs = _from_db_path(new_rel)
+                except ValueError:
+                    old_fs = ""
+                    new_fs = ""
+                if old_fs and new_fs:
+                    ob = os.path.normpath(old_fs if os.path.isdir(old_fs) else os.path.dirname(old_fs))
+                    nb = os.path.normpath(new_fs if os.path.isdir(new_fs) else os.path.dirname(new_fs))
+                    cc_norm = os.path.normpath(cc)
+                    if cc_norm == ob or cc_norm.startswith(ob + os.sep):
+                        new_cover_custom = nb + cc_norm[len(ob) :]
             if new_cover_custom is None:
                 new_cover_custom = row["cover_custom"]
         if new_cover_custom is None and row:
@@ -1431,11 +1551,11 @@ def rename_book(old_path, new_path, new_name, new_circle, new_title, new_cover_p
         conn.execute(
             """UPDATE books SET path=?, name=?, circle=?, title=?, cover_path=?,
                cover_custom=COALESCE(?, cover_custom), updated_at=datetime('now','localtime') WHERE path=?""",
-            (new_path, new_name, new_circle, new_title, cover_path_store, new_cover_custom, old_path)
+            (new_rel, new_name, new_circle, new_title, cover_path_store, new_cover_custom, old_rel)
         )
         # pathを持つ関連テーブルのみ更新
-        conn.execute("UPDATE bookmarks SET path=? WHERE path=?", (new_path, old_path))
-        conn.execute("UPDATE recent_books SET path=? WHERE path=?", (new_path, old_path))
+        conn.execute("UPDATE bookmarks SET path=? WHERE path=?", (new_rel, old_rel))
+        conn.execute("UPDATE recent_books SET path=? WHERE path=?", (new_rel, old_rel))
         conn.commit()
     finally:
         conn.close()
@@ -2895,7 +3015,7 @@ def search_books(conditions, operator="AND"):
     """
     conditions: [{"field": "title"|"circle"|"author"|"series"|"character"|"tag", "value": str}, ...]
     operator: "AND" | "OR"
-    全booksを (name, circle, title, path, cover_path) のリストで返す
+    全booksを (name, circle, title, path, cover_path, is_dlst, uuid) のリストで返す（get_all_books と同形式）
     検索語・DB側とも NFKC 正規化して比較する（全角/半角・異体字などを同一視）
     """
     if not conditions:
@@ -3046,13 +3166,16 @@ def search_books(conditions, operator="AND"):
 
         placeholders = ",".join("?" * len(matched_paths))
         rows = conn.execute(
-            f"SELECT name, circle, title, path, "
+            f"SELECT uuid, name, circle, title, path, "
             f"COALESCE(NULLIF(cover_custom, ''), cover_path) as cover_path, "
             f"COALESCE(is_dlst, 0) as is_dlst FROM books "
             f"WHERE path IN ({placeholders}) ORDER BY name",
             list(matched_paths)
         ).fetchall()
-        return [(r["name"], r["circle"], r["title"], r["path"], r["cover_path"], r["is_dlst"]) for r in rows]
+        return [
+            (r["name"], r["circle"], r["title"], r["path"], r["cover_path"], r["is_dlst"], r["uuid"])
+            for r in rows
+        ]
     finally:
         conn.close()
 

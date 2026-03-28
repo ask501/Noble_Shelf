@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QLineEdit, QMessageB
 
 import config
 import db
+from book_updater import BookUpdateError, rename_book as bu_rename_book
 from ui.dialogs.properties._utils import _is_library_root, _safe_from_db_path
 from theme import THEME_COLORS, apply_dark_titlebar
 
@@ -73,45 +74,42 @@ class RenameDialog(QDialog):
         new_name = db.format_book_name(new_circle, new_title)
 
         try:
+            skip_fs = False
             if os.path.isdir(path):
                 if _is_library_root(path):
                     QMessageBox.critical(self, "リネーム不可", "ライブラリフォルダ自体の名前は変更できません。")
                     return
                 base_dir = os.path.dirname(path)
                 new_path = os.path.join(base_dir, new_name)
-                os.rename(path, new_path)
             else:
                 parent_dir = os.path.dirname(path)
                 if _is_library_root(parent_dir):
-                    # ライブラリ直下のファイル（ストアファイル等）→ ファイル自体をリネーム
                     ext = os.path.splitext(path)[1]
                     new_path = os.path.join(parent_dir, new_name + ext)
-                    if new_path != path:
-                        os.rename(path, new_path)
                 else:
-                    # サブフォルダ内のファイル → 親フォルダをリネーム
                     grand = os.path.dirname(parent_dir)
                     new_parent = os.path.join(grand, new_name)
-                    os.rename(parent_dir, new_parent)
+                    if new_parent != parent_dir:
+                        os.rename(parent_dir, new_parent)
                     new_path = os.path.join(new_parent, os.path.basename(path))
+                    skip_fs = True
 
-            new_cover = cover
-            if cover:
-                if os.path.isdir(path) and cover.startswith(path):
-                    new_cover = cover.replace(path, new_path, 1)
-                elif not os.path.isdir(path) and cover.startswith(path):
-                    new_cover = new_path if path == cover else cover.replace(path, new_path, 1)
-                else:
-                    parent_dir_old = os.path.dirname(path)
-                    if cover.startswith(parent_dir_old):
-                        new_cover = cover.replace(parent_dir_old, os.path.dirname(new_path), 1)
-
-            db.rename_book(path, new_path, new_name, new_circle, new_title, new_cover or "")
+            bu_rename_book(
+                path,
+                new_path,
+                new_name,
+                new_circle,
+                new_title,
+                cover or None,
+                skip_fs_rename=skip_fs,
+            )
 
             if (circle_old != new_circle or title_old != new_title) and self._on_renamed:
                 self._on_renamed()
 
             self.accept()
+        except BookUpdateError as e:
+            QMessageBox.critical(self, "エラー", str(e))
         except Exception as e:
             QMessageBox.critical(self, "エラー", str(e))
 

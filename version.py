@@ -1,5 +1,5 @@
 """
 version.py - アプリバージョン管理
 """
-VERSION = "0.4.4"
+VERSION = "0.5.0"
 

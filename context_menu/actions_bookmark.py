@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from functools import partial
 
 from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
@@ -101,8 +102,8 @@ def edit_bookmark(book: dict, parent_window) -> None:
     def _apply_and_close():
         try:
             db.set_bookmark(path, current)
-        except Exception:
-            pass
+        except Exception as e:
+            logging.debug("[actions_bookmark] set_bookmark（保存）失敗: %s", e)
         on_updated = getattr(parent_window, "on_book_updated", None)
         if callable(on_updated):
             on_updated(path)
@@ -111,8 +112,8 @@ def edit_bookmark(book: dict, parent_window) -> None:
     def _delete_and_close():
         try:
             db.set_bookmark(path, 0)
-        except Exception:
-            pass
+        except Exception as e:
+            logging.debug("[actions_bookmark] set_bookmark（削除）失敗: %s", e)
         on_updated = getattr(parent_window, "on_book_updated", None)
         if callable(on_updated):
             on_updated(path)

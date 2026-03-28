@@ -5,6 +5,8 @@ sidebar.py - サイドバー
 """
 from __future__ import annotations
 
+import logging
+
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QListWidget, QListWidgetItem, QComboBox, QLabel,
@@ -414,8 +416,8 @@ class SidebarWidget(QWidget):
                     items.append((star, str(r), counts.get(r, 0)))
                 return items
 
-        except Exception:
-            pass
+        except Exception as e:
+            logging.warning("[sidebar] タグ一覧・モード別項目の取得失敗: %s", e)
         return []
 
     def set_title_items(self, books: list[dict]):

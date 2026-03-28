@@ -1,5 +1,7 @@
 from __future__ import annotations
 import json
+from urllib.parse import urlparse
+
 from bs4 import BeautifulSoup
 from bookmarklet.base import BookmarkletParser
 
@@ -36,6 +38,17 @@ class FanzaParser(BookmarkletParser):
             circle = ""
 
         fanza_id = ld.get("sku", "") if isinstance(ld, dict) else ""
+
+        if not fanza_id:
+            # URL パスの末尾セグメントから ID を抽出
+            # 例: https://book.dmm.co.jp/product/4032985/b158aakn01146/
+            # → b158aakn01146
+            try:
+                path_parts = [p for p in urlparse(url).path.split("/") if p]
+                if path_parts:
+                    fanza_id = path_parts[-1]
+            except Exception:
+                pass
 
         offers = ld.get("offers", {}) if isinstance(ld, dict) else {}
         try:

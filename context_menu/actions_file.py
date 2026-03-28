@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from typing import Callable
 
@@ -69,8 +70,8 @@ class DeleteConfirmDialog(QDialog):
                 if os.path.exists(path) and os.path.isdir(path):
                     try:
                         os.rmdir(path)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logging.debug("[actions_file] rmtree後の補助rmdir失敗: %s", e)
             else:
                 os.remove(path)
                 # その本が入っていた親フォルダがライブラリ直下で空なら削除する

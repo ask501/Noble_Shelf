@@ -16,13 +16,21 @@ from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 
 import config
 import db
-import noble_shelf.store_file_resolver as store_resolver
+import store_file_resolver as store_resolver
 from drop_handler import _get_pdf_cover_and_pages
-from noble_shelf.store_file_resolver import ActionResult, FileContext, resolve_store_file_action
+from store_file_resolver import ActionResult, FileContext, resolve_store_file_action
 from scanners.base_scanner import BaseScanner
 
 
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp")
+
+
+def _compute_cover_hash_for_folder(folder_path: str, images: list[str]) -> str | None:
+    """フォルダ内の先頭画像（ソート済みリスト先頭）の hash を返す。"""
+    if not images:
+        return None
+    cover_abs = os.path.join(folder_path, images[0])
+    return db._compute_store_content_hash(cover_abs)
 
 
 def _preview_path_list(paths: list[str], limit: int) -> str:
@@ -37,6 +45,8 @@ def _preview_path_list(paths: list[str], limit: int) -> str:
 
 # DMM/DLSiteの専用ファイル形式
 STORE_FILE_EXTS = (".dmmb", ".dmme", ".dmmr", ".dlst")
+
+_logger = logging.getLogger(__name__)
 
 
 class ScannerSignals(QObject):
@@ -700,24 +710,48 @@ class BookScannerWorker(QRunnable):
         index_rows = db.fetch_all_rows_for_index()
         store_index = store_resolver.build_db_index(index_rows, library_root=folder)
 
+        cover_hash_by_path: dict[str, str | None] = {}
+        try:
+            ch_conn = db.get_conn()
+            try:
+                for row in ch_conn.execute("SELECT path, cover_hash FROM books").fetchall():
+                    p = os.path.normpath((row["path"] or "").strip())
+                    if p:
+                        cover_hash_by_path[p] = row["cover_hash"]
+            finally:
+                ch_conn.close()
+        except Exception:
+            pass
+
         for i, name in enumerate(entries):
             path = os.path.join(folder, name)
             if not os.path.isdir(path):
                 if name.lower().endswith(STORE_FILE_EXTS) or name.lower().endswith(".pdf"):
                     try:
-                        rel_store = os.path.normpath(db._to_db_path(path))
-                    except ValueError:
-                        rel_store = os.path.normpath(os.path.relpath(path, folder))
+                        rel_store = os.path.normpath(db.to_db_path_from_any(path))
+                    except ValueError as e:
+                        _logger.warning(
+                            "スキャン: ストアファイルのパス変換失敗、スキップ: path=%s err=%s",
+                            path,
+                            e,
+                        )
+                        _emit_progress(i + 1)
+                        continue
                     if os.path.normpath(rel_store) in fs_by_path_keys:
                         rel_store_key = os.path.normcase(os.path.normpath(rel_store))
                         found_paths.add(rel_store_key)
                 _emit_progress(i + 1)
                 continue
             try:
-                rel_path = db._to_db_path(path)
-            except ValueError:
-                rel_path = os.path.normpath(os.path.relpath(path, folder))
-            rel_path = os.path.normpath(rel_path)
+                rel_path = os.path.normpath(db.to_db_path_from_any(path))
+            except ValueError as e:
+                _logger.warning(
+                    "スキャン: フォルダのパス変換失敗、スキップ: path=%s err=%s",
+                    path,
+                    e,
+                )
+                _emit_progress(i + 1)
+                continue
             rel_path_key = os.path.normcase(rel_path)
             try:
                 mtime = os.path.getmtime(path)
@@ -757,9 +791,9 @@ class BookScannerWorker(QRunnable):
 
             cover_abs = os.path.join(path, images[0])
             try:
-                cover_rel = db._to_db_path(cover_abs)
+                cover_rel = db.to_db_path_from_any(cover_abs)
             except ValueError:
-                cover_rel = os.path.normpath(os.path.join(rel_path, images[0]))
+                cover_rel = ""
 
             circle, title = db.parse_display_name(name)
             if not title:
@@ -767,6 +801,13 @@ class BookScannerWorker(QRunnable):
             display_name = db.format_book_name(circle, title)
 
             if not meta_folder or meta_folder[0] != mtime:
+                existing_ch = cover_hash_by_path.get(rel_path)
+                if existing_ch and str(existing_ch).strip():
+                    cover_hash_value = None
+                else:
+                    cover_hash_value = _compute_cover_hash_for_folder(path, images)
+                    if cover_hash_value:
+                        cover_hash_by_path[rel_path] = cover_hash_value
                 upsert_queue.append(
                     (
                         book_uuid,
@@ -777,6 +818,7 @@ class BookScannerWorker(QRunnable):
                         cover_rel,
                         mtime,
                         0,
+                        cover_hash_value,
                     )
                 )
 

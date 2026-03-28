@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
 from typing import Callable, Optional
@@ -23,7 +24,7 @@ from PySide6.QtWidgets import (
 
 import config
 import db
-from paths import to_rel
+from book_updater import BookUpdateError, rename_book as bu_rename_book
 from ui.dialogs.properties._utils import (
     BTN_CANCEL_STYLE,
     BTN_FETCH_STYLE,
@@ -107,7 +108,7 @@ class PropertyDialog(QDialog):
         self._name: str = self._book.get("name", "")
         self._title: str = self._book.get("title", "") or self._name
         self._circle: str = self._book.get("circle", "")
-        self._cover: str = self._book.get("cover", "")
+        self._cover: str = db.resolve_cover_stored_value(self._book.get("cover", "") or "")
         self._folder_edit_value: str = self._name
         self._folder_manually_edited: bool = False  # フォルダ名ポップアップで手動変更した場合のみ True
 
@@ -583,8 +584,8 @@ class PropertyDialog(QDialog):
                     w.setStyleSheet(BTN_FETCH_STYLE)
                     w.setFixedSize(BTN_W, config.PROPERTY_ACTION_BTN_SIZE[1])
                 bottom_row.addWidget(w) 
-        except Exception:
-            pass
+        except Exception as e:
+            logging.warning("[properties_dialog] プラグインプロパティUI追加失敗: %s", e)
         bottom_row.addStretch()
 
 
@@ -657,8 +658,8 @@ class PropertyDialog(QDialog):
                     and self._e_circle.text().strip():
                 kana = _auto_kana(self._e_circle.text().strip())
                 self._e_circle_kana.setText(kana)
-        except Exception:
-            pass
+        except Exception as e:
+            logging.warning("[properties_dialog] かな自動補完失敗: %s", e)
 
         # 除外状態
         self._update_excluded_ui()
@@ -928,8 +929,8 @@ class PropertyDialog(QDialog):
                         meta = plugin.get_metadata_sync(self._url)
                         if meta:
                             break
-                except Exception:
-                    pass
+                except Exception as e:
+                    logging.warning("[properties_dialog] メタ取得（URL・同人DB）失敗: %s", e)
                 self.done.emit(meta)
 
         self._meta_worker = _DojinWorker(url)
@@ -973,8 +974,8 @@ class PropertyDialog(QDialog):
                         result = plugin.get_metadata_sync(self._pid)
                         if result:
                             break
-                except Exception:
-                    pass
+                except Exception as e:
+                    logging.warning("[properties_dialog] メタ取得（製品ID）失敗: %s", e)
                 self.done.emit(result)
 
         self._meta_worker = _Worker(product_id, source)
@@ -1065,6 +1066,7 @@ class PropertyDialog(QDialog):
             return
 
         # リネーム: フォルダ名欄が変わった場合のみ（リネーム対象がライブラリルートのときは禁止）
+        # FS のリネームはここで行い、DB 反映は book_updater に委譲する
         new_path = path
         if new_name != self._name:
             try:
@@ -1158,12 +1160,31 @@ class PropertyDialog(QDialog):
         # URL・作品IDから取得元を推定して保存（サイドバー振り分け用）
         meta_src = (db._effective_meta_source("", dlsite_id_text or "") or None) if dlsite_id_text else None
 
-        # 先にリネーム（誤った path から修復した場合は original_path_for_db で DB の行を特定する）
+        # DB 反映（誤った path から修復した場合は original_path_for_db で DB の行を特定する）
+        _db_old = (
+            original_path_for_db
+            if os.path.normpath(original_path_for_db) != os.path.normpath(path)
+            else None
+        )
         try:
-            old_db_path = to_rel(original_path_for_db, lib_root)
-            new_db_path = to_rel(new_path, lib_root)
-            db.rename_book(old_db_path, new_db_path, new_name, new_circle, new_title, new_cover or "")
-        except Exception as e:
+            bu_rename_book(
+                path,
+                new_path,
+                new_name,
+                new_circle,
+                new_title,
+                new_cover or None,
+                db_old_path=_db_old,
+                skip_fs_rename=True,
+            )
+        except BookUpdateError as e:
+            QMessageBox.critical(self, "DB更新エラー", str(e))
+            self._property_save_perf_cancel_if()
+            return
+
+        try:
+            new_db_path = db.to_db_path_from_any(new_path)
+        except ValueError as e:
             QMessageBox.critical(self, "DB更新エラー", str(e))
             self._property_save_perf_cancel_if()
             return
@@ -1213,7 +1234,6 @@ class PropertyDialog(QDialog):
         """一括編集: プレースホルダーでない項目だけ上書き。プレースホルダーのままなら各作品の元の値を保持。"""
         import re as _re
         bookmarks = db.get_all_bookmarks()
-        lib_root = (db.get_setting("library_folder") or "").strip()
 
         def _get(form_val: str, multi_key: str, orig_val: str):
             if multi_key in self._multi_fields and (form_val.strip() == MULTI_PLACEHOLDER or form_val.strip() == ""):
@@ -1234,7 +1254,10 @@ class PropertyDialog(QDialog):
             p = _safe_from_db_path(b.get("path", ""))
             if not p:
                 continue
-            p_db = to_rel(p, lib_root)
+            try:
+                p_db = db.to_db_path_from_any(p)
+            except ValueError:
+                continue
             meta = db.get_book_meta(p) or {}
             orig_circle = (b.get("circle") or "").strip()
             orig_title = (b.get("title") or b.get("name") or "").strip()

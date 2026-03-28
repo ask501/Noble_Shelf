@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import logging
+import os
 import re
 
 from PySide6.QtCore import Qt, QThread, Signal
@@ -22,7 +24,14 @@ from PySide6.QtWidgets import (
 
 import config
 import db
-from ui.dialogs.properties._utils import BTN_CANCEL_STYLE, BTN_SAVE_STYLE, _meta_source_for_apply, _safe_from_db_path
+from book_updater import BookUpdateError, rename_book
+from ui.dialogs.properties._utils import (
+    BTN_CANCEL_STYLE,
+    BTN_SAVE_STYLE,
+    _is_library_root,
+    _meta_source_for_apply,
+    _safe_from_db_path,
+)
 from ui.dialogs.properties.meta_apply_dialog import MetaApplyDialog
 from theme import SITE_COLORS, apply_dark_titlebar, META_SEARCH_SITE_DEFAULT, META_SEARCH_ITEM_DIM_FG
 
@@ -160,7 +169,8 @@ class MetaSearchDialog(QDialog):
                             if source not in results:
                                 results[source] = []
                             results[source].append(item)
-                except Exception:
+                except Exception as e:
+                    logging.warning("[meta_search_dialog] 検索結果取得失敗、空結果で続行: %s", e)
                     results = {}
                 self.done.emit(results)
 
@@ -213,8 +223,8 @@ class MetaSearchDialog(QDialog):
                             meta = plugin.get_metadata_sync(self._url)
                             if meta:
                                 break
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logging.warning("[meta_search_dialog] URLからのメタ取得失敗: %s", e)
                     self.done.emit(meta)
 
             self._dojin_worker = _DojinWorker(query)
@@ -278,8 +288,8 @@ class MetaSearchDialog(QDialog):
                         meta = plugin.get_metadata_sync(self._pid)
                         if meta:
                             break
-                except Exception:
-                    pass
+                except Exception as e:
+                    logging.warning("[meta_search_dialog] 製品IDからのメタ取得失敗: %s", e)
                 self.done.emit(meta)
 
         self._url_worker = _UrlWorker(product_id, source)
@@ -347,8 +357,8 @@ class MetaSearchDialog(QDialog):
                         meta = plugin.get_metadata_sync(id_or_url)
                         if meta:
                             break
-                except Exception:
-                    pass
+                except Exception as e:
+                    logging.warning("[meta_search_dialog] 適用前の詳細メタ取得失敗: %s", e)
                 self.done.emit(meta)
 
         self._detail_worker = _DetailWorker(pid, source, url)
@@ -385,6 +395,7 @@ class MetaSearchDialog(QDialog):
                 if m:
                     rd = f"{m.group(1)}年{int(m.group(2))}月{int(m.group(3))}日"
                 try:
+                    final_abs_for_ui = path
                     _to_list = lambda s: [t.strip() for t in (s or "").split(",") if t.strip()]
                     _to_int = lambda s: int(str(s).strip()) if s and str(s).strip().isdigit() else None
                     meta_src = _meta_source_for_apply(meta, applied)
@@ -398,20 +409,85 @@ class MetaSearchDialog(QDialog):
                         release_date=rd or None,
                         price=_to_int(applied.get("price")),
                         dlsite_id=applied.get("dlsite_id") or None,
+                        store_url=applied.get("store_url") or None,
                         meta_source=meta_src,
                     )
                     new_title = applied.get("title", current_book.get("title", ""))
                     new_circle = applied.get("circle", current_book.get("circle", ""))
                     new_name = db.format_book_name(new_circle, new_title)
                     cover = current_book.get("cover") or ""
-                    db.rename_book(path, path, new_name, new_circle, new_title, cover)
-                    if applied.get("cover_path"):
-                        db.set_cover_custom(path, applied["cover_path"])
-                except Exception:
-                    pass
+                    cover_path_applied = applied.get("cover_path")
+
+                    if os.path.isdir(path):
+                        if _is_library_root(path):
+                            QMessageBox.critical(
+                                self,
+                                "リネーム不可",
+                                "ライブラリフォルダ自体の名前は変更できません。",
+                            )
+                            rename_book(
+                                path,
+                                path,
+                                new_name,
+                                new_circle,
+                                new_title,
+                                cover_path=cover,
+                            )
+                        else:
+                            new_abs = os.path.normpath(os.path.join(os.path.dirname(path), new_name))
+                            rename_book(
+                                path,
+                                new_abs,
+                                new_name,
+                                new_circle,
+                                new_title,
+                                cover_path=cover,
+                            )
+                            final_abs_for_ui = new_abs
+                    else:
+                        parent_dir = os.path.dirname(path)
+                        if _is_library_root(parent_dir):
+                            ext = os.path.splitext(path)[1]
+                            new_abs = os.path.normpath(
+                                os.path.join(parent_dir, new_name + ext)
+                            )
+                            rename_book(
+                                path,
+                                new_abs,
+                                new_name,
+                                new_circle,
+                                new_title,
+                                cover_path=cover,
+                            )
+                            final_abs_for_ui = new_abs
+                        else:
+                            grand = os.path.dirname(parent_dir)
+                            new_parent = os.path.normpath(os.path.join(grand, new_name))
+                            if new_parent != parent_dir:
+                                os.rename(parent_dir, new_parent)
+                            new_abs = os.path.normpath(
+                                os.path.join(new_parent, os.path.basename(path))
+                            )
+                            rename_book(
+                                path,
+                                new_abs,
+                                new_name,
+                                new_circle,
+                                new_title,
+                                cover_path=cover,
+                                skip_fs_rename=True,
+                            )
+                            final_abs_for_ui = new_abs
+
+                    if cover_path_applied:
+                        db.set_cover_custom(final_abs_for_ui, cover_path_applied)
+                except BookUpdateError as e:
+                    logging.warning("[meta_search_dialog] 検索結果適用時の書籍更新失敗 (BookUpdateError): %s", e)
+                except Exception as e:
+                    logging.warning("[meta_search_dialog] 検索結果適用時の書籍更新失敗: %s", e)
                 on_updated = getattr(self.parent(), "on_book_updated", None)
                 if callable(on_updated):
-                    on_updated(path)
+                    on_updated(final_abs_for_ui)
                 self.accept()
             else:
                 self.result = meta

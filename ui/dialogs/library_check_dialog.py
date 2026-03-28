@@ -20,7 +20,7 @@ import config
 import db
 from drop_handler import handle_drop
 from theme import THEME_COLORS, apply_dark_titlebar
-from tools.library_checker import scan_unregistered
+from ui.dialogs.library_checker import scan_unregistered
 
 
 class LibraryCheckDialog(QDialog):
