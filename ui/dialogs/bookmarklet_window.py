@@ -24,6 +24,9 @@ from theme import (
 import db
 from book_updater import update_book_meta
 
+# ローカルモジュール
+from cover_paths import resolve_cover_path
+
 _logger = logging.getLogger(__name__)
 
 
@@ -337,27 +340,27 @@ class BookmarkletWindow(QWidget):
 
             QMessageBox.information(self, "未選択", "グリッドで適用先の作品を選択してください。")
             return
-        import os
 
         from ui.dialogs.properties import MetaApplyDialog
+
+        try:
+            found_path_db = db.to_db_path_from_any(found_path)
+        except ValueError as exc:
+            _logger.warning("bookmarklet: DB 用パスに変換できず中止: %s", exc)
+            return
 
         # 現在のメタをDBから取得
         current = db.get_book_meta(found_path) or {}
 
         # books テーブルから title / circle を補完（get_all_books: name, circle, title, path, cover, is_dlst）
-        book_row = next((r for r in db.get_all_books() if r[3] == found_path), None)
+        book_row = next((r for r in db.get_all_books() if r[3] == found_path_db), None)
         if book_row:
             current["title"] = book_row[2] or book_row[0] or ""
             current["circle"] = book_row[1] or ""
 
         # カバーパスを解決して cover キーに追加（MetaApplyDialog は current["cover"] を参照）
         book_cover_raw = book_row[4] if book_row else ""
-        resolved_cover = (
-            db.resolve_cover_stored_value(book_cover_raw) if book_cover_raw else ""
-        )
-        current["cover"] = (
-            resolved_cover if (resolved_cover and os.path.isfile(resolved_cover)) else ""
-        )
+        current["cover"] = resolve_cover_path(book_cover_raw)
 
         # fetchedはキューのメタをMetaApplyDialog形式に変換
         fetched = {
@@ -377,11 +380,6 @@ class BookmarkletWindow(QWidget):
         result = dlg.exec()
         if result:
             applied = dlg.selected_keys()
-            try:
-                found_path_db = db.to_db_path_from_any(found_path)
-            except ValueError as exc:
-                _logger.warning("bookmarklet: DB 用パスに変換できず中止: %s", exc)
-                return
 
             # release_dateの正規化
             import re as _re

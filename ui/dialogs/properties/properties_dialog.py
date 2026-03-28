@@ -1166,6 +1166,8 @@ class PropertyDialog(QDialog):
             if os.path.normpath(original_path_for_db) != os.path.normpath(path)
             else None
         )
+        # 画像を変更で選んだカバーは set_cover_custom のみ。rename_book へ渡すと cover_path にも二重で載る。
+        cover_for_rename_book = (new_cover or None) if not self._new_cover_path else None
         try:
             bu_rename_book(
                 path,
@@ -1173,7 +1175,7 @@ class PropertyDialog(QDialog):
                 new_name,
                 new_circle,
                 new_title,
-                new_cover or None,
+                cover_for_rename_book,
                 db_old_path=_db_old,
                 skip_fs_rename=True,
             )
@@ -1190,8 +1192,9 @@ class PropertyDialog(QDialog):
             return
 
         # カバー変更時は必ず DB に保存してから cleanup（保存前にクリアされないよう順序を保証）
+        # new_cover は上で _new_cover_path を取り込み、フォルダリネーム時は作品フォルダ配下ならパス補正済み
         if self._new_cover_path:
-            db.set_cover_custom(new_db_path, self._new_cover_path)
+            db.set_cover_custom(new_db_path, new_cover)
 
         # メタ情報を保存
         db.set_book_meta(

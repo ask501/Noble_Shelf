@@ -32,6 +32,9 @@ from theme import (
     META_APPLY_TOGGLE_DIM_TEXT,
 )
 
+# ローカルモジュール
+from cover_paths import resolve_cover_path
+
 
 class MetaApplyDialog(QDialog):
     """メタデータ取捨選択ダイアログ"""
@@ -46,7 +49,7 @@ class MetaApplyDialog(QDialog):
         self._current_edits: dict[str, QLineEdit | QTextEdit] = {}
         self._fetched_edits: dict[str, QLineEdit | QTextEdit] = {}
         self._book_path = book_path or ""
-        self._current_cover = (current.get("cover") or "").strip()
+        self._current_cover = resolve_cover_path(current.get("cover") or "")
         self._fetched_image_url = (fetched.get("image_url") or "").strip()
         self._cover_choice = "current"  # "current" | "fetched" | "cropped"
         self._chosen_cover_path: str | None = None

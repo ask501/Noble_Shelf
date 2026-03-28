@@ -52,6 +52,9 @@ from ui.widgets.statusbar import setup_statusbar
 from ui.widgets.toast import ToastWidget
 from store_file_resolver import ActionResult
 
+# ローカルモジュール
+from cover_paths import resolve_cover_path
+
 
 def _cover_has_path_segment(clean: str) -> bool:
     """相対パス文字列がライブラリ配下のサブパスとして扱えるか（区切りを含むか）。"""
@@ -549,7 +552,7 @@ class MainWindow(QMainWindow):
             q_release_date = meta.get("release_date", "")
             q_cover_url = meta.get("cover_url", "")
             q_store_url = meta.get("store_url", "")
-            logging.debug("[bookmarklet] 自動適用分岐 auto_apply=%s matched=%s", auto_apply, bool(matched))
+            logging.debug("[bookmarklet] auto_apply=%s matched=%s", auto_apply, matched)
             if matched is None:
                 # 一致なし → no_match
                 db.add_bookmarklet_queue(
@@ -567,8 +570,13 @@ class MainWindow(QMainWindow):
                     status="no_match",
                 )
             elif auto_apply:
+                logging.debug(
+                    "[bookmarklet] auto_apply 分岐に入った found_path=%s",
+                    matched.get("path"),
+                )
                 # 一致あり＋自動適用ON → メタ適用して applied
                 found_path = matched["path"]
+                logging.debug("[bookmarklet] meta cover_url=%s", meta.get("cover_url", ""))
                 logging.debug("[bookmarklet] set_book_meta 開始")
                 db.set_book_meta(
                     found_path,
@@ -583,15 +591,18 @@ class MainWindow(QMainWindow):
                 saved_path: str | None = None
                 cover_url = (meta.get("cover_url", "") or "").strip()
                 if cover_url:
+                    logging.debug("[bookmarklet] cover_url=%s", cover_url)
                     # get_book_cover は無いため、get_all_books の cover 列（custom優先）で既存サムネを判定
                     existing_cover = ""
+                    try:
+                        found_path_db = db.to_db_path_from_any(found_path)
+                    except ValueError:
+                        found_path_db = found_path
                     for row in db.get_all_books():
-                        if row[3] == found_path:
+                        if row[3] == found_path_db:
                             existing_cover = (row[4] or "").strip()
                             break
-                    resolved = (
-                        db.resolve_cover_stored_value(existing_cover) if existing_cover else ""
-                    )
+                    resolved = resolve_cover_path(existing_cover)
                     overwrite_thumb = db.get_setting("bookmarklet_overwrite_thumb") == "1"
                     if overwrite_thumb or not (resolved and os.path.isfile(resolved)):
                         logging.debug("[bookmarklet] _save_cover 開始")

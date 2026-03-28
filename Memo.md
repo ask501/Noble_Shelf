@@ -9,16 +9,16 @@
 git add .
 
 # 2.コメントを付けてコミット
-git commit -m "Update to v0.5.0"
+git commit -m "Update to v0.5.1"
 
 # 3.GitHubへ送信
 git push origin main
 
 # 4.タグを作成
-git tag v0.5.0
+git tag v0.5.1
 
 # 5.タグをGitHubに送信
-git push origin v0.5.0
+git push origin v0.5.1
 
 
 
@@ -33,13 +33,3 @@ v0.4.4 → v0.5.0 更新点
 ・
 
 
-
-
-今日の作業まとめ：
-
-set_book_metaのNULL上書きバグ（UNSET設計）
-サムネイル取得のcover_url→image_urlキー不一致修正
-相対/絶対パス混在問題の根本解決（DB入口強制正規化・_resolve_cover修正）
-DB洗浄スクリプト実行
-
-お疲れ様でした。次回はD&D問題から確認しましょう。

@@ -1547,12 +1547,24 @@ def rename_book(old_path, new_path, new_name, new_circle, new_title, new_cover_p
         if new_cover_custom is None and row:
             new_cover_custom = row["cover_custom"]
 
-        cover_path_store = _normalize_cover_for_save(new_cover_path) if new_cover_path else ""
-        conn.execute(
-            """UPDATE books SET path=?, name=?, circle=?, title=?, cover_path=?,
-               cover_custom=COALESCE(?, cover_custom), updated_at=datetime('now','localtime') WHERE path=?""",
-            (new_rel, new_name, new_circle, new_title, cover_path_store, new_cover_custom, old_rel)
-        )
+        if new_cover_path:
+            cover_path_store = _normalize_cover_for_save(new_cover_path)
+            conn.execute(
+                """UPDATE books SET path=?, name=?, circle=?, title=?, cover_path=?,
+                   updated_at=datetime('now','localtime') WHERE path=?""",
+                (new_rel, new_name, new_circle, new_title, cover_path_store, old_rel),
+            )
+        else:
+            conn.execute(
+                """UPDATE books SET path=?, name=?, circle=?, title=?,
+                   updated_at=datetime('now','localtime') WHERE path=?""",
+                (new_rel, new_name, new_circle, new_title, old_rel),
+            )
+        if new_cover_custom:
+            conn.execute(
+                "UPDATE books SET cover_custom=? WHERE path=?",
+                (new_cover_custom, new_rel),
+            )
         # pathを持つ関連テーブルのみ更新
         conn.execute("UPDATE bookmarks SET path=? WHERE path=?", (new_rel, old_rel))
         conn.execute("UPDATE recent_books SET path=? WHERE path=?", (new_rel, old_rel))
