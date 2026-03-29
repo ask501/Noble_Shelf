@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Noble Shelf</title>
 <meta name="description" content="Noble Shelfは、PCローカルに保存された電子書籍・同人誌・自炊本を快適に管理・閲覧するためのライブラリ管理ツールです。">
+<<<<<<< HEAD
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+=======
+>>>>>>> 384f0fdc364fbb3f83c2ca56bd9dd443727d0abd
 <style>
   :root {
     --bg: #0d0d0f;
@@ -85,6 +89,50 @@
     color: #b0b0c0; white-space: pre-wrap;
   }
 
+<<<<<<< HEAD
+  /* Markdownレンダリング */
+  .markdown-body {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 28px;
+    font-size: 0.875rem; line-height: 1.8; color: #b0b0c0;
+  }
+  .markdown-body h1, .markdown-body h2, .markdown-body h3 {
+    color: #e8e8f0; font-weight: 600; margin: 1.5em 0 0.6em;
+    padding-bottom: 0.3em; border-bottom: 1px solid var(--border);
+  }
+  .markdown-body h1 { font-size: 1.4rem; }
+  .markdown-body h2 { font-size: 1.15rem; }
+  .markdown-body h3 { font-size: 1rem; border-bottom: none; }
+  .markdown-body p { margin: 0.8em 0; }
+  .markdown-body ul, .markdown-body ol { margin: 0.8em 0; padding-left: 1.5em; }
+  .markdown-body li { margin: 0.3em 0; }
+  .markdown-body code {
+    background: rgba(157,127,232,0.1); color: var(--accent2);
+    padding: 2px 6px; border-radius: 4px; font-size: 0.85em;
+    font-family: "Consolas", "Fira Code", monospace;
+  }
+  .markdown-body pre {
+    background: #0a0a0c; border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px; overflow-x: auto; margin: 1em 0;
+  }
+  .markdown-body pre code {
+    background: none; color: #c4c4d4; padding: 0; font-size: 0.85rem;
+  }
+  .markdown-body a { color: var(--accent2); text-decoration: none; }
+  .markdown-body a:hover { text-decoration: underline; }
+  .markdown-body blockquote {
+    border-left: 3px solid var(--accent); margin: 1em 0;
+    padding: 0.5em 1em; color: var(--muted);
+    background: var(--accent-dim); border-radius: 0 6px 6px 0;
+  }
+  .markdown-body table { width: 100%; border-collapse: collapse; margin: 1em 0; }
+  .markdown-body th, .markdown-body td {
+    border: 1px solid var(--border); padding: 8px 12px; font-size: 0.85rem;
+  }
+  .markdown-body th { background: rgba(157,127,232,0.08); color: #e8e8f0; }
+  .markdown-body img { max-width: 100%; border-radius: 6px; }
+  .markdown-body hr { border: none; border-top: 1px solid var(--border); margin: 1.5em 0; }
+
   /* リリース */
   .release-item { padding: 20px 0; border-bottom: 1px solid var(--border); }
   .release-item:last-child { border-bottom: none; }
@@ -116,6 +164,39 @@
   .feat-name { font-size: .875rem; font-weight: 600; color: #e8e8f0; margin-bottom: 5px; }
   .feat-desc { font-size: .8rem; color: #6b6b80; line-height: 1.65; }
 
+=======
+  /* リリース */
+  .release-item { padding: 20px 0; border-bottom: 1px solid var(--border); }
+  .release-item:last-child { border-bottom: none; }
+  .release-header { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+  .version-badge {
+    display: inline-block; background: var(--accent-dim); color: var(--accent2);
+    font-size: 0.78rem; font-weight: 600; padding: 3px 10px;
+    border-radius: 20px; border: 1px solid rgba(157,127,232,0.2); letter-spacing: 0.03em;
+  }
+  .rel-date { font-size: 0.8rem; color: var(--muted); margin-left: auto; }
+  .rel-body { font-size: 0.875rem; color: #8888a0; line-height: 1.7; white-space: pre-wrap; }
+
+  /* フィーチャーグリッド */
+  .feat-label { font-size: .75rem; letter-spacing: .1em; text-transform: uppercase; color: #9d7fe8; margin-bottom: 10px; }
+  .feat-title { font-size: 1.4rem; font-weight: 600; color: #fff; letter-spacing: -.02em; margin-bottom: 6px; }
+  .feat-sub { font-size: .875rem; color: #6b6b80; margin-bottom: 32px; }
+  .feat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .feat-card {
+    background: #16161a; border: 1px solid rgba(255,255,255,.07);
+    border-radius: 12px; padding: 22px 20px; transition: border-color .2s;
+  }
+  .feat-card:hover { border-color: rgba(157,127,232,.3); }
+  .feat-icon {
+    width: 44px; height: 44px; border-radius: 10px;
+    background: rgba(157,127,232,.12); border: 1px solid rgba(157,127,232,.2);
+    display: flex; align-items: center; justify-content: center; margin-bottom: 14px;
+  }
+  .feat-icon svg { width: 22px; height: 22px; }
+  .feat-name { font-size: .875rem; font-weight: 600; color: #e8e8f0; margin-bottom: 5px; }
+  .feat-desc { font-size: .8rem; color: #6b6b80; line-height: 1.65; }
+
+>>>>>>> 384f0fdc364fbb3f83c2ca56bd9dd443727d0abd
   .loading { color: var(--muted); font-size: 0.875rem; text-align: center; padding: 48px 0; }
 </style>
 </head>
@@ -140,6 +221,10 @@
 
   <div class="tabs">
     <button class="tab-btn active" onclick="showTab('about',this)">紹介</button>
+<<<<<<< HEAD
+    <button class="tab-btn" onclick="showTab('readme',this)">README</button>
+=======
+>>>>>>> 384f0fdc364fbb3f83c2ca56bd9dd443727d0abd
     <button class="tab-btn" onclick="showTab('changelog',this)">更新履歴</button>
     <button class="tab-btn" onclick="showTab('license',this)">ライセンス</button>
   </div>
@@ -204,6 +289,16 @@
     </div>
   </div>
 
+<<<<<<< HEAD
+  <!-- READMEタブ -->
+  <div id="readme" class="tab-content">
+    <div id="readme-content" class="markdown-body">
+      <p class="loading">取得中...</p>
+    </div>
+  </div>
+
+=======
+>>>>>>> 384f0fdc364fbb3f83c2ca56bd9dd443727d0abd
   <!-- 更新履歴タブ -->
   <div id="changelog" class="tab-content">
     <div id="history-list"></div>
@@ -219,6 +314,10 @@
 <script>
   const REPO = 'ask501/Noble_Shelf';
   const API_RELEASES = `https://api.github.com/repos/${REPO}/releases`;
+<<<<<<< HEAD
+  const API_README  = `https://api.github.com/repos/${REPO}/readme`;
+=======
+>>>>>>> 384f0fdc364fbb3f83c2ca56bd9dd443727d0abd
   const API_LICENSE = `https://api.github.com/repos/${REPO}/license`;
 
   function showTab(tabId, btn) {
@@ -255,6 +354,16 @@
     } catch(e) { dlEl.innerHTML = '<p class="loading">取得失敗</p>'; }
   }
 
+<<<<<<< HEAD
+  async function fetchReadme() {
+    const el = document.getElementById('readme-content');
+    try {
+      const res = await fetch(API_README, { headers: { Accept: 'application/vnd.github.v3.raw' } });
+      const text = await res.text();
+      el.innerHTML = marked.parse(text);
+    } catch(e) { el.innerHTML = '<p class="loading">取得失敗</p>'; }
+  }
+
   async function fetchLicense() {
     const el = document.getElementById('license-content');
     try {
@@ -264,6 +373,18 @@
   }
 
   fetchDownloadAndHistory();
+  fetchReadme();
+=======
+  async function fetchLicense() {
+    const el = document.getElementById('license-content');
+    try {
+      const res = await fetch(API_LICENSE, { headers: { Accept: 'application/vnd.github.v3.raw' } });
+      el.textContent = await res.text();
+    } catch(e) { el.textContent = '取得失敗'; }
+  }
+
+  fetchDownloadAndHistory();
+>>>>>>> 384f0fdc364fbb3f83c2ca56bd9dd443727d0abd
   fetchLicense();
 </script>
 </body>
