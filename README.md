@@ -4,220 +4,181 @@
 
 **同人誌・電子書籍をフォルダ単位で管理し、内置ビューワーで読むためのデスクトップライブラリアプリです。**
 
-Python と PySide6（Qt for Python）で開発された Windows 向けデスクトップアプリケーションです。ライブラリフォルダを1つ指定し、その配下の「サークル名 - 作品名」形式のフォルダや、ZIP/PDF などのファイルをスキャンして一覧表示します。サムネイル付きグリッド・サイドバーでの絞り込み・検索・お気に入り（星評価）・メタデータ編集のほか、ZIP/PDF 等は内置ビューワーでそのまま閲覧できます。
+Python と PySide6（Qt for Python）で開発された Windows 向けデスクトップアプリケーションです。ライブラリフォルダを 1 つ指定し、その配下の「サークル名 - 作品名」形式のフォルダや、ZIP / PDF などのファイルをスキャンして一覧表示します。サムネイル付きグリッド・サイドバーでの絞り込み・検索・お気に入り（星評価）・メタデータ編集のほか、ZIP / PDF 等は内置ビューワーでそのまま閲覧できます。
 
 ---
 
-## Features
+## 主な機能
 
-- **ライブラリ管理** … 1フォルダをライブラリとして登録し、サブフォルダ・アーカイブ・PDF・ストアファイルをスキャンして DB に登録
-- **グリッド表示** … サムネイル・作品名・サークル名・ページ数（または DMM/DLSite バッジ）をカード表示
-- **検索 / ソート / フィルター** … テキスト検索、作品名/サークル/追加日などのソート、複合フィルターを提供
-- **内置ビューワー** … フォルダ内画像・ZIP/CBZ/7z/CB7/RAR/CBR・PDF をアプリ内で表示（1P/2P、ズーム・パン、シークバー、全画面、キーボード操作）
-- **ストアファイル対応** … DMM（`.dmmb`, `.dmme`, `.dmmr`）・DLSite（`.dlst`）は専用ビュアー起動に対応
-- **プロパティ編集** … タイトル/サークル更新、カバー変更、名前変更、一括編集に対応
-- **コンテキストメニュー操作** … 開く・プロパティ・名前変更・削除・除外・ショートカット作成など
-- **プラグインシステム** … 外部プラグインの有効/無効を切り替え可能。メタデータ取得系 UI は有効時のみ表示
-- **ドラッグ＆ドロップ登録** … フォルダ・アーカイブ・PDF・ストアファイルの取り込みに対応
-- **DB バックアップ / 復元** … 起動時の自動バックアップ（直近10件）と設定画面からの復元
-- **自動アップデート** … `launcher.py` 経由起動時に GitHub Releases を確認（`updater.py`）
-- **ブックマークレット連携** … ブラウザから作品メタデータを送信し、ライブラリの既存作品へ適用
+- **ライブラリ管理** … 1 フォルダをライブラリとして登録し、サブフォルダ・アーカイブ・PDF・ストアファイルをスキャンして SQLite（`library.db`）に登録
+- **グリッド表示** … サムネイル・作品名・サークル名・ページ数（または DMM / DLSite バッジ）をカード表示（`grid/`：モデル・ビュー・デリゲート・非同期サムネ）
+- **検索 / ソート / フィルター** … テキスト検索、複合条件のフィルター（`filter_popover.py`）、ソート
+- **内置ビューワー**（`ui/dialogs/viewer/` パッケージ）  
+  - **1P / 2P**：2 ページ表示はツールバーのトグル＋アイコン（`2_page.svg`）。左綴じ / 右綴じ（設定）に応じた見開きの左右割り当て  
+  - **1 ページ送り**：ツールバーボタン（`next_page.svg`）で現在インデックスを 1 ページ進める（1P / 2P 共通で表示）  
+  - **サムネイルストリップ**：表示 ON/OFF を DB に保存。セルにページ番号と読み込み前プレースホルダー、横スクロール・ホイール操作  
+  - **全画面サムネイルオーバーレイ**：グリッド表示のトグル（`overlay_grid.svg`）  
+  - シークバー（綴じ方向に応じた見た目）、全画面、キャンバスクリック・キーボードでのページ送り、PDF / アーカイブ / 画像フォルダの読み込み（`BookReader` 系）
+- **ストアファイル** … DMM（`.dmmb`, `.dmme`, `.dmmr`）・DLSite（`.dlst`）は専用ビュアー起動（`context_menu/_utils.py` 等で解決）
+- **カバー画像** … `cover_paths.py` とキャッシュ連携で表紙パスを扱う
+- **プロパティ編集** … `ui/dialogs/properties/`（タイトル / サークル、カバー、名前変更、メタ検索・適用 等）
+- **コンテキストメニュー** … `context_menu/`（開く・プロパティ・削除・除外・ブックマーク 等）
+- **プラグイン** … `plugin_loader.py` で有効 / 無効。メタデータ取得系 UI は有効時のみ
+- **ドラッグ＆ドロップ** … `drop_handler.py` でフォルダ・アーカイブ・PDF 等の取り込み
+- **DB バックアップ / 復元** … `db.py`・設定タブ（`ui/dialogs/settings/tab_backup.py`）
+- **自動アップデート** … `launcher.py` → `updater.py`（GitHub Releases）
+- **ブックマークレット** … `local_server.py`・`bookmarklet/`・`bookmarklet_window.py` でブラウザからメタ送信
+- **補助ダイアログ** … 初回起動（`first_run.py`）、ライブラリフォルダ、重複カバー、欠損作品、ライブラリ整理・確認 等（`library_*_dialog.py`, `missing_books_dialog.py`, `duplicate_cover_dialog.py`, `library_checker.py` 等）
 
 ---
 
-## Supported Formats
+## 対応形式（概要）
 
 | 種別 | 拡張子 | 備考 |
 |------|--------|------|
-| **アーカイブ（内置ビューワー・ページ数表示）** | `.zip`, `.cbz`, `.7z`, `.cb7`, `.rar`, `.cbr` | 内包画像でページ数カウント。画像: `.jpg`, `.jpeg`, `.png`, `.webp`, `.gif`, `.bmp` |
-| **PDF** | `.pdf` | 内置ビューワー対応。表紙は cover_cache にキャッシュ |
-| **フォルダ** | （フォルダ単位） | 画像フォルダまたは PDF 1本入りフォルダとして登録 |
-| **DMM ストア** | `.dmmb`, `.dmme`, `.dmmr` | 専用ビュアー（DMMBooks.exe / DMMbookviewer.exe 等）で起動。ショートカット検知あり |
-| **DLSite ストア** | `.dlst` | 専用ビュアー（DLSitePlay.exe / DLsiteViewer.exe 等）で起動。ショートカット検知あり |
+| **アーカイブ（内置ビューワー・ページ数）** | `.zip`, `.cbz`, `.7z`, `.cb7`, `.rar`, `.cbr` | 内包画像でページ数カウント。画像拡張子は `config` 定義に準拠 |
+| **PDF** | `.pdf` | 内置ビューワー。表紙は `cover_cache` にキャッシュ |
+| **フォルダ** | （フォルダ単位） | 画像フォルダまたは PDF 1 本入りフォルダとして登録 |
+| **DMM ストア** | `.dmmb`, `.dmme`, `.dmmr` | 専用ビュアー起動 |
+| **DLSite ストア** | `.dlst` | 専用ビュアー起動 |
+
+詳細な拡張子・解像度・UI 定数は `config.py` を参照してください。
 
 ---
 
-## Project Structure
+## プロジェクト構成（主要ファイル）
 
 ```
-（プロジェクトルート）/
-├── launcher.py              # ランチャー。起動時クリーンアップ → 自動アップデート確認 → main.main()
-├── main.py                  # エントリーポイント。ロギング・QApplication・フォント・アイコン設定後、MainWindow を表示
-├── app.py                   # メインウィンドウ (MainWindow)。レイアウト・シグナル・スキャン・D&D 等の統合
-├── version.py               # アプリバージョン文字列（配布 Zip 名などに利用）
-├── config.py                # 定数一元管理（APP_TITLE, フォント, 拡張子, ショートカット既定値 等）
-├── paths.py                 # APP_BASE / APP_DATA_DIR / DB / キャッシュ / プラグイン等のパス
-├── db.py                    # SQLite の library.db 管理。初期化・マイグレーション・バックアップ・復元
-├── theme.py                 # QSS とカラー定義（ダークテーマ）
-├── book_updater.py          # 作品名変更・メタ更新の共通ロジック
-├── store_file_resolver.py   # ストアファイル（DMM/DLSite/PDF）の重複・rename判定ロジック
-├── drop_handler.py          # ドラッグ＆ドロップ登録フロー
-├── scanners/                # メディア種別ごとのスキャナ実装と集約エントリ
-│   ├── __init__.py          # scan_library() と SCANNERS 定義
-│   ├── base_scanner.py      # スキャナ抽象基底
-│   └── book_scanner.py      # 同人誌（book）スキャン本体
-├── plugin_loader.py         # プラグイン検出・有効/無効の保存
-├── local_server.py          # ブックマークレット用ローカル HTTP（127.0.0.1）
-├── updater.py               # GitHub Releases からの自動アップデート
-├── cache.py                 # アプリ内キャッシュ用ユーティリティ
-├── debug_tools.py           # 開発用デバッグユーティリティ（初回起動オーバーレイ確認など）
-├── grid/                    # ブックグリッド（モデル・デリゲート・サムネワーカー・ロール定数）
-│   ├── view.py              # BookGridView（リスト表示・コンテキストメニュー起点）
-│   ├── model.py             # BookListModel
-│   ├── delegate.py          # カード描画
-│   └── thumb.py             # サムネ非同期生成
-├── context_menu/            # グリッド右クリック・各種アクション
+（リポジトリルート）/
+├── launcher.py              # 起動：クリーンアップ → 更新確認 → main.main()
+├── main.py                  # QApplication・フォント・テーマ・MainWindow 表示のみ
+├── app.py                   # メインウィンドウ。レイアウト・スキャン・D&D・シグナル統合
+├── version.py               # アプリバージョン
+├── config.py                # 定数（フォント、ビューア UI、グリッド、拡張子 等）
+├── paths.py                 # APP_BASE、DB、キャッシュ、プラグイン、アイコン SVG パス
+├── theme.py                 # QSS・カラー定数・ダークタイトルバー補助
+├── db.py                    # SQLite・マイグレーション・バックアップ
+├── cover_paths.py           # カバー画像パス解決
+├── book_updater.py          # 作品名・メタ更新の共通処理
+├── store_file_resolver.py   # ストアファイルの重複・リネーム判定
+├── drop_handler.py          # D&D 登録
+├── cache.py                 # キャッシュ補助
+├── debug_tools.py           # 開発用
+├── updater.py               # GitHub Releases 更新
+├── local_server.py          # ブックマークレット用 HTTP（127.0.0.1）
+├── plugin_loader.py         # プラグイン読み込み・有効フラグ
+├── scanners/                # scan_library()、book スキャン（`book_scanner.py` 等）
+├── grid/                    # グリッド（view / model / delegate / thumb / roles）
+├── context_menu/            # 右クリックメニュー・アクション分割
+├── bookmarklet/             # JS・サイト別パーサ（DLsite / FANZA / BOOTH / 同人DB）
 ├── ui/
-│   ├── widgets/             # メニューバー・ツールバー・サイドバー・検索バー・ステータスバー
-│   ├── dialogs/             # 各種ダイアログ
-│   │   ├── settings/        # 設定（一般・ショートカット・バックアップ・カード表示 等）
-│   │   ├── properties/      # プロパティ・名前変更・メタ検索/適用・ストア追加入力
-│   │   ├── viewer.py        # 内置ビューワー本体
+│   ├── widgets/             # メニューバー、ツールバー、サイドバー、検索バー、ステータスバー、トースト
+│   ├── dialogs/
+│   │   ├── viewer/          # 内置ビューワー（Viewer・キャンバス・オーバーレイ・ストリップ・Reader）
+│   │   ├── properties/      # プロパティ・リネーム・メタ検索 / 適用
+│   │   ├── settings/        # 設定タブ（一般・ショートカット・バックアップ・カード）
 │   │   ├── filter_popover.py
-│   │   ├── bookmarklet_window.py
-│   │   ├── bookmarklet_help_dialog.py
-│   │   ├── library_folder_dialog.py
-│   │   ├── first_run.py
-│   │   ├── thumbnail_crop_dialog.py
-│   │   └── library_check_dialog.py
-│   └── utils/               # 共通 UI ユーティリティ（例: 自動スクロール）
-├── bookmarklet/
-│   ├── base.py
-│   ├── bookmarklet.js
-│   └── sites/               # サイト別 HTML パーサー（DLsite / FANZA / BOOTH / 同人DB）
-├── scripts/                 # 補助スクリプト（例: UUID不一致修復）
-│   └── fix_uuid_mismatch.py
-├── assets/                  # アイコン・バッジ画像・SVG 等
-├── docs/                    # ドキュメント用静的ファイル（例: index.html）
-├── BUILD.bat                # PyInstaller ビルド例（launcher.py をエントリに）
-│
-└── （ユーザーデータは %APPDATA%\NobleShelf\ に保存）
-    ├── library.db
-    ├── backups/             # 起動時自動バックアップ
-    ├── thumb_cache/
-    ├── cover_cache/
-    └── plugins/             # ユーザープラグイン配置先
+│   │   ├── bookmarklet_window.py / bookmarklet_help_dialog.py
+│   │   ├── library_folder_dialog.py / first_run.py
+│   │   ├── duplicate_cover_dialog.py / missing_books_dialog.py
+│   │   ├── library_organize_dialog.py / library_init_confirm_dialog.py
+│   │   ├── library_check_dialog.py / library_checker.py
+│   │   └── thumbnail_crop_dialog.py
+│   └── utils/               # 自動スクロール等
+├── tests/                   # スキャナ・リゾルバ等のテスト
+├── scripts/                 # 例: fix_uuid_mismatch.py
+├── assets/                  # アイコン・バッジ・ビューア用 SVG（paths.py の定数と対応）
+└── docs/                    # ドキュメント用静的ファイル
+
+ユーザーデータ（既定）: %APPDATA%\NobleShelf\
+├── library.db
+├── backups/
+├── thumb_cache/ / cover_cache/
+└── plugins/
 ```
 
----
-
-## Plugin System
-
-- **フォルダの役割**  
-  - プラグインは **ユーザーデータディレクトリ `%APPDATA%\NobleShelf\plugins\` 直下の各サブフォルダ**（`__init__.py` を持つもの）が 1 プラグインとして読み込まれます。  
-  - プラグインフォルダはメニュー「プラグイン → プラグインフォルダを開く」から開けます。  
-  - **本リポジトリ・配布物にはプラグインは同梱しません。** 必要に応じてユーザーが自行で配置します（サンプル実装も含めて同梱していません）。
-
-- **契約**  
-  各プラグインは `__init__.py` で次の属性を持つオブジェクトを export します。  
-  - モジュール直下、または `get_plugin()` の戻り値として  
-    `PLUGIN_NAME`, `PLUGIN_SOURCE_KEY`, `search_sync`, `get_metadata_sync` を定義する  
-
-  任意: `can_handle(product_id_or_url)`, `get_property_buttons(context)`（プロパティ／ストア追加ダイアログに並べるボタン）。
-
-- **有効/無効の仕組み**  
-  - **保存**: 設定キー `plugin_enabled_<PLUGIN_SOURCE_KEY>` を DB の `settings` に `"1"`（有効）または `"0"`（無効）で保存します。  
-  - **取得**: `plugin_loader.is_plugin_enabled(source_key)` が未設定の場合は有効、明示的に `"0"` のとき無効。  
-  - **API の使い分け**:  
-    - **`get_plugins()`** … 有効なプラグインのみ返す。検索・メタ取得・コンテキスト「メタデータの取得」・プロパティの取得/メタ検索ボタン・サイドバー「メタデータ」はすべてここだけを使うため、無効にするとこれらの UI と処理が一切出ません。  
-    - **`get_all_plugins()`** … 有効/無効を問わず読み込み済みプラグインを返す。メニュー「プラグイン」の一覧表示（チェック ON/OFF）に使用します。  
-  - プラグインを同梱しないため、配布時は最初からプラグイン連携に依存する UI は出ません。
+※ 旧単体 `viewer.py` は `viewer_old.py` / `viewer.py.bak` として参照用に残っている場合があります。実行時は `from ui.dialogs.viewer import Viewer`（パッケージ）を使用します。
 
 ---
 
-## Usage
+## プラグイン
+
+- **配置先**: **`%APPDATA%\NobleShelf\plugins\`** 直下の各サブフォルダ（`__init__.py` を持つものが 1 プラグイン）。メニュー「プラグイン → プラグインフォルダを開く」から開けます。配布 Zip にプラグインは同梱しません。
+- **契約**（`__init__.py` で export）: モジュール直下または `get_plugin()` の戻り値に  
+  `PLUGIN_NAME`, `PLUGIN_SOURCE_KEY`, `search_sync`, `get_metadata_sync` を定義。  
+  任意: `can_handle(...)`, `get_property_buttons(context)` 等。
+- **有効 / 無効**: 設定キー `plugin_enabled_<PLUGIN_SOURCE_KEY>` を DB の `settings` に `"1"` / `"0"` で保存。未設定は有効扱い。
+- **API**:  
+  - **`get_plugins()`** … 有効なプラグインのみ。検索・メタ取得・コンテキスト・プロパティの取得系 UI はここ経由。  
+  - **`get_all_plugins()`** … 有効無効を問わず一覧。メニュー「プラグイン」の ON/OFF 表示用。
+
+---
+
+## 使い方
 
 ### 要件
 
-- **OS**: Windows（タイトルバーのダークモード等、Windows 向け処理を含みます）
-- **Python**: 3.14 想定で開発（他バージョンは未検証の場合があります）
-- **依存パッケージ**（例）: `PySide6`, `PyMuPDF`（`fitz`）, `Pillow`, `py7zr`, `rarfile`, `beautifulsoup4`, `Send2Trash`  
-  - リポジトリに `requirements.txt` は含まれていないため、必要に応じて上記を `pip install` してください。
+- **OS**: Windows（ダークタイトルバー等）
+- **Python**: 3.14 想定で開発
+- **依存**: `PySide6`, `PyMuPDF`（`fitz`）, `Pillow`, `py7zr`, `rarfile`, `beautifulsoup4`, `Send2Trash` 等（`requirements.txt` が無い場合は個別 `pip install`）
 
-### 起動方法
+### 起動
 
-- **`python launcher.py`（推奨）**  
-  - 起動時クリーンアップと **GitHub Releases による更新確認** が行われます。
+- **`python launcher.py`（推奨）** … クリーンアップと更新確認あり。
+- **`python main.py`** … メインウィンドウのみ。
 
-- **`python main.py`**  
-  - 更新確認なしでメインウィンドウのみ起動します。
+初回はライブラリフォルダ未設定の場合、オーバーレイやダイアログからフォルダを指定してスキャンします。
 
-- **初回・ライブラリ未設定時**  
-  - オーバーレイまたは「ライブラリフォルダを設定」でフォルダを選ぶとスキャンが始まります。
+### メンテナンス
 
-- **exe 化する場合**  
-  - `BUILD.bat` は PyInstaller で `launcher.py` をエントリにビルドする例です。生成されたフォルダに `assets` が同梱されるよう `--add-data` 済みです。  
-  - プラグインは `%APPDATA%\NobleShelf\plugins\` から読み込まれるため、exe 横に `plugins` を置く必要はありません。
+- `python scripts/fix_uuid_mismatch.py` … `.noble-shelf-id` と DB の UUID 不整合の修復（対話確認）。
 
-### メンテナンススクリプト
+### exe 化
 
-- **UUID 不整合の点検・修復（ワンショット）**  
-  `python scripts/fix_uuid_mismatch.py`  
-  旧フロー由来で `.noble-shelf-id` と `books.uuid` がずれた場合に、対話確認のうえで修復します。
+- `BUILD.bat` は PyInstaller で `launcher.py` をエントリにする例。`assets` は `--add-data` で同梱想定。
 
 ---
 
-## Bookmarklet Integration
+## ブックマークレット連携
 
-ブラウザ上の作品ページから、ブックマークレット経由で Noble Shelf にメタデータを送信し、ライブラリの既存作品に適用できます。
+ブラウザの作品ページから、ローカルサーバー（既定 `http://127.0.0.1:8765`）経由でメタデータを送信し、ライブラリの既存作品に適用できます。
 
-> この機能は、ユーザーご自身のブラウザで表示されたページの HTML をローカルで解析するためのものです。  
-> 対象サイトへの自動クローリングや大量アクセスは行いませんが、実際の利用にあたっては必ず各サイトの利用規約・ガイドラインに従ってください。
+> 表示中の HTML をローカルで解析する用途です。各サイトの利用規約に従ってください。
 
-### 対応サイト（現在のパーサ実装）
+### 対応サイト（パーサ実装）
 
-- DLsite
-- FANZA (DMM ブックス)
-- BOOTH
-- 同人DB（doujinshi.org）
+- DLsite、FANZA（DMM ブックス）、BOOTH、同人 DB（doujinshi.org）
 
-### セットアップ手順（かんたん版）
+### 手順の概要
 
-1. Noble Shelf を起動する。  
-   - 起動時にローカルサーバー `http://127.0.0.1:8765` が立ち上がります。
-2. メニュー **「ツール」→「ブックマークレットキュー」** を開く。  
-3. ウィンドウ右上の **「ブックマークレットをコピー」** ボタンを押す。  
-   - ブラウザ用のブックマークレット JS がクリップボードにコピーされます。
-4. ブラウザで新しいブックマークを作成し、URL 欄に貼り付ける。  
-   - 名前は「Noble Shelf」など任意。
-5. 対応サイトで作品ページを開き、登録したブックマークレットをクリックする。  
-   - 成功するとブラウザ上で「Noble Shelfに送信しました！」と表示されます。
-6. Noble Shelf の「ブックマークレットキュー」ウィンドウに作品が追加されるので、  
-   - 左の一覧から作品を選択すると、右側にサムネイルとメタ情報が表示されます。
-   - 「ライブラリで探す」で既存ライブラリ内の作品を自動検索
-   - 「メタデータを適用」で、タイトル・サークル・作者・タグ・発売日・カバー画像などを反映できます。
+1. アプリ起動後、**「ツール」→「ブックマークレットキュー」** を開く。  
+2. **「ブックマークレットをコピー」** で JS をクリップボードにコピーし、ブラウザのブックマーク URL に貼り付け。  
+3. 対応サイトでブックマークレット実行 → キューに追加 → 「ライブラリで探す」「メタデータを適用」等。
 
-### ライブラリフォルダの設定手順
+### ライブラリフォルダ
 
-1. メニュー **「ファイル」** → **「ライブラリフォルダを設定」** を選択する。  
-2. 同人誌・電子書籍を格納しているフォルダ（サブフォルダに「サークル名 - 作品名」形式のフォルダや ZIP/PDF がある想定）を選択して **「フォルダの選択」** をクリック。  
-3. スキャンがバックグラウンドで実行され、完了するとグリッドに一覧が表示されます。  
-4. 以降の起動時は、保存済みのライブラリフォルダで自動的にスキャンされます。  
-5. **「ファイル」** → **「ライブラリを開く」** で、設定中のライブラリフォルダをエクスプローラーで開けます。
+**「ファイル」→「ライブラリフォルダを設定」** でフォルダを選ぶとスキャンが走ります。**「ライブラリを開く」** でエクスプローラーから開けます。
 
 ---
 
-## Screenshots
+## スクリーンショット
 
-<!-- スクリーンショットを追加する場合はここに画像を配置してください。 -->
-<!-- 例: ![メイン画面](docs/screenshot_main.png) -->
+<!-- 必要に応じて docs/ 等に画像を置き、ここに参照を追加 -->
 
 ---
 
-## Third-party / Dependencies
-
-本プロジェクトは以下のライブラリ等を使用しています。各ライセンスはそれぞれの著作権者に帰属します。
+## サードパーティ / 依存ライブラリ
 
 | 名前 | 用途 | ライセンス |
 |------|------|------------|
-| [PySide6](https://doc.qt.io/qtforpython/) (Qt for Python) | GUI | [LGPL v3](https://www.gnu.org/licenses/lgpl-3.0.html) 等 |
-| Python | 実行環境 | [PSF License](https://docs.python.org/3/license.html) |
+| [PySide6](https://doc.qt.io/qtforpython/) | GUI | LGPL 等 |
+| Python | 実行環境 | PSF License |
 
-その他、PyMuPDF、Pillow、py7zr、rarfile、Beautiful Soup、Send2Trash 等を利用しています。詳細は各パッケージの表記に従います。
+その他 PyMuPDF、Pillow、py7zr、rarfile、Beautiful Soup、Send2Trash 等。各パッケージの表記に従います。
 
 ---
 
-## License
+## ライセンス
 
 本リポジトリのコードは **MIT License** です。Copyright (c) 2026 ask501。  
 全文は [LICENSE](LICENSE) を参照してください。
