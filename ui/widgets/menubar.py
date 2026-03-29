@@ -154,6 +154,11 @@ def setup_menubar(window):
     window._act_file_reset_cache.triggered.connect(window._clear_caches)
     file_menu.addAction(window._act_file_reset_cache)
 
+    # バックアップを作成
+    window._act_file_create_backup = QAction("バックアップを作成", window)
+    window._act_file_create_backup.triggered.connect(window._on_create_backup)
+    file_menu.addAction(window._act_file_create_backup)
+
     # バックアップを復元
     window._act_file_restore_backup = QAction("バックアップを復元", window)
     window._act_file_restore_backup.triggered.connect(window._on_restore_backup)
@@ -245,6 +250,9 @@ def setup_menubar(window):
     act_repair_pdf = QAction("PDFサムネを修復", window)
     act_repair_pdf.triggered.connect(window._repair_pdf_covers)
     tool_menu.addAction(act_repair_pdf)
+    act_repair_folder_thumbs = QAction(config.THUMB_REPAIR_MENU_LABEL, window)
+    act_repair_folder_thumbs.triggered.connect(window._repair_folder_thumbnails)
+    tool_menu.addAction(act_repair_folder_thumbs)
     tool_menu.addSeparator()
     act_bookmarklet = QAction("ブックマークレットキュー", window)
     act_bookmarklet.triggered.connect(lambda: window._on_bookmarklet_toolbar_toggled(True))

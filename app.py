@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QProgressDialog,
     QMessageBox,
     QDialog,
+    QDialogButtonBox,
     QPushButton,
     QComboBox,
     QLineEdit,
@@ -38,11 +39,13 @@ from ui.dialogs.library_folder_dialog import LibraryFolderDialog
 from version import VERSION
 from grid import BookGridView
 from scanners import scan_library
+from scanners.book_scanner import IMAGE_EXTS as SCANNER_IMAGE_EXTS
 from ui.widgets.sidebar import SidebarWidget
 from ui.widgets.searchbar import SearchBar, filter_books, build_haystack_cache
 from ui.widgets.toolbar import ToolBar
 from drop_handler import handle_drop, _get_pdf_cover_and_pages
 from ui.dialogs.filter_popover import FilterPopover
+import theme
 from theme import THEME_COLORS, COLOR_BORDER, apply_dark_titlebar, get_statusbar_scan_progress_qss
 from ui.dialogs.properties import _auto_kana, _needs_kana_conversion
 from ui.dialogs.properties._utils import _is_library_root
@@ -53,7 +56,7 @@ from ui.widgets.toast import ToastWidget
 from store_file_resolver import ActionResult
 
 # ローカルモジュール
-from cover_paths import resolve_cover_path
+from cover_paths import resolve_cover_path, resolve_cover_path_fast
 
 
 def _cover_has_path_segment(clean: str) -> bool:
@@ -225,6 +228,10 @@ class MainWindow(QMainWindow):
         dlg = SettingsDialog(self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             refresh_shortcuts(self)
+            # 設定保存後に開いているビューアの綴じ方向を同期
+            for viewer in getattr(self, "_open_viewers", []):
+                if viewer.isVisible():
+                    viewer._refresh_viewer_direction_from_settings()
         # 設定ダイアログを閉じたらカード表示設定を反映
         self._grid.apply_display_settings()
 
@@ -552,7 +559,6 @@ class MainWindow(QMainWindow):
             q_release_date = meta.get("release_date", "")
             q_cover_url = meta.get("cover_url", "")
             q_store_url = meta.get("store_url", "")
-            logging.debug("[bookmarklet] auto_apply=%s matched=%s", auto_apply, matched)
             if matched is None:
                 # 一致なし → no_match
                 db.add_bookmarklet_queue(
@@ -588,10 +594,10 @@ class MainWindow(QMainWindow):
                     store_url=meta.get("store_url") or None,
                 )
                 logging.debug("[bookmarklet] set_book_meta 完了")
-                saved_path: str | None = None
                 cover_url = (meta.get("cover_url", "") or "").strip()
+                logging.debug("[bookmarklet] cover_url=%s", cover_url)
+                saved_path: str | None = None
                 if cover_url:
-                    logging.debug("[bookmarklet] cover_url=%s", cover_url)
                     # get_book_cover は無いため、get_all_books の cover 列（custom優先）で既存サムネを判定
                     existing_cover = ""
                     try:
@@ -679,7 +685,11 @@ class MainWindow(QMainWindow):
                                                 "[bookmarklet] リネーム後のDBパス化失敗: %s",
                                                 vp_exc,
                                             )
+                                        else:
+                                            if saved_path and overwrite_thumb:
+                                                db.set_cover_custom(found_path, "")
                                     except BookUpdateError as e:
+                                        logging.debug("[bookmarklet] BookUpdateError: %s", e)
                                         logging.warning(
                                             "[bookmarklet] リネーム失敗（キューには追加）: %s",
                                             e,
@@ -706,7 +716,11 @@ class MainWindow(QMainWindow):
                                                 "[bookmarklet] リネーム後のDBパス化失敗: %s",
                                                 vp_exc,
                                             )
+                                        else:
+                                            if saved_path and overwrite_thumb:
+                                                db.set_cover_custom(found_path, "")
                                     except BookUpdateError as e:
+                                        logging.debug("[bookmarklet] BookUpdateError: %s", e)
                                         logging.warning(
                                             "[bookmarklet] リネーム失敗（キューには追加）: %s",
                                             e,
@@ -751,7 +765,11 @@ class MainWindow(QMainWindow):
                                                     "[bookmarklet] リネーム後のDBパス化失敗: %s",
                                                     vp_exc,
                                                 )
+                                            else:
+                                                if saved_path and overwrite_thumb:
+                                                    db.set_cover_custom(found_path, "")
                                         except BookUpdateError as e:
+                                            logging.debug("[bookmarklet] BookUpdateError: %s", e)
                                             logging.warning(
                                                 "[bookmarklet] リネーム失敗（キューには追加）: %s",
                                                 e,
@@ -768,6 +786,7 @@ class MainWindow(QMainWindow):
                                     )
                                     break
                     except BookUpdateError as exc:
+                        logging.debug("[bookmarklet] BookUpdateError: %s", exc)
                         logging.warning(
                             "[bookmarklet] メタ更新失敗（キューには追加）: %s",
                             exc,
@@ -910,11 +929,26 @@ class MainWindow(QMainWindow):
         local_server.stop()
         QApplication.quit()
 
+    def _on_create_backup(self) -> None:
+        """手動で library.db のバックアップを BACKUP_DIR に作成する。"""
+        try:
+            path = db.create_backup(config.BACKUP_REASON_MANUAL)
+        except ValueError as e:
+            QMessageBox.warning(self, "バックアップ", str(e))
+            return
+        if path:
+            QMessageBox.information(self, "バックアップ", "バックアップを作成しました。")
+        else:
+            QMessageBox.warning(
+                self,
+                "バックアップ",
+                "データベースファイルが見つからないため、バックアップを作成できませんでした。",
+            )
+
     def _on_restore_backup(self):
         """バックアップ一覧からDBを復元し再起動を案内する。"""
         from PySide6.QtWidgets import QDialog, QVBoxLayout, QListWidget, QDialogButtonBox, QMessageBox
         import db
-        import os
 
         backups = db.list_backups()
         if not backups:
@@ -924,19 +958,37 @@ class MainWindow(QMainWindow):
         dlg = QDialog(self)
         dlg.setWindowTitle("バックアップから復元")
         dlg.resize(*config.RESTORE_BACKUP_DIALOG_SIZE)
+        dlg.setStyleSheet(
+            f"background-color: {theme.BACKUP_DIALOG_BG}; color: {theme.BACKUP_DIALOG_FG};"
+        )
         layout = QVBoxLayout(dlg)
 
         lst = QListWidget()
+        lst.setStyleSheet(
+            f"""
+    QListWidget {{
+        background-color: {theme.BACKUP_DIALOG_BG};
+        color: {theme.BACKUP_DIALOG_FG};
+    }}
+    QListWidget::item:hover {{
+        background-color: {theme.BACKUP_DIALOG_ITEM_HOVER};
+    }}
+    QListWidget::item:selected {{
+        background-color: {theme.BACKUP_DIALOG_ITEM_SELECT};
+    }}
+"""
+        )
         for info in backups:
-            path = info.get("path", "")
-            fname = os.path.basename(path) if path else ""
-            # library_YYYYMMDD_HHMMSS.db → YYYY/MM/DD HH:MM:SS
-            try:
-                body = fname[len("library_"):-len(".db")]
-                dt = f"{body[:4]}/{body[4:6]}/{body[6:8]} {body[9:11]}:{body[11:13]}:{body[13:15]}"
-            except Exception:
-                dt = fname
-            lst.addItem(dt)
+            dt = info.get("datetime", "")
+            reason_raw = info.get("reason", "")
+            reason_label = theme.BACKUP_REASON_LABELS.get(reason_raw, reason_raw)
+            label = (
+                dt
+                + config.BACKUP_RESTORE_DIALOG_REASON_OPEN
+                + reason_label
+                + config.BACKUP_RESTORE_DIALOG_REASON_CLOSE
+            )
+            lst.addItem(label)
         lst.setCurrentRow(0)
         layout.addWidget(lst)
 
@@ -1231,6 +1283,7 @@ class MainWindow(QMainWindow):
 
         self._size_slider = setup_statusbar(self, sb)
         self._size_slider.valueChanged.connect(self._on_card_size_changed)
+        self._on_card_size_changed(self._size_slider.value())
         model = self._grid.model() if hasattr(self, "_grid") else None
         if model and hasattr(model, "thumbQueueChanged"):
             model.thumbQueueChanged.connect(self._on_thumb_queue_changed)
@@ -1325,15 +1378,14 @@ class MainWindow(QMainWindow):
         except Exception:
             rows = []
         if rows:
-            t_rows = time.perf_counter()
-            _resolve_fast = self._resolve_cover_fast
             books = [
                 {
                     "path": os.path.normpath(os.path.join(library_folder, row[3])) if library_folder else row[3],
                     "name":   row[0],
                     "title":  row[2] or row[0],
                     "circle": row[1] or "",
-                    "cover":  _resolve_fast(row[3], row[4], library_folder) if row[4] else "",
+                    "cover":  row[4] or "",
+                    "cover_resolved": resolve_cover_path_fast(row[4] or "", library_folder),
                     "pages":  0,
                     "rating": 0,
                 }
@@ -1364,7 +1416,23 @@ class MainWindow(QMainWindow):
         folder = dlg.selected_path
         if not folder:
             return
+        try:
+            db.create_backup(config.BACKUP_REASON_LIB_CHANGE_BEFORE)
+        except ValueError as e:
+            QMessageBox.warning(self, "バックアップ", str(e))
+            return
+        except OSError as e:
+            QMessageBox.warning(
+                self,
+                "バックアップ",
+                f"ライブラリ変更前のバックアップに失敗したため、設定を変更しませんでした。\n{e}",
+            )
+            return
         db.set_setting("library_folder", folder)
+        try:
+            db.create_backup(config.BACKUP_REASON_LIB_CHANGE_AFTER)
+        except Exception as e:
+            logging.warning("ライブラリ変更後のバックアップに失敗: %s", e)
         # 設定されたらオーバーレイを隠し、グリッドを表示してスキャン
         if hasattr(self, "_empty_hint"):
             self._empty_hint.hide()
@@ -1408,7 +1476,10 @@ class MainWindow(QMainWindow):
             for b in books:
                 raw_path = b.get("path") or ""
                 b["path"] = self._safe_from_db_path(raw_path)
-            # cover は生のDB値のまま渡す（model.py 側で解決する）
+            # cover は生のDB値のまま。スクロール時の I/O を避けるため cover_resolved を付与する
+            library_folder = (db.get_setting("library_folder") or "").strip()
+            for b in books:
+                b["cover_resolved"] = resolve_cover_path_fast(b.get("cover") or "", library_folder)
 
             # 直前の一覧とスキャン結果を比較し、差分がなければグリッドの再読み込みを行わない
             old_books = self._all_books or []
@@ -1446,7 +1517,6 @@ class MainWindow(QMainWindow):
                 logging.info("[FINISHED] apply_filters=skipped changed=%s", changed)
 
             self._sidebar.refresh()
-            folder = (db.get_setting("library_folder") or "").strip()
             self.setWindowTitle(f"{config.APP_TITLE} v{VERSION}")
             self._status_label.setText(f"{len(books)} 冊")
             self._set_scan_blocked(False)
@@ -1644,19 +1714,19 @@ class MainWindow(QMainWindow):
             rows = db.get_all_books()
         except Exception:
             rows = []
-        lib_root = (db.get_setting("library_folder") or "").strip()
+        library_folder = (db.get_setting("library_folder") or "").strip()
         books = []
         for row in rows:
             if not row[3]:
                 continue
-            resolved = _resolve_cover(row[3], row[4], lib_root) if row[4] else ""
             books.append(
                 {
                     "path": self._safe_from_db_path(row[3] or ""),
                     "name": row[0],
                     "title": row[2] or row[0],
                     "circle": row[1] or "",
-                    "cover": resolved,
+                    "cover": row[4] or "",
+                    "cover_resolved": resolve_cover_path_fast(row[4] or "", library_folder),
                     "pages": 0,
                     "rating": 0,
                     "is_dlst": int(row[5]) if len(row) > 5 else 0,
@@ -1666,7 +1736,6 @@ class MainWindow(QMainWindow):
         build_haystack_cache(books)
         self._apply_filters()
         self._sidebar.refresh()
-        folder = (db.get_setting("library_folder") or "").strip()
         self.setWindowTitle(f"{config.APP_TITLE} v{VERSION}")
         self._status_label.setText(f"{len(books)} 冊")
 
@@ -1709,9 +1778,10 @@ class MainWindow(QMainWindow):
                 "",
             )
             if old_cover:
+                old_cover_abs = resolve_cover_path(old_cover)
                 model = self._grid.model() if hasattr(self, "_grid") else None
                 if model and hasattr(model, "invalidate_thumb"):
-                    model.invalidate_thumb(old_cover)
+                    model.invalidate_thumb(old_cover_abs or old_cover)
         # コンテキストメニュー展開時に保存したスクロール位置を復元用に取得（未設定時は復元しない）
         # クリアは復元実行後に行うので、on_book_updated が複数回呼ばれても最後の更新後に復元できる
         saved = getattr(self, "_context_menu_scroll", None)
@@ -1743,7 +1813,8 @@ class MainWindow(QMainWindow):
                 "name":   row[0],
                 "title":  row[2] or row[0],
                 "circle": row[1] or "",
-                "cover":  _resolve_cover(_p, row[4] or "", lib_root),
+                "cover":  row[4] or "",
+                "cover_resolved": resolve_cover_path_fast(row[4] or "", lib_root),
                 "pages":  0,
                 "rating": 0,
                 "is_dlst": int(row[5]) if len(row) > 5 else 0,
@@ -2453,6 +2524,124 @@ class MainWindow(QMainWindow):
         )
         self._apply_filters()
 
+    def _sorted_image_names_in_folder(self, folder_abs: str) -> list[str]:
+        """フォルダ直下の画像ファイル名を book_scanner と同じ拡張子でソートして返す。"""
+        try:
+            entries = os.listdir(folder_abs)
+        except OSError:
+            return []
+        return sorted(
+            n
+            for n in entries
+            if os.path.splitext(n)[1].lower() in SCANNER_IMAGE_EXTS
+        )
+
+    def _collect_folder_thumb_repair_targets(self) -> list[tuple[str, str]]:
+        """cover_path が空または解決先ファイルが無いフォルダ作品の (DB path, 表示名) を返す。"""
+        out: list[tuple[str, str]] = []
+        conn = db.get_conn()
+        try:
+            rows = conn.execute(
+                "SELECT path, cover_path, name FROM books ORDER BY name"
+            ).fetchall()
+        finally:
+            conn.close()
+        for r in rows:
+            db_path = (r["path"] or "").strip()
+            if not db_path:
+                continue
+            folder_abs = self._safe_from_db_path(db_path)
+            if not folder_abs or not os.path.isdir(folder_abs):
+                continue
+            if not self._sorted_image_names_in_folder(folder_abs):
+                continue
+            raw_cov = (r["cover_path"] or "").strip()
+            disp = (r["name"] or db_path).strip() or db_path
+            if not raw_cov:
+                out.append((db_path, disp))
+                continue
+            resolved = resolve_cover_path(raw_cov)
+            if not resolved or not os.path.isfile(resolved):
+                out.append((db_path, disp))
+        return out
+
+    def _repair_folder_thumbnails(self) -> None:
+        """フォルダ型作品で cover_path を先頭画像に直し、サムネを再読み込みする。"""
+        targets = self._collect_folder_thumb_repair_targets()
+        if not targets:
+            QMessageBox.information(
+                self,
+                config.THUMB_REPAIR_DIALOG_TITLE,
+                config.THUMB_REPAIR_NONE_MESSAGE,
+            )
+            return
+        dlg = QDialog(self)
+        apply_dark_titlebar(dlg)
+        dlg.setWindowTitle(config.THUMB_REPAIR_DIALOG_TITLE)
+        dlg.resize(*config.THUMB_REPAIR_CONFIRM_DIALOG_SIZE)
+        layout = QVBoxLayout(dlg)
+        lst = QListWidget()
+        lst.setMinimumHeight(config.THUMB_REPAIR_CONFIRM_LIST_MIN_HEIGHT_PX)
+        for _, display_name in targets:
+            lst.addItem(display_name)
+        layout.addWidget(lst)
+        layout.addWidget(
+            QLabel(
+                config.THUMB_REPAIR_CONFIRM_PROMPT_TEMPLATE.format(count=len(targets))
+            )
+        )
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        btns.button(QDialogButtonBox.StandardButton.Ok).setText(
+            config.THUMB_REPAIR_RUN_BUTTON_LABEL
+        )
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        layout.addWidget(btns)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        progress = QProgressDialog(
+            config.THUMB_REPAIR_PROGRESS_LABEL_PREFIX,
+            None,
+            0,
+            len(targets),
+            self,
+        )
+        progress.setWindowTitle(config.THUMB_REPAIR_PROGRESS_WINDOW_TITLE)
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(config.PROGRESS_DIALOG_MIN_DURATION_MS)
+        progress.setValue(0)
+        repaired = 0
+        for i, (db_path, display_name) in enumerate(targets):
+            if progress.wasCanceled():
+                break
+            progress.setValue(i + 1)
+            progress.setLabelText(display_name)
+            QApplication.processEvents()
+            folder_abs = self._safe_from_db_path(db_path)
+            if not folder_abs or not os.path.isdir(folder_abs):
+                continue
+            names = self._sorted_image_names_in_folder(folder_abs)
+            if not names:
+                continue
+            cover_abs = os.path.join(folder_abs, names[0])
+            if not os.path.isfile(cover_abs):
+                continue
+            if db.update_book_cover_path(db_path, cover_abs):
+                repaired += 1
+        progress.close()
+        model = self._grid.model() if hasattr(self, "_grid") else None
+        if model and hasattr(model, "invalidate_thumbs"):
+            model.invalidate_thumbs()
+        self._refresh_books_from_db()
+        self._apply_filters()
+        QMessageBox.information(
+            self,
+            config.THUMB_REPAIR_DIALOG_TITLE,
+            config.THUMB_REPAIR_DONE_TEMPLATE.format(count=repaired),
+        )
+
     # ── ふりがな一括取得 ──────────────────────────────────
 
     def _bulk_update_kana(self):
@@ -2587,8 +2776,14 @@ class MainWindow(QMainWindow):
             return books
         result = []
         for b in books:
-            cover = (b.get("cover") or "").strip()
-            if not cover or not os.path.exists(cover):
+            cover_raw = (b.get("cover") or "").strip()
+            if not cover_raw:
+                result.append(b)
+                continue
+            resolved = (b.get("cover_resolved") or "").strip()
+            if not resolved:
+                resolved = resolve_cover_path(cover_raw)
+            if not resolved or not os.path.isfile(resolved):
                 result.append(b)
         return result
 

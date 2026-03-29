@@ -13,6 +13,9 @@ import db
 from .roles import *  # noqa: F403
 from .thumb import ThumbSignals, ThumbWorker, _cache_path
 
+# ローカルモジュール
+from cover_paths import resolve_cover_path
+
 # ページ数カウントに使用する拡張子
 PAGE_COUNT_EXTS = (".jpg", ".jpeg", ".png", ".webp")
 
@@ -28,6 +31,17 @@ def _safe_from_db_path(path: str) -> str:
     except Exception as e:
         logging.debug("[grid/model] DBパス解決失敗、入力を正規化して継続: %s", e)
         return os.path.normpath(path)
+
+
+def _effective_thumb_path_for_book(b: dict) -> str:
+    """book の cover_resolved を優先して返す（I/Oゼロ）。"""
+    resolved = (b.get("cover_resolved", "") or "").strip()
+    if resolved:
+        return resolved
+    raw = (b.get("cover", "") or "").strip()
+    if not raw:
+        return ""
+    return resolve_cover_path(raw)
 
 
 class BookListModel(QAbstractListModel):
@@ -84,10 +98,15 @@ class BookListModel(QAbstractListModel):
         if role == ROLE_PATH:  # noqa: F405
             return _safe_from_db_path(b.get("path", ""))
         if role == ROLE_RATING:  # noqa: F405
-            # お気に入りテーブル由来の評価を優先して返す
+            # お気に入りテーブル由来の評価を優先して返す（bookmarks.path は相対キー）
             path = b.get("path", "") or ""
             if path:
-                rating = self._bookmarks.get(path, 0)
+                try:
+                    rel_path = db.to_db_path_from_any(path)
+                except ValueError:
+                    rating = 0
+                else:
+                    rating = self._bookmarks.get(rel_path, 0)
                 b["rating"] = rating
                 return rating
             return b.get("rating", 0)
@@ -96,30 +115,18 @@ class BookListModel(QAbstractListModel):
             self._ensure_meta_cached(b)
             return b.get("meta_status", 0)
         if role == ROLE_THUMB:  # noqa: F405
-            raw = b.get("cover", "") or ""
-            if not raw:
-                return None
-            path = db.resolve_cover_stored_value(raw) or raw
-            if path and not os.path.isabs(path):
-                path = os.path.normpath(os.path.join(config.APP_BASE, path))
+            path = _effective_thumb_path_for_book(b)
             if not path:
                 return None
-            if not os.path.isfile(path):
-                book_path = _safe_from_db_path(b.get("path", "") or "")
-                if book_path and os.path.isdir(book_path):
-                    alt = os.path.join(book_path, os.path.basename(path))
-                    if os.path.isfile(alt):
-                        path = alt
-                    else:
-                        return None
-                else:
-                    return None
             if path in self._thumbs:
                 return self._thumbs[path]
             self._request_thumb(path, index)
             return None
         if role == Qt.SizeHintRole:
-            return QSize(self._card_w + config.CARD_MIN_GAP, config.CARD_HEIGHT_BASE + config.CARD_MIN_GAP)
+            return QSize(
+                self._card_w + config.CARD_MIN_GAP,
+                config.grid_card_total_height_for_width(self._card_w) + config.CARD_MIN_GAP,
+            )
         return None
 
     def set_books(self, books: list[dict]):
@@ -191,8 +198,9 @@ class BookListModel(QAbstractListModel):
     def _on_thumb_done(self, cover: str, pix: QPixmap):
         self._pending.discard(cover)
         self._thumbs[cover] = pix
+        nc = os.path.normpath(cover)
         for row, b in enumerate(self._books):
-            if b.get("cover") == cover:
+            if _effective_thumb_path_for_book(b) == nc:
                 idx = self.index(row)
                 self.dataChanged.emit(idx, idx, [ROLE_THUMB])  # noqa: F405
                 break
@@ -223,8 +231,11 @@ class BookListModel(QAbstractListModel):
                 os.remove(cp)
             except Exception as e:
                 logging.warning("[grid/model] サムネキャッシュ削除失敗: %s", e)
+        inv_n = os.path.normpath(cover)
         for i, b in enumerate(self._books):
-            if b.get("cover") == cover:
+            eff = _effective_thumb_path_for_book(b)
+            prim = resolve_cover_path(b.get("cover") or "")
+            if eff == inv_n or (prim and os.path.normpath(prim) == inv_n):
                 idx = self.index(i)
                 self.dataChanged.emit(idx, idx, [ROLE_THUMB])  # noqa: F405
                 break
@@ -236,17 +247,17 @@ class BookListModel(QAbstractListModel):
     def preload_thumbs_for_books(self, books: list[dict]):
         """CACHE_DIR 内 .png が存在するものだけ同期ロードして _thumbs に詰める。"""
         for b in books:
-            cover = b.get("cover") or ""
-            if not cover:
+            path = _effective_thumb_path_for_book(b)
+            if not path:
                 continue
             try:
-                cp = _cache_path(cover)
+                cp = _cache_path(path)
                 if not os.path.exists(cp):
                     continue
                 pix = QPixmap(cp)
                 if pix.isNull():
                     continue
-                self._thumbs[cover] = pix
+                self._thumbs[path] = pix
             except Exception as e:
                 logging.debug("[grid/model] プリロードサムネ読込スキップ: %s", e)
                 continue

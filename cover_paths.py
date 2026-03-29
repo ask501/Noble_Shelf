@@ -32,3 +32,19 @@ def resolve_cover_path(stored: str) -> str:
             pass
 
     return db.resolve_cover_stored_value(p)
+
+
+def resolve_cover_path_fast(stored: str, library_folder: str) -> str:
+    """
+    I/Oゼロ版。ロード時の全件解決用。
+    library_folder は呼び出し元で1回だけ取得して渡す。
+    DBアクセスなし・ファイル存在確認なし。
+    """
+    p = (stored or "").strip()
+    if not p:
+        return ""
+    if os.path.isabs(p):
+        return p
+    if ("/" in p or "\\" in p) and library_folder:
+        return os.path.normpath(os.path.join(library_folder, p))
+    return db.resolve_cover_stored_value(p)

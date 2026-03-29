@@ -52,6 +52,9 @@ from theme import (
     PROPERTY_STAR_OFF_FG,
 )
 
+# ローカルモジュール
+from cover_paths import resolve_cover_path
+
 # _setup_ui(): 下部ボタン列の固定幅（元の直書き互換）
 BTN_W = 80
 
@@ -108,7 +111,7 @@ class PropertyDialog(QDialog):
         self._name: str = self._book.get("name", "")
         self._title: str = self._book.get("title", "") or self._name
         self._circle: str = self._book.get("circle", "")
-        self._cover: str = db.resolve_cover_stored_value(self._book.get("cover", "") or "")
+        self._cover: str = resolve_cover_path(self._book.get("cover", "") or "")
         self._folder_edit_value: str = self._name
         self._folder_manually_edited: bool = False  # フォルダ名ポップアップで手動変更した場合のみ True
 
@@ -675,6 +678,8 @@ class PropertyDialog(QDialog):
         if dlg.exec() != QDialog.Accepted or not dlg.result:
             return
         meta = dlg.result
+        print(f"[debug] meta cover_url={meta.get('cover_url', 'KEY_MISSING')}", flush=True)
+        print(f"[debug] meta keys={list(meta.keys())}", flush=True)
 
         # 現在値を収集
         current = {
@@ -688,10 +693,10 @@ class PropertyDialog(QDialog):
             "release_date": self._e_release.text(),
             "price":        self._e_price.text(),
             "dlsite_id":    self._e_dlsite_id.text(),
-            "cover":        self._cover or "",
+            "cover":        self._book.get("cover", "") or "",
         }
         meta["dlsite_id"] = meta.get("dojindb_url") or meta.get("id") or ""
-        meta["image_url"] = meta.get("cover_url", "")
+        meta["image_url"] = meta.get("cover_url", "") or meta.get("image_url", "")
         apply_dlg = MetaApplyDialog(current, meta, self, book_path=self._path)
         ret = apply_dlg.exec()
         if ret != QDialog.Accepted:
