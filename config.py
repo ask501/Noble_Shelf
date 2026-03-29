@@ -248,6 +248,28 @@ CARD_GRADIENT_HEIGHT = 20        # サムネ下端グラデーションの高さ
 CARD_META_BADGE_SIZE = 18        # メタバッジ（✓）の一辺
 CARD_INSET = 4                   # カード内の基本余白（px）
 GRID_CARD_SELECTION_BORDER_WIDTH = 4  # 選択時のカード外枠線（px）
+# デバッグメニュー「ダミーモード」：スクリーンショット用（DB・ファイルは変更しない）
+SCREENSHOT_DUMMY_THUMB_WIDTH = 128
+SCREENSHOT_DUMMY_THUMB_HEIGHT = 182
+SCREENSHOT_DUMMY_PATH_DISPLAY = "C:/Users/username/Library/dummy"
+SCREENSHOT_DUMMY_TITLE_TEMPLATE = "作品タイトル {n:03d}"
+SCREENSHOT_DUMMY_CIRCLE_PREFIX = "サークル名 "
+SCREENSHOT_DUMMY_TAG_LINE = "タグ1・タグ2・タグ3"
+# サイドバー「タグ」「サークル」モード用（ダミーモード時のみ表示差し替え、DB へは書き込まない）
+SCREENSHOT_DUMMY_SIDEBAR_TAG_ITEMS = (
+    "タグ1",
+    "タグ2",
+    "タグ3",
+    "タグ4",
+    "タグ5",
+)
+SCREENSHOT_DUMMY_SIDEBAR_CIRCLE_ITEMS = (
+    "サークルA",
+    "サークルB",
+    "サークルC",
+)
+# ダミー行の件数バッジ表示用（実データと無関係のプレースホルダー）
+SCREENSHOT_DUMMY_SIDEBAR_BADGE_COUNT = 1
 CARD_PLACEHOLDER_CROSS_HALF = 8  # プレースホルダー十字の半幅
 CARD_STAR_BADGE_PADDING = 6      # 星バッジの左右パディング
 CARD_BADGE_RADIUS = 4            # ページ数・星バッジの角丸

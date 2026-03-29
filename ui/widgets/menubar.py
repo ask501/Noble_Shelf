@@ -304,6 +304,12 @@ def setup_menubar(window):
     act_open_appdata.triggered.connect(_open_appdata_folder)
     debug_menu.addAction(act_open_appdata)
 
+    act_dummy_mode = QAction("ダミーモード(&D)", window)
+    act_dummy_mode.setCheckable(True)
+    act_dummy_mode.setChecked(False)
+    act_dummy_mode.triggered.connect(window._on_dummy_mode_toggled)
+    debug_menu.addAction(act_dummy_mode)
+
 
 # 設定で変更したショートカットをメニューに再反映する（設定ダイアログ保存後に呼ぶ）
 SHORTCUT_KEYS = (

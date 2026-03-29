@@ -156,6 +156,7 @@ class SidebarWidget(QWidget):
 
         # 初期モード（コンボの選択は _setup_ui で同期）
         self._mode = "title"
+        self._dummy_mode = False
         self._title_books: list[dict] = []
         self._showing_filter_result = False
         self._filter_result_books: list[dict] = []
@@ -349,10 +350,23 @@ class SidebarWidget(QWidget):
         # スクロール位置を復元
         self._list.verticalScrollBar().setValue(scroll_pos)
 
+    def set_dummy_mode(self, enabled: bool) -> None:
+        """スクリーンショット用：タグ・サークル一覧のみダミー差し替え（DB 非書き込み）。"""
+        self._dummy_mode = enabled
+        self.refresh()
+
     def _get_items(self) -> list[tuple[str, str, int]]:
         """モードに応じたDBデータを返す (label, value, count)"""
         mode = self._mode
         try:
+            if self._dummy_mode and mode == "circle":
+                n = config.SCREENSHOT_DUMMY_SIDEBAR_BADGE_COUNT
+                return [(c, c, n) for c in config.SCREENSHOT_DUMMY_SIDEBAR_CIRCLE_ITEMS]
+
+            if self._dummy_mode and mode == "tag":
+                n = config.SCREENSHOT_DUMMY_SIDEBAR_BADGE_COUNT
+                return [(t, t, n) for t in config.SCREENSHOT_DUMMY_SIDEBAR_TAG_ITEMS]
+
             if mode == "circle":
                 rows = db.get_all_circles_with_count()
                 return [(r[0], r[0], r[1]) for r in rows if r[0]]

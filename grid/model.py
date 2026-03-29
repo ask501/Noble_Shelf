@@ -3,10 +3,11 @@ from __future__ import annotations
 from collections import deque
 import logging
 import os
+import string
 from typing import Optional
 
 from PySide6.QtCore import QAbstractListModel, QModelIndex, QSize, Qt, QThreadPool, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QColor, QPixmap
 
 import config
 import db
@@ -15,6 +16,7 @@ from .thumb import ThumbSignals, ThumbWorker, _cache_path
 
 # ローカルモジュール
 from cover_paths import resolve_cover_path
+from theme import THEME_COLORS
 
 # ページ数カウントに使用する拡張子
 PAGE_COUNT_EXTS = (".jpg", ".jpeg", ".png", ".webp")
@@ -57,6 +59,30 @@ class BookListModel(QAbstractListModel):
         self._pool = QThreadPool.globalInstance()
         self._card_w = config.CARD_WIDTH_BASE
         self._bookmarks: dict[str, int] = {}
+        self._dummy_mode: bool = False
+        self._dummy_thumb_pm: QPixmap | None = None
+
+    def dummy_mode(self) -> bool:
+        """スクリーンショット用ダミー表示が有効か（delegate 等から参照）。"""
+        return self._dummy_mode
+
+    def set_dummy_mode(self, enabled: bool) -> None:
+        """デバッグ用：表示のみ差し替え。DB・ファイルは変更しない。"""
+        self._dummy_mode = bool(enabled)
+        rows = self.rowCount()
+        if rows > 0:
+            tl = self.index(0, 0)
+            br = self.index(rows - 1, 0)
+            self.dataChanged.emit(tl, br, [])
+
+    def _get_dummy_thumb_pixmap(self) -> QPixmap:
+        if self._dummy_thumb_pm is None:
+            w = config.SCREENSHOT_DUMMY_THUMB_WIDTH
+            h = config.SCREENSHOT_DUMMY_THUMB_HEIGHT
+            pm = QPixmap(w, h)
+            pm.fill(QColor(THEME_COLORS["card_placeholder"]))
+            self._dummy_thumb_pm = pm
+        return self._dummy_thumb_pm
 
     def _emit_thumb_queue_changed(self) -> None:
         self.thumbQueueChanged.emit(len(self._pending) + len(self._queue))
@@ -71,8 +97,13 @@ class BookListModel(QAbstractListModel):
         if role == ROLE_COVER:  # noqa: F405
             return b.get("cover", "")
         if role == ROLE_TITLE:  # noqa: F405
+            if self._dummy_mode:
+                return config.SCREENSHOT_DUMMY_TITLE_TEMPLATE.format(n=index.row() + 1)
             return b.get("title", "") or b.get("name", "")
         if role == ROLE_CIRCLE:  # noqa: F405
+            if self._dummy_mode:
+                letter = string.ascii_uppercase[index.row() % len(string.ascii_uppercase)]
+                return config.SCREENSHOT_DUMMY_CIRCLE_PREFIX + letter
             return b.get("circle", "")
         if role == ROLE_PAGES:  # noqa: F405
             self._ensure_meta_cached(b)
@@ -96,6 +127,8 @@ class BookListModel(QAbstractListModel):
 
             return 0
         if role == ROLE_PATH:  # noqa: F405
+            if self._dummy_mode:
+                return config.SCREENSHOT_DUMMY_PATH_DISPLAY
             return _safe_from_db_path(b.get("path", ""))
         if role == ROLE_RATING:  # noqa: F405
             # お気に入りテーブル由来の評価を優先して返す（bookmarks.path は相対キー）
@@ -115,6 +148,8 @@ class BookListModel(QAbstractListModel):
             self._ensure_meta_cached(b)
             return b.get("meta_status", 0)
         if role == ROLE_THUMB:  # noqa: F405
+            if self._dummy_mode:
+                return self._get_dummy_thumb_pixmap()
             path = _effective_thumb_path_for_book(b)
             if not path:
                 return None

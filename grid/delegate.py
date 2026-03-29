@@ -92,6 +92,11 @@ class BookCardDelegate(QStyledItemDelegate):
         self._card_h = h
 
     def _get_sub_info_text(self, index):
+        parent = self.parent()
+        if self._sub_info != "none" and parent is not None:
+            m = parent.model()
+            if m is not None and hasattr(m, "dummy_mode") and m.dummy_mode():
+                return config.SCREENSHOT_DUMMY_TAG_LINE
         if self._sub_info == "none":
             return ""
         if self._sub_info == "circle":

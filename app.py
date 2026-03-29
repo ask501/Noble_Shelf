@@ -130,6 +130,8 @@ class MainWindow(QMainWindow):
         self._is_startup_scan: bool = True
         self._open_viewers: list = []  # 内置ビューワー（すべて閉じる用）
         self._scan_blocking = False
+        self._dummy_mode: bool = False
+        self._book_list_model = None  # _setup_central で BookGridView.model() を代入
 
         self._setup_menubar()
         self._setup_central()
@@ -219,6 +221,14 @@ class MainWindow(QMainWindow):
             self._act_tool_library_check.triggered.connect(self._open_library_check_dialog)
         if hasattr(self, "_act_tool_missing_books"):
             self._act_tool_missing_books.triggered.connect(self._open_missing_books_dialog)
+
+    def _on_dummy_mode_toggled(self, checked: bool) -> None:
+        """デバッグ：スクリーンショット用ダミー表示（永続化しない）。"""
+        self._dummy_mode = checked
+        if self._book_list_model is not None:
+            self._book_list_model.set_dummy_mode(checked)
+        if hasattr(self, "_sidebar") and self._sidebar is not None:
+            self._sidebar.set_dummy_mode(checked)
 
     def _on_open_settings(self):
         """設定ダイアログを開きショートカットとカード表示を反映する。"""
@@ -1172,6 +1182,7 @@ class MainWindow(QMainWindow):
 
         self._grid = BookGridView(app_callbacks=self._make_app_callbacks())
         grid_layout.addWidget(self._grid)
+        self._book_list_model = self._grid.model()
 
         # ライブラリ未設定時に中央に表示するオーバーレイ
         self._empty_hint = LibrarySetupOverlay()
