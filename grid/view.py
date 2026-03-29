@@ -98,9 +98,8 @@ class BookGridView(AutoScrollMixin, QListView):
         self._model.preload_thumbs_for_books(books)
 
     def set_card_width(self, w: int):
-        ratio = CARD_H / CARD_W
         self._card_w = w
-        self._card_h = int(w * ratio)
+        self._card_h = config.grid_card_total_height_for_width(w)
         self._delegate.set_card_size(self._card_w, self._card_h)
         self._model.set_card_width(w)
         self.setGridSize(QSize(self._card_w + MIN_GAP, self._card_h + MIN_GAP))

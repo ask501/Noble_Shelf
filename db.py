@@ -23,6 +23,10 @@ from contextlib import contextmanager
 from datetime import datetime
 import config
 from paths import DB_FILE, BACKUP_DIR, to_rel
+
+# バックアップファイル名（config のパターンと同期すること）
+_BACKUP_FILENAME_STRICT_RE = re.compile(config.BACKUP_FILENAME_PATTERN)
+_BACKUP_FILENAME_CAPTURE_RE = re.compile(config.BACKUP_FILENAME_CAPTURE_PATTERN)
 import cache
 from store_file_resolver import ActionResult
 
@@ -850,16 +854,11 @@ def find_book_by_bookmarklet(dlsite_id: str, title: str, url: str = "") -> dict 
 def backup_on_startup() -> None:
     """
     起動時に自動バックアップを取る。
-    BACKUP_DIR に library_YYYYMMDD_HHMMSS.db を作成し、
-    設定の backup_max_count を超えた古いファイルを削除する。
+    create_backup と同一の命名規則・保持件数ルールに従う。
     """
     if not os.path.exists(DB_FILE):
         return
-    os.makedirs(BACKUP_DIR, exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    dst = os.path.join(BACKUP_DIR, f"library_{ts}.db")
-    shutil.copy2(DB_FILE, dst)
-    _trim_backups_with_setting()
+    create_backup(config.BACKUP_REASON_MANUAL)
 
 
 def _safe_backup(backup_path: str) -> None:
@@ -914,13 +913,71 @@ def set_last_launch_version(version: str) -> None:
     set_setting("last_launch_version", version)
 
 
-def _trim_backups_with_setting() -> None:
-    """バックアップ件数が上限を超えたら古いものから削除する（backup_max_count 設定を優先）。"""
+def _backup_ts_to_display(ts: str) -> str:
+    """ファイル名内のタイムスタンプ部分を一覧・復元ダイアログ表示用に整形する。"""
+    try:
+        date_part, time_part = ts.split(config.BACKUP_LIST_TS_DATE_TIME_SEPARATOR, 1)
+        parts = time_part.split(config.BACKUP_LIST_TS_DATE_COMPONENT_SEP)
+        if len(parts) != config.BACKUP_LIST_EXPECTED_TIME_PARTS:
+            return ts
+        h, m, s, ms = parts
+        date_disp = date_part.replace(
+            config.BACKUP_LIST_TS_DATE_COMPONENT_SEP,
+            config.BACKUP_LIST_DISPLAY_DATE_SEP,
+        )
+        time_disp = config.BACKUP_LIST_DISPLAY_TIME_COMPONENT_SEP.join((h, m, s))
+        return (
+            date_disp
+            + config.BACKUP_LIST_DISPLAY_DATE_TIME_GAP
+            + time_disp
+            + config.BACKUP_LIST_DISPLAY_MS_SEP
+            + ms
+        )
+    except Exception:
+        return ts
+
+
+def list_backups() -> list[dict]:
+    """
+    バックアップ一覧を新しい順で返す。
+    config.BACKUP_FILENAME_PATTERN に一致するファイルのみ。
+    [{"filename", "path", "datetime", "size_kb", "reason"}, ...]
+    """
+    if not os.path.exists(BACKUP_DIR):
+        return []
+    result: list[dict] = []
+    for f in sorted(os.listdir(BACKUP_DIR), reverse=True):
+        if not _BACKUP_FILENAME_STRICT_RE.fullmatch(f):
+            continue
+        m = _BACKUP_FILENAME_CAPTURE_RE.fullmatch(f)
+        if not m:
+            continue
+        ts = m.group("ts")
+        reason = m.group("reason")
+        full = os.path.join(BACKUP_DIR, f)
+        try:
+            size_kb = os.path.getsize(full) // config.BACKUP_SIZE_KIBIBYTES
+        except OSError:
+            continue
+        result.append(
+            {
+                "filename": f,
+                "path": full,
+                "datetime": _backup_ts_to_display(ts),
+                "size_kb": size_kb,
+                "reason": reason,
+            }
+        )
+    return result
+
+
+def _cleanup_backups() -> None:
+    """list_backups() と同じ集合から、backup_max_count を超えた古いファイルを削除する。"""
     try:
         max_count = int(get_setting("backup_max_count") or MAX_BACKUPS)
     except (TypeError, ValueError):
         max_count = MAX_BACKUPS
-    backups = list_backups()  # 既存の list_backups() は新しい順の dict リストを返す
+    backups = list_backups()
     for info in backups[max_count:]:
         path = info.get("path")
         if not path:
@@ -929,6 +986,47 @@ def _trim_backups_with_setting() -> None:
             os.remove(path)
         except OSError:
             pass
+
+
+def create_backup(reason: str) -> str | None:
+    """
+    library.db を BACKUP_DIR にコピーする。
+    reason は config.BACKUP_REASONS のいずれか。それ以外は ValueError。
+    DB が無い場合は None を返す。
+    """
+    if reason not in config.BACKUP_REASONS:
+        raise ValueError(f"不明なバックアップ理由: {reason!r}")
+    if not os.path.exists(DB_FILE):
+        return None
+
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+    now = datetime.now()
+    wid = config.BACKUP_TIMESTAMP_MILLISECOND_DIGITS
+    div = config.BACKUP_MICROSECONDS_PER_MILLISECOND
+    ms_part = now.microsecond // div
+    ts = now.strftime(config.BACKUP_TIMESTAMP_FILENAME_DATE_TIME_FORMAT) + f"{ms_part:0{wid}d}"
+    fname = f"{ts}_{reason}{config.BACKUP_DB_FILENAME_SUFFIX}"
+    backup_path = os.path.join(BACKUP_DIR, fname)
+    shutil.copy2(DB_FILE, backup_path)
+    _cleanup_backups()
+    return backup_path
+
+
+def restore_backup(backup_path: str) -> None:
+    """
+    指定バックアップを library.db に上書き復元する。
+    復元前に現在の DB を create_backup(PRE_RESTORE) で保存する。
+    """
+    if not os.path.exists(backup_path):
+        raise FileNotFoundError(f"バックアップが見つかりません: {backup_path}")
+
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+
+    if os.path.exists(DB_FILE):
+        create_backup(config.BACKUP_REASON_PRE_RESTORE)
+
+    shutil.copy2(backup_path, DB_FILE)
+    _cleanup_backups()
 
 
 # ══════════════════════════════════════════════════════
@@ -1940,93 +2038,6 @@ def get_book_name_by_path(path: str):
         return row["name"] if row else None
     finally:
         conn.close()
-
-
-# ══════════════════════════════════════════════════════
-#  バックアップ
-# ══════════════════════════════════════════════════════
-
-def create_backup():
-    """
-    起動時に呼ぶ。library.dbをバックアップフォルダにコピーし、
-    MAX_BACKUPS件を超えた古いものを削除する。
-    DBが存在しない場合は何もしない。
-    """
-    if not os.path.exists(DB_FILE):
-        return None
-
-    os.makedirs(BACKUP_DIR, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup_path = os.path.join(BACKUP_DIR, f"library_{timestamp}.db")
-    shutil.copy2(DB_FILE, backup_path)
-
-    # 古いバックアップを削除
-    _cleanup_backups()
-    return backup_path
-
-
-def _cleanup_backups():
-    """MAX_BACKUPSを超えた古いバックアップを削除"""
-    if not os.path.exists(BACKUP_DIR):
-        return
-    files = sorted([
-        f for f in os.listdir(BACKUP_DIR)
-        if f.startswith("library_") and f.endswith(".db")
-    ])
-    while len(files) > MAX_BACKUPS:
-        old = os.path.join(BACKUP_DIR, files.pop(0))
-        try:
-            os.remove(old)
-        except Exception:
-            pass
-
-
-def list_backups():
-    """
-    バックアップ一覧を新しい順で返す。
-    [{"filename": str, "path": str, "datetime": str, "size_kb": int}, ...]
-    """
-    if not os.path.exists(BACKUP_DIR):
-        return []
-    result = []
-    for f in sorted(os.listdir(BACKUP_DIR), reverse=True):
-        if f.startswith("library_") and f.endswith(".db"):
-            full = os.path.join(BACKUP_DIR, f)
-            # ファイル名から日時をパース: library_YYYYMMDD_HHMMSS.db
-            try:
-                ts = f[len("library_"):-len(".db")]
-                dt = datetime.strptime(ts, "%Y%m%d_%H%M%S")
-                dt_str = dt.strftime("%Y/%m/%d %H:%M:%S")
-            except Exception:
-                dt_str = f
-            size_kb = os.path.getsize(full) // 1024
-            result.append({
-                "filename": f,
-                "path":     full,
-                "datetime": dt_str,
-                "size_kb":  size_kb,
-            })
-    return result
-
-
-def restore_backup(backup_path):
-    """
-    指定バックアップをlibrary.dbに上書き復元する。
-    復元前に現在のDBをbackups/pre_restore_*.dbとして保存する。
-    """
-    if not os.path.exists(backup_path):
-        raise FileNotFoundError(f"バックアップが見つかりません: {backup_path}")
-
-    os.makedirs(BACKUP_DIR, exist_ok=True)
-
-    # 復元前の現DBを保存
-    if os.path.exists(DB_FILE):
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        pre = os.path.join(BACKUP_DIR, f"library_pre_restore_{timestamp}.db")
-        shutil.copy2(DB_FILE, pre)
-
-    shutil.copy2(backup_path, DB_FILE)
-    _cleanup_backups()
 
 
 # ══════════════════════════════════════════════════════

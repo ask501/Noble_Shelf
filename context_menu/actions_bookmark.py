@@ -34,10 +34,14 @@ def edit_bookmark(book: dict, parent_window) -> None:
     lbl.setFont(font)
     layout.addWidget(lbl)
 
-    # 星ボタン行
+    # 星ボタン行（bookmarks.path は相対キー）
     try:
         bookmarks = db.get_all_bookmarks()
-        current = bookmarks.get(path, 0)
+        try:
+            rel_path = db.to_db_path_from_any(path)
+            current = bookmarks.get(rel_path, 0)
+        except ValueError:
+            current = 0
     except Exception:
         current = 0
 
@@ -51,9 +55,11 @@ def edit_bookmark(book: dict, parent_window) -> None:
         for i, btn in enumerate(star_buttons, start=1):
             btn.setText("★")
             btn.setStyleSheet(
-                f"color: {BOOKMARK_STAR_ON_FG}; background: transparent; border: none; font-size: {config.FONT_SIZE_BTN_STAR}px;"
+                f"color: {BOOKMARK_STAR_ON_FG}; background: transparent; border: none; padding: 0; "
+                f"font-family: '{config.FONT_FAMILY_SYMBOL}'; font-size: {config.FONT_SIZE_BTN_STAR}px;"
                 if i <= rating
-                else f"color: {BOOKMARK_STAR_OFF_FG}; background: transparent; border: none; font-size: {config.FONT_SIZE_BTN_STAR}px;"
+                else f"color: {BOOKMARK_STAR_OFF_FG}; background: transparent; border: none; padding: 0; "
+                f"font-family: '{config.FONT_FAMILY_SYMBOL}'; font-size: {config.FONT_SIZE_BTN_STAR}px;"
             )
 
     def _set_rating(rating: int):

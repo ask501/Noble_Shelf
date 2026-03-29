@@ -30,7 +30,7 @@ from theme import (
 
 # ── 定数（view.py 側はここから import する）─────────────────
 CARD_W = config.CARD_WIDTH_BASE
-CARD_H = config.CARD_HEIGHT_BASE
+CARD_H = config.grid_card_total_height_for_width(config.CARD_WIDTH_BASE)
 MIN_GAP = config.CARD_MIN_GAP
 RADIUS = config.BORDER_RADIUS
 BADGE_H = config.BADGE_HEIGHT
@@ -138,7 +138,8 @@ class BookCardDelegate(QStyledItemDelegate):
         cx = r.x() + (r.width() - self._card_w) // 2
         cy = r.y() + (r.height() - self._card_h) // 2
         card_rect = QRect(cx, cy, self._card_w, self._card_h)
-        thumb_h = self._card_h - config.CARD_TEXT_HEIGHT_FIXED
+        # サムネ描画領域はカード幅と同じ辺の正方形（余白は背景で埋まる）
+        thumb_h = self._card_w
         thumb_rect = QRect(cx, cy, self._card_w, thumb_h)
 
         is_selected = bool(option.state & QStyle.State_Selected)

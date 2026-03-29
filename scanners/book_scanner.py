@@ -16,6 +16,7 @@ from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 
 import config
 import db
+from db import _normalize_cover_for_save
 import store_file_resolver as store_resolver
 from drop_handler import _get_pdf_cover_and_pages
 from store_file_resolver import ActionResult, FileContext, resolve_store_file_action
@@ -536,7 +537,8 @@ class BookScannerWorker(QRunnable):
             display_name = db.format_book_name(suggested_circle, suggested_title) or stem
 
             if fs_entry.is_pdf:
-                cover, pages = _get_pdf_cover_and_pages(fs_entry.abs_path)
+                cover_raw, pages = _get_pdf_cover_and_pages(fs_entry.abs_path)
+                cover = _normalize_cover_for_save(cover_raw) if cover_raw else ""
             else:
                 cover, pages = "", None
 
@@ -570,7 +572,8 @@ class BookScannerWorker(QRunnable):
                 stem = os.path.splitext(os.path.basename(fs_entry.db_path))[0]
                 is_dlst = 1 if fs_entry.db_path.lower().endswith(config.STORE_FILE_EXT_DLSITE) else 0
                 if fs_entry.is_pdf:
-                    cover, pages = _get_pdf_cover_and_pages(fs_entry.abs_path)
+                    cover_raw, pages = _get_pdf_cover_and_pages(fs_entry.abs_path)
+                    cover = _normalize_cover_for_save(cover_raw) if cover_raw else ""
                     circle, title = db.parse_display_name(stem)
                     if not title:
                         title = stem
