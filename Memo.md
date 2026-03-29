@@ -9,16 +9,16 @@
 git add .
 
 # 2.コメントを付けてコミット
-git commit -m "Update to v0.5.1"
+git commit -m "Update to v0.6.0"
 
 # 3.GitHubへ送信
 git push origin main
 
 # 4.タグを作成
-git tag v0.5.1
+git tag v0.6.0
 
 # 5.タグをGitHubに送信
-git push origin v0.5.1
+git push origin v0.6.0
 
 
 
