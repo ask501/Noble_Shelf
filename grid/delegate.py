@@ -310,11 +310,15 @@ class BookCardDelegate(QStyledItemDelegate):
                 painter.setPen(QPen(QColor(THEME_COLORS["card_sub_fg"])))
                 painter.drawText(sub_rect, Qt.AlignLeft | Qt.AlignVCenter, elided_sub)
 
-        # ── 選択ボーダー ──
+        # ── 選択ボーダー（カード外側：ペン中心を枠外に出し、内側のサムネ・文字を潰さない）
         if is_selected:
-            painter.setPen(QPen(C_SEL_BORDER, 1.5))
+            sel_bw = config.GRID_CARD_SELECTION_BORDER_WIDTH
+            painter.setPen(QPen(C_SEL_BORDER, sel_bw))
             painter.setBrush(Qt.NoBrush)
-            painter.drawRoundedRect(card_rect.adjusted(1, 1, -1, -1), RADIUS, RADIUS)
+            half = max(1, (sel_bw + 1) // 2)
+            outer = card_rect.adjusted(-half, -half, half, half)
+            outer_r = RADIUS + half
+            painter.drawRoundedRect(outer, outer_r, outer_r)
 
         painter.restore()
 

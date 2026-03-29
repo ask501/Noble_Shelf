@@ -1,210 +1,334 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Noble Shelf - ローカル同人誌ライブラリ管理ツール</title>
-    
-    <meta name="description" content="Noble Shelfは、PCローカルに保存された同人誌や漫画を快適に管理・閲覧するためのライブラリ管理ツールです。シンプルで高速な動作を目指しています。">
-    <meta name="keywords" content="Noble Shelf, 同人誌管理, 漫画管理, ライブラリ, ローカル管理, フリーソフト">
-    <link rel="canonical" href="https://ask501.github.io/Noble_Shelf/">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Noble Shelf</title>
+<style>
+  :root {
+    --bg: #0d0d0f;
+    --surface: #16161a;
+    --surface2: #1c1c22;
+    --border: rgba(255,255,255,0.07);
+    --border2: rgba(255,255,255,0.12);
+    --text: #e8e8f0;
+    --muted: #6b6b80;
+    --accent: #9d7fe8;
+    --accent2: #c4a8ff;
+    --accent-dim: rgba(157,127,232,0.12);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    padding: 0 20px 60px;
+  }
+  .wrap { max-width: 720px; width: 100%; }
 
-    <style>
-        :root {
-            --bg-color: #121212;
-            --text-color: #e0e0e0;
-            --accent-color: #4a90e2;
-            --card-bg: #1e1e1e;
-            --border-color: #333;
-            --tab-inactive: #555;
-        }
+  header {
+    padding: 72px 0 48px;
+    text-align: center;
+  }
+  .logo-mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px; height: 48px;
+    border-radius: 12px;
+    border: 1px solid rgba(157,127,232,0.3);
+    background: var(--accent-dim);
+    margin-bottom: 20px;
+  }
+  .logo-mark svg { width: 22px; height: 22px; }
+  h1 {
+    font-size: 2rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: #fff;
+  }
+  .tagline {
+    margin-top: 10px;
+    font-size: 0.9rem;
+    color: var(--muted);
+    letter-spacing: 0.02em;
+  }
 
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            background-color: var(--bg-color);
-            color: var(--text-color);
-            line-height: 1.6;
-            margin: 0;
-            padding: 20px;
-            display: flex;
-            justify-content: center;
-        }
+  .dl-area {
+    text-align: center;
+    padding: 28px 0 40px;
+    border-bottom: 1px solid var(--border);
+  }
+  .dl-label {
+    font-size: 0.8rem;
+    color: var(--muted);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-bottom: 14px;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--accent);
+    color: #fff;
+    padding: 10px 22px;
+    border-radius: 8px;
+    text-decoration: none;
+    font-size: 0.9rem;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    transition: opacity 0.2s, transform 0.15s;
+  }
+  .btn:hover { opacity: 0.88; transform: translateY(-1px); }
+  .btn svg { width: 15px; height: 15px; }
 
-        .container { max-width: 800px; width: 100%; }
+  .tabs {
+    display: flex;
+    gap: 0;
+    margin-top: 32px;
+    border-bottom: 1px solid var(--border);
+  }
+  .tab-btn {
+    background: none;
+    border: none;
+    color: var(--muted);
+    padding: 10px 18px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    position: relative;
+    transition: color 0.2s;
+    white-space: nowrap;
+  }
+  .tab-btn:hover { color: var(--text); }
+  .tab-btn.active { color: var(--accent2); }
+  .tab-btn.active::after {
+    content: "";
+    position: absolute;
+    bottom: -1px; left: 0; right: 0; height: 1px;
+    background: var(--accent);
+  }
 
-        header { text-align: center; padding: 40px 0 20px 0; }
-        h1 { margin: 0; font-size: 2.2rem; letter-spacing: 1px; }
-        .tagline { color: #888; margin-top: 8px; font-size: 0.9rem; }
+  .tab-content { display: none; padding: 32px 0; }
+  .tab-content.active { display: block; }
 
-        .download-area {
-            text-align: center;
-            padding: 20px 0 40px 0;
-            border-bottom: 1px solid var(--border-color);
-        }
+  .content-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 24px;
+    font-size: 0.875rem;
+    line-height: 1.75;
+    color: #b0b0c0;
+    white-space: pre-wrap;
+  }
 
-        .btn {
-            display: inline-block;
-            background-color: var(--accent-color);
-            color: white;
-            padding: 10px 24px;
-            text-decoration: none;
-            border-radius: 6px;
-            font-weight: bold;
-            transition: transform 0.2s, opacity 0.2s;
-        }
-        .btn:hover { opacity: 0.9; transform: translateY(-1px); }
+  .release-item {
+    padding: 20px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .release-item:last-child { border-bottom: none; }
+  .release-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 10px;
+  }
+  .version-badge {
+    display: inline-block;
+    background: var(--accent-dim);
+    color: var(--accent2);
+    font-size: 0.78rem;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 20px;
+    border: 1px solid rgba(157,127,232,0.2);
+    letter-spacing: 0.03em;
+  }
+  .rel-date { font-size: 0.8rem; color: var(--muted); margin-left: auto; }
+  .rel-body { font-size: 0.875rem; color: #8888a0; line-height: 1.7; white-space: pre-wrap; }
 
-        /* タブメニュー */
-        .tabs {
-            display: flex;
-            gap: 15px;
-            margin-top: 30px;
-            border-bottom: 2px solid var(--border-color);
-            overflow-x: auto; /* スマホ用 */
-        }
-
-        .tab-btn {
-            background: none;
-            border: none;
-            color: var(--tab-inactive);
-            padding: 10px 15px;
-            cursor: pointer;
-            font-size: 0.95rem;
-            font-weight: bold;
-            position: relative;
-            white-space: nowrap;
-            transition: color 0.3s;
-        }
-
-        .tab-btn.active { color: var(--accent-color); }
-        .tab-btn.active::after {
-            content: "";
-            position: absolute;
-            bottom: -2px; left: 0; width: 100%; height: 2px;
-            background-color: var(--accent-color);
-        }
-
-        /* コンテンツ表示切り替え */
-        .tab-content { display: none; padding: 30px 0; }
-        .tab-content.active { display: block; }
-
-        .content-box {
-            background: var(--card-bg);
-            border: 1px solid var(--border-color);
-            padding: 25px;
-            border-radius: 8px;
-            white-space: pre-wrap;
-            font-size: 0.95rem;
-        }
-
-        .release-item {
-            border-bottom: 1px solid var(--border-color);
-            padding-bottom: 20px;
-            margin-bottom: 20px;
-        }
-        .release-item:last-child { border-bottom: none; }
-        .release-header { display: flex; justify-content: space-between; margin-bottom: 8px; }
-        .version { font-weight: bold; color: var(--accent-color); }
-        .date { color: #777; font-size: 0.85rem; }
-
-        .loading { text-align: center; color: #666; font-style: italic; margin-top: 50px; }
-    </style>
+  .loading { color: var(--muted); font-size: 0.875rem; text-align: center; padding: 48px 0; }
+</style>
 </head>
 <body>
-
-<div class="container">
-    <header>
-        <h1>Noble Shelf</h1>
-        <p class="tagline">ローカル同人誌ライブラリ管理ツール</p>
-    </header>
-
-    <div id="latest-download" class="download-area">
-        <p class="loading">情報を取得中...</p>
+<div class="wrap">
+  <header>
+    <div class="logo-mark">
+      <svg viewBox="0 0 22 22" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="3" y="4" width="4" height="14" rx="1.5" fill="#9d7fe8"/>
+        <rect x="9" y="4" width="4" height="14" rx="1.5" fill="#c4a8ff" opacity="0.7"/>
+        <rect x="15" y="4" width="4" height="14" rx="1.5" fill="#9d7fe8" opacity="0.4"/>
+      </svg>
     </div>
+    <h1>Noble Shelf</h1>
+    <p class="tagline">ローカル同人誌ライブラリ管理ツール</p>
+  </header>
 
-    <div class="tabs">
-        <button class="tab-btn active" onclick="showTab('about')">紹介 (README)</button>
-        <button class="tab-btn" onclick="showTab('changelog')">更新履歴</button>
-        <button class="tab-btn" onclick="showTab('license')">ライセンス</button>
-    </div>
+  <div id="latest-download" class="dl-area">
+    <p class="loading">取得中...</p>
+  </div>
 
-    <div id="about" class="tab-content active">
-        <div id="readme-content" class="content-box">取得中...</div>
-    </div>
+  <div class="tabs">
+    <button class="tab-btn active" onclick="showTab('about',this)">紹介</button>
+    <button class="tab-btn" onclick="showTab('changelog',this)">更新履歴</button>
+    <button class="tab-btn" onclick="showTab('license',this)">ライセンス</button>
+  </div>
 
-    <div id="changelog" class="tab-content">
-        <div id="history-list" class="content-box">取得中...</div>
-    </div>
+<div id="about" class="tab-content active">
+  <style>
+    .tabs {
+    display: flex;
+    gap: 0;
+    margin-top: 32px;
+    border-bottom: 1px solid var(--border);
+    justify-content: center; 
+}
+    .feat-label { font-size:.75rem; letter-spacing:.1em; text-transform:uppercase; color:#9d7fe8; margin-bottom:10px; }
+    .feat-title { font-size:1.4rem; font-weight:600; color:#fff; letter-spacing:-.02em; margin-bottom:6px; }
+    .feat-sub { font-size:.875rem; color:#6b6b80; margin-bottom:32px; }
+    .feat-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+    .feat-card { background:#16161a; border:1px solid rgba(255,255,255,.07); border-radius:12px; padding:22px 20px; transition:border-color .2s; }
+    .feat-card:hover { border-color:rgba(157,127,232,.3); }
+    .feat-icon { width:44px; height:44px; border-radius:10px; background:rgba(157,127,232,.12); border:1px solid rgba(157,127,232,.2); display:flex; align-items:center; justify-content:center; margin-bottom:14px; }
+    .feat-icon svg { width:22px; height:22px; }
+    .feat-name { font-size:.875rem; font-weight:600; color:#e8e8f0; margin-bottom:5px; }
+    .feat-desc { font-size:.8rem; color:#6b6b80; line-height:1.65; }
+  </style>
 
-    <div id="license" class="tab-content">
-        <div id="license-content" class="content-box">取得中...</div>
+  <div style="padding:30px 0">
+    <div class="feat-label">Features</div>
+    <div class="feat-title">すべての本を、一箇所に。</div>
+    <div class="feat-sub">電子書籍・同人誌・自炊本のローカル管理に特化した、軽量で高機能なライブラリツール。</div>
+    <div class="feat-grid">
+
+      <div class="feat-card">
+        <div class="feat-icon"><svg viewBox="0 0 22 22" fill="none"><path d="M11 3v10M7 9l4 4 4-4" stroke="#c4a8ff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 16h14M4 19h14" stroke="#9d7fe8" stroke-width="1.4" stroke-linecap="round"/></svg></div>
+        <div class="feat-name">ドラッグ&ドロップで登録</div>
+        <div class="feat-desc">ZIP・フォルダ・PDFをドロップするだけで即登録。複数同時投入にも対応し、重複は自動検出。</div>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-icon"><svg viewBox="0 0 22 22" fill="none"><circle cx="11" cy="11" r="7.5" stroke="#9d7fe8" stroke-width="1.5"/><path d="M8 11h6M11 8v6" stroke="#c4a8ff" stroke-width="1.6" stroke-linecap="round"/></svg></div>
+        <div class="feat-name">メタデータ自動取得</div>
+        <div class="feat-desc">購入した作品の情報をブックマークレット経由で一発取得。タイトル・サークル・タグを自動補完。</div>
+      </div>
+      
+<div class="feat-card">
+  <div class="feat-icon">
+    <svg viewBox="0 0 22 22" fill="none">
+      <path d="M11 3l2.5 5 5.5.8-4 3.9.9 5.5L11 15.5l-4.9 2.7.9-5.5L3 8.8l5.5-.8L11 3z" stroke="#9d7fe8" stroke-width="1.5" stroke-linejoin="round"/>
+      <path d="M11 3l2.5 5 5.5.8-4 3.9.9 5.5L11 15.5l-4.9 2.7.9-5.5L3 8.8l5.5-.8L11 3z" fill="#c4a8ff" opacity="0.15"/>
+    </svg>
+    
+  </div>
+  <div class="feat-name">評価・お気に入り</div>
+  <div class="feat-desc">星評価やお気に入り登録でコレクションを整理。グリッドと連携してすぐに絞り込める。</div>
+</div>
+      
+      <div class="feat-card">
+        <div class="feat-icon"><svg viewBox="0 0 22 22" fill="none"><rect x="3" y="3" width="7" height="7" rx="2" fill="#9d7fe8" opacity="0.8"/><rect x="12" y="3" width="7" height="7" rx="2" fill="#9d7fe8" opacity="0.5"/><rect x="3" y="12" width="7" height="7" rx="2" fill="#9d7fe8" opacity="0.5"/><rect x="12" y="12" width="7" height="7" rx="2" fill="#9d7fe8" opacity="0.3"/></svg></div>
+        <div class="feat-name">高速サムネイルグリッド</div>
+        <div class="feat-desc">仮想描画による超高速グリッド表示。数千冊のコレクションでもスムーズにスクロール。</div>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-icon"><svg viewBox="0 0 22 22" fill="none"><rect x="3" y="4" width="16" height="12" rx="2.5" stroke="#9d7fe8" stroke-width="1.5"/><path d="M8 10l2 2 4-4" stroke="#c4a8ff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+        <div class="feat-name">ビルトインビューア</div>
+        <div class="feat-desc">JPG, JPEG, PNG, WEBP, GIF, BMPに対応したビューアを内蔵。外部アプリ不要で、ライブラリからそのまま閲覧できる。</div>
+      </div>
+<div class="feat-card">
+  <div class="feat-icon">
+    <svg viewBox="0 0 22 22" fill="none">
+      <path d="M3 11c0-3 2.5-5 5-5h6c2.5 0 5 2 5 5s-2.5 5-5 5H8c-2.5 0-5-2-5-5z" stroke="#9d7fe8" stroke-width="1.5"/>
+      <circle cx="11" cy="11" r="2.5" fill="#c4a8ff"/>
+    </svg>
+  </div>
+  <div class="feat-name">ビューア連携機能</div>
+  <div class="feat-desc">主要同人ストアの購入ファイル形式に対応。ライブラリに追加すれば、そのまま連携ビューアで閲覧できる。</div>
+</div>
+      <div class="feat-card">
+        <div class="feat-icon"><svg viewBox="0 0 22 22" fill="none"><circle cx="10" cy="10" r="6" stroke="#9d7fe8" stroke-width="1.5"/><path d="M14.5 14.5L19 19" stroke="#c4a8ff" stroke-width="1.7" stroke-linecap="round"/></svg></div>
+        <div class="feat-name">タグ・フィルター検索</div>
+        <div class="feat-desc">タグ・サークル・タイトルで絞り込み。カバーなしなど多彩なフィルターも完備。</div>
+      </div>
+
+      <div class="feat-card">
+        <div class="feat-icon"><svg viewBox="0 0 22 22" fill="none"><path d="M19 14v4a1 1 0 01-1 1H4a1 1 0 01-1-1v-4" stroke="#9d7fe8" stroke-width="1.5" stroke-linecap="round"/><path d="M11 3v11M7.5 7.5L11 4l3.5 3.5" stroke="#c4a8ff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+        <div class="feat-name">自動バックアップ</div>
+        <div class="feat-desc">ライブラリ変更時に自動でDBをバックアップ。タイムスタンプ付きで世代管理。</div>
+      </div>
+
     </div>
+  </div>
 </div>
 
 <script>
-    const REPO = 'ask501/Noble_Shelf';
-    const API_RELEASES = `https://api.github.com/repos/${REPO}/releases`;
-    const API_README = `https://api.github.com/repos/${REPO}/readme`;
-    const API_LICENSE = `https://api.github.com/repos/${REPO}/license`;
+  const REPO = 'ask501/Noble_Shelf';
+  const API_RELEASES = `https://api.github.com/repos/${REPO}/releases`;
+  const API_README = `https://api.github.com/repos/${REPO}/readme`;
+  const API_LICENSE = `https://api.github.com/repos/${REPO}/license`;
 
-    async function init() {
-        fetchDownloadAndHistory();
-        fetchReadme();
-        fetchLicense();
-    }
+  function showTab(tabId, btn) {
+    document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+    document.getElementById(tabId).classList.add('active');
+    btn.classList.add('active');
+  }
 
-    function showTab(tabId) {
-        document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-        document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
-        
-        document.getElementById(tabId).classList.add('active');
-        event.currentTarget.classList.add('active');
-    }
+  async function fetchDownloadAndHistory() {
+    const dlEl = document.getElementById('latest-download');
+    const histEl = document.getElementById('history-list');
+    try {
+      const res = await fetch(API_RELEASES);
+      const data = await res.json();
+      if (!data.length) { dlEl.innerHTML = '<p class="loading">リリースなし</p>'; return; }
+      const latest = data[0];
+      const asset = latest.assets.find(a => a.name.endsWith('.zip') || a.name.endsWith('.exe'));
+      dlEl.innerHTML = `
+        <p class="dl-label">最新バージョン — ${latest.tag_name}</p>
+        ${asset
+          ? `<a href="${asset.browser_download_url}" class="btn"><svg viewBox="0 0 15 15" fill="none"><path d="M7.5 2v8M4 7l3.5 3.5L11 7M2 13h11" stroke="#fff" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>${asset.name}</a>`
+          : `<a href="${latest.html_url}" class="btn">GitHubで確認</a>`}
+      `;
+      histEl.innerHTML = data.map(rel => `
+        <div class="release-item">
+          <div class="release-header">
+            <span class="version-badge">${rel.tag_name}</span>
+            <span class="rel-date">${new Date(rel.published_at).toLocaleDateString('ja-JP')}</span>
+          </div>
+          <div class="rel-body">${rel.body || '—'}</div>
+        </div>
+      `).join('');
+    } catch(e) { dlEl.innerHTML = '<p class="loading">取得失敗</p>'; }
+  }
 
-    async function fetchDownloadAndHistory() {
-        const downloadEl = document.getElementById('latest-download');
-        const historyEl = document.getElementById('history-list');
-        try {
-            const res = await fetch(API_RELEASES);
-            const data = await res.json();
-            if (data.length === 0) return;
+  async function fetchReadme() {
+    const el = document.getElementById('readme-content');
+    try {
+      const res = await fetch(API_README, { headers: { Accept: 'application/vnd.github.v3.raw' } });
+      el.textContent = await res.text();
+      el.classList.remove('loading');
+    } catch(e) { el.textContent = '取得失敗'; }
+  }
 
-            const latest = data[0];
-            const asset = latest.assets.find(a => a.name.endsWith('.zip') || a.name.endsWith('.exe'));
-            downloadEl.innerHTML = asset 
-                ? `<p style="margin-bottom:15px;">最新: ${latest.tag_name}</p><a href="${asset.browser_download_url}" class="btn">${asset.name} をダウンロード</a>`
-                : `<a href="${latest.html_url}" class="btn">最新版をGitHubで確認</a>`;
+  async function fetchLicense() {
+    const el = document.getElementById('license-content');
+    try {
+      const res = await fetch(API_LICENSE, { headers: { Accept: 'application/vnd.github.v3.raw' } });
+      el.textContent = await res.text();
+      el.classList.remove('loading');
+    } catch(e) { el.textContent = '取得失敗'; }
+  }
 
-            historyEl.innerHTML = data.map(rel => `
-                <div class="release-item">
-                    <div class="release-header">
-                        <span class="version">${rel.tag_name}</span>
-                        <span class="date">${new Date(rel.published_at).toLocaleDateString()}</span>
-                    </div>
-                    <div>${rel.body || '更新内容なし'}</div>
-                </div>
-            `).join('');
-        } catch (e) { downloadEl.innerHTML = "取得失敗"; }
-    }
-
-    async function fetchReadme() {
-        const el = document.getElementById('readme-content');
-        try {
-            const res = await fetch(API_README, { headers: { 'Accept': 'application/vnd.github.v3.raw' } });
-            el.textContent = await res.text();
-        } catch (e) { el.textContent = "取得失敗"; }
-    }
-
-    async function fetchLicense() {
-        const el = document.getElementById('license-content');
-        try {
-            const res = await fetch(API_LICENSE, { headers: { 'Accept': 'application/vnd.github.v3.raw' } });
-            el.textContent = await res.text();
-        } catch (e) { el.textContent = "LICENSEファイルが見つかりません。"; }
-    }
-
-    init();
+  fetchDownloadAndHistory();
+  fetchReadme();
+  fetchLicense();
 </script>
-
 </body>
 </html>
