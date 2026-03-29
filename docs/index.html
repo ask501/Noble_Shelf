@@ -4,13 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Noble Shelf</title>
+<meta name="description" content="Noble Shelfは、PCローカルに保存された電子書籍・同人誌・自炊本を快適に管理・閲覧するためのライブラリ管理ツールです。">
 <style>
   :root {
     --bg: #0d0d0f;
     --surface: #16161a;
-    --surface2: #1c1c22;
     --border: rgba(255,255,255,0.07);
-    --border2: rgba(255,255,255,0.12);
     --text: #e8e8f0;
     --muted: #6b6b80;
     --accent: #9d7fe8;
@@ -29,135 +28,100 @@
   }
   .wrap { max-width: 720px; width: 100%; }
 
-  header {
-    padding: 72px 0 48px;
-    text-align: center;
-  }
+  /* ヘッダー */
+  header { padding: 72px 0 48px; text-align: center; }
   .logo-mark {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 48px; height: 48px;
-    border-radius: 12px;
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 48px; height: 48px; border-radius: 12px;
     border: 1px solid rgba(157,127,232,0.3);
-    background: var(--accent-dim);
-    margin-bottom: 20px;
+    background: var(--accent-dim); margin-bottom: 20px;
   }
   .logo-mark svg { width: 22px; height: 22px; }
-  h1 {
-    font-size: 2rem;
-    font-weight: 600;
-    letter-spacing: -0.02em;
-    color: #fff;
-  }
-  .tagline {
-    margin-top: 10px;
-    font-size: 0.9rem;
-    color: var(--muted);
-    letter-spacing: 0.02em;
-  }
+  h1 { font-size: 2rem; font-weight: 600; letter-spacing: -0.02em; color: #fff; }
+  .tagline { margin-top: 10px; font-size: 0.9rem; color: var(--muted); letter-spacing: 0.02em; }
 
-  .dl-area {
-    text-align: center;
-    padding: 28px 0 40px;
-    border-bottom: 1px solid var(--border);
-  }
-  .dl-label {
-    font-size: 0.8rem;
-    color: var(--muted);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    margin-bottom: 14px;
-  }
+  /* ダウンロードエリア */
+  .dl-area { text-align: center; padding: 28px 0 40px; border-bottom: 1px solid var(--border); }
+  .dl-label { font-size: 0.8rem; color: var(--muted); letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 14px; }
   .btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    background: var(--accent);
-    color: #fff;
-    padding: 10px 22px;
-    border-radius: 8px;
-    text-decoration: none;
-    font-size: 0.9rem;
-    font-weight: 500;
-    letter-spacing: 0.01em;
-    transition: opacity 0.2s, transform 0.15s;
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--accent); color: #fff;
+    padding: 10px 22px; border-radius: 8px;
+    text-decoration: none; font-size: 0.9rem; font-weight: 500;
+    letter-spacing: 0.01em; transition: opacity 0.2s, transform 0.15s;
   }
   .btn:hover { opacity: 0.88; transform: translateY(-1px); }
   .btn svg { width: 15px; height: 15px; }
 
+  /* タブ */
   .tabs {
-    display: flex;
-    gap: 0;
-    margin-top: 32px;
+    display: flex; gap: 0; margin-top: 32px;
     border-bottom: 1px solid var(--border);
+    justify-content: center;
   }
   .tab-btn {
-    background: none;
-    border: none;
-    color: var(--muted);
-    padding: 10px 18px;
-    cursor: pointer;
-    font-size: 0.85rem;
-    font-weight: 500;
-    letter-spacing: 0.02em;
-    position: relative;
-    transition: color 0.2s;
-    white-space: nowrap;
+    background: none; border: none; color: var(--muted);
+    padding: 10px 18px; cursor: pointer;
+    font-size: 0.85rem; font-weight: 500; letter-spacing: 0.02em;
+    position: relative; transition: color 0.2s; white-space: nowrap;
   }
   .tab-btn:hover { color: var(--text); }
   .tab-btn.active { color: var(--accent2); }
   .tab-btn.active::after {
-    content: "";
-    position: absolute;
+    content: ""; position: absolute;
     bottom: -1px; left: 0; right: 0; height: 1px;
     background: var(--accent);
   }
 
+  /* タブコンテンツ */
   .tab-content { display: none; padding: 32px 0; }
   .tab-content.active { display: block; }
 
+  /* テキストボックス */
   .content-box {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 24px;
-    font-size: 0.875rem;
-    line-height: 1.75;
-    color: #b0b0c0;
-    white-space: pre-wrap;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 24px;
+    font-size: 0.875rem; line-height: 1.75;
+    color: #b0b0c0; white-space: pre-wrap;
   }
 
-  .release-item {
-    padding: 20px 0;
-    border-bottom: 1px solid var(--border);
-  }
+  /* リリース */
+  .release-item { padding: 20px 0; border-bottom: 1px solid var(--border); }
   .release-item:last-child { border-bottom: none; }
-  .release-header {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 10px;
-  }
+  .release-header { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
   .version-badge {
-    display: inline-block;
-    background: var(--accent-dim);
-    color: var(--accent2);
-    font-size: 0.78rem;
-    font-weight: 600;
-    padding: 3px 10px;
-    border-radius: 20px;
-    border: 1px solid rgba(157,127,232,0.2);
-    letter-spacing: 0.03em;
+    display: inline-block; background: var(--accent-dim); color: var(--accent2);
+    font-size: 0.78rem; font-weight: 600; padding: 3px 10px;
+    border-radius: 20px; border: 1px solid rgba(157,127,232,0.2); letter-spacing: 0.03em;
   }
   .rel-date { font-size: 0.8rem; color: var(--muted); margin-left: auto; }
   .rel-body { font-size: 0.875rem; color: #8888a0; line-height: 1.7; white-space: pre-wrap; }
+
+  /* フィーチャーグリッド */
+  .feat-label { font-size: .75rem; letter-spacing: .1em; text-transform: uppercase; color: #9d7fe8; margin-bottom: 10px; }
+  .feat-title { font-size: 1.4rem; font-weight: 600; color: #fff; letter-spacing: -.02em; margin-bottom: 6px; }
+  .feat-sub { font-size: .875rem; color: #6b6b80; margin-bottom: 32px; }
+  .feat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .feat-card {
+    background: #16161a; border: 1px solid rgba(255,255,255,.07);
+    border-radius: 12px; padding: 22px 20px; transition: border-color .2s;
+  }
+  .feat-card:hover { border-color: rgba(157,127,232,.3); }
+  .feat-icon {
+    width: 44px; height: 44px; border-radius: 10px;
+    background: rgba(157,127,232,.12); border: 1px solid rgba(157,127,232,.2);
+    display: flex; align-items: center; justify-content: center; margin-bottom: 14px;
+  }
+  .feat-icon svg { width: 22px; height: 22px; }
+  .feat-name { font-size: .875rem; font-weight: 600; color: #e8e8f0; margin-bottom: 5px; }
+  .feat-desc { font-size: .8rem; color: #6b6b80; line-height: 1.65; }
 
   .loading { color: var(--muted); font-size: 0.875rem; text-align: center; padding: 48px 0; }
 </style>
 </head>
 <body>
 <div class="wrap">
+
   <header>
     <div class="logo-mark">
       <svg viewBox="0 0 22 22" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -180,98 +144,81 @@
     <button class="tab-btn" onclick="showTab('license',this)">ライセンス</button>
   </div>
 
-<div id="about" class="tab-content active">
-  <style>
-    .tabs {
-    display: flex;
-    gap: 0;
-    margin-top: 32px;
-    border-bottom: 1px solid var(--border);
-    justify-content: center; 
-}
-    .feat-label { font-size:.75rem; letter-spacing:.1em; text-transform:uppercase; color:#9d7fe8; margin-bottom:10px; }
-    .feat-title { font-size:1.4rem; font-weight:600; color:#fff; letter-spacing:-.02em; margin-bottom:6px; }
-    .feat-sub { font-size:.875rem; color:#6b6b80; margin-bottom:32px; }
-    .feat-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
-    .feat-card { background:#16161a; border:1px solid rgba(255,255,255,.07); border-radius:12px; padding:22px 20px; transition:border-color .2s; }
-    .feat-card:hover { border-color:rgba(157,127,232,.3); }
-    .feat-icon { width:44px; height:44px; border-radius:10px; background:rgba(157,127,232,.12); border:1px solid rgba(157,127,232,.2); display:flex; align-items:center; justify-content:center; margin-bottom:14px; }
-    .feat-icon svg { width:22px; height:22px; }
-    .feat-name { font-size:.875rem; font-weight:600; color:#e8e8f0; margin-bottom:5px; }
-    .feat-desc { font-size:.8rem; color:#6b6b80; line-height:1.65; }
-  </style>
+  <!-- 紹介タブ -->
+  <div id="about" class="tab-content active">
+    <div style="padding:30px 0">
+      <div class="feat-label">Features</div>
+      <div class="feat-title">すべての本を、一箇所に。</div>
+      <div class="feat-sub">電子書籍・同人誌・自炊本のローカル管理に特化した、軽量で高機能なライブラリツール。</div>
+      <div class="feat-grid">
 
-  <div style="padding:30px 0">
-    <div class="feat-label">Features</div>
-    <div class="feat-title">すべての本を、一箇所に。</div>
-    <div class="feat-sub">電子書籍・同人誌・自炊本のローカル管理に特化した、軽量で高機能なライブラリツール。</div>
-    <div class="feat-grid">
+        <div class="feat-card">
+          <div class="feat-icon"><svg viewBox="0 0 22 22" fill="none"><path d="M11 3v10M7 9l4 4 4-4" stroke="#c4a8ff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 16h14M4 19h14" stroke="#9d7fe8" stroke-width="1.4" stroke-linecap="round"/></svg></div>
+          <div class="feat-name">ドラッグ&amp;ドロップで登録</div>
+          <div class="feat-desc">ZIP・フォルダ・PDFをドロップするだけで即登録。複数同時投入にも対応し、重複は自動検出。</div>
+        </div>
 
-      <div class="feat-card">
-        <div class="feat-icon"><svg viewBox="0 0 22 22" fill="none"><path d="M11 3v10M7 9l4 4 4-4" stroke="#c4a8ff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 16h14M4 19h14" stroke="#9d7fe8" stroke-width="1.4" stroke-linecap="round"/></svg></div>
-        <div class="feat-name">ドラッグ&ドロップで登録</div>
-        <div class="feat-desc">ZIP・フォルダ・PDFをドロップするだけで即登録。複数同時投入にも対応し、重複は自動検出。</div>
-      </div>
+        <div class="feat-card">
+          <div class="feat-icon"><svg viewBox="0 0 22 22" fill="none"><circle cx="11" cy="11" r="7.5" stroke="#9d7fe8" stroke-width="1.5"/><path d="M8 11h6M11 8v6" stroke="#c4a8ff" stroke-width="1.6" stroke-linecap="round"/></svg></div>
+          <div class="feat-name">メタデータ自動取得</div>
+          <div class="feat-desc">購入した作品の情報をブックマークレット経由で一発取得。タイトル・サークル・タグを自動補完。</div>
+        </div>
 
-      <div class="feat-card">
-        <div class="feat-icon"><svg viewBox="0 0 22 22" fill="none"><circle cx="11" cy="11" r="7.5" stroke="#9d7fe8" stroke-width="1.5"/><path d="M8 11h6M11 8v6" stroke="#c4a8ff" stroke-width="1.6" stroke-linecap="round"/></svg></div>
-        <div class="feat-name">メタデータ自動取得</div>
-        <div class="feat-desc">購入した作品の情報をブックマークレット経由で一発取得。タイトル・サークル・タグを自動補完。</div>
-      </div>
-      
-<div class="feat-card">
-  <div class="feat-icon">
-    <svg viewBox="0 0 22 22" fill="none">
-      <path d="M11 3l2.5 5 5.5.8-4 3.9.9 5.5L11 15.5l-4.9 2.7.9-5.5L3 8.8l5.5-.8L11 3z" stroke="#9d7fe8" stroke-width="1.5" stroke-linejoin="round"/>
-      <path d="M11 3l2.5 5 5.5.8-4 3.9.9 5.5L11 15.5l-4.9 2.7.9-5.5L3 8.8l5.5-.8L11 3z" fill="#c4a8ff" opacity="0.15"/>
-    </svg>
-    
-  </div>
-  <div class="feat-name">評価・お気に入り</div>
-  <div class="feat-desc">星評価やお気に入り登録でコレクションを整理。グリッドと連携してすぐに絞り込める。</div>
-</div>
-      
-      <div class="feat-card">
-        <div class="feat-icon"><svg viewBox="0 0 22 22" fill="none"><rect x="3" y="3" width="7" height="7" rx="2" fill="#9d7fe8" opacity="0.8"/><rect x="12" y="3" width="7" height="7" rx="2" fill="#9d7fe8" opacity="0.5"/><rect x="3" y="12" width="7" height="7" rx="2" fill="#9d7fe8" opacity="0.5"/><rect x="12" y="12" width="7" height="7" rx="2" fill="#9d7fe8" opacity="0.3"/></svg></div>
-        <div class="feat-name">高速サムネイルグリッド</div>
-        <div class="feat-desc">仮想描画による超高速グリッド表示。数千冊のコレクションでもスムーズにスクロール。</div>
-      </div>
+        <div class="feat-card">
+          <div class="feat-icon"><svg viewBox="0 0 22 22" fill="none"><path d="M11 3l2.5 5 5.5.8-4 3.9.9 5.5L11 15.5l-4.9 2.7.9-5.5L3 8.8l5.5-.8L11 3z" stroke="#9d7fe8" stroke-width="1.5" stroke-linejoin="round"/><path d="M11 3l2.5 5 5.5.8-4 3.9.9 5.5L11 15.5l-4.9 2.7.9-5.5L3 8.8l5.5-.8L11 3z" fill="#c4a8ff" opacity="0.15"/></svg></div>
+          <div class="feat-name">評価・お気に入り</div>
+          <div class="feat-desc">星評価やお気に入り登録でコレクションを整理。グリッドと連携してすぐに絞り込める。</div>
+        </div>
 
-      <div class="feat-card">
-        <div class="feat-icon"><svg viewBox="0 0 22 22" fill="none"><rect x="3" y="4" width="16" height="12" rx="2.5" stroke="#9d7fe8" stroke-width="1.5"/><path d="M8 10l2 2 4-4" stroke="#c4a8ff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
-        <div class="feat-name">ビルトインビューア</div>
-        <div class="feat-desc">JPG, JPEG, PNG, WEBP, GIF, BMPに対応したビューアを内蔵。外部アプリ不要で、ライブラリからそのまま閲覧できる。</div>
-      </div>
-<div class="feat-card">
-  <div class="feat-icon">
-    <svg viewBox="0 0 22 22" fill="none">
-      <path d="M3 11c0-3 2.5-5 5-5h6c2.5 0 5 2 5 5s-2.5 5-5 5H8c-2.5 0-5-2-5-5z" stroke="#9d7fe8" stroke-width="1.5"/>
-      <circle cx="11" cy="11" r="2.5" fill="#c4a8ff"/>
-    </svg>
-  </div>
-  <div class="feat-name">ビューア連携機能</div>
-  <div class="feat-desc">主要同人ストアの購入ファイル形式に対応。ライブラリに追加すれば、そのまま連携ビューアで閲覧できる。</div>
-</div>
-      <div class="feat-card">
-        <div class="feat-icon"><svg viewBox="0 0 22 22" fill="none"><circle cx="10" cy="10" r="6" stroke="#9d7fe8" stroke-width="1.5"/><path d="M14.5 14.5L19 19" stroke="#c4a8ff" stroke-width="1.7" stroke-linecap="round"/></svg></div>
-        <div class="feat-name">タグ・フィルター検索</div>
-        <div class="feat-desc">タグ・サークル・タイトルで絞り込み。カバーなしなど多彩なフィルターも完備。</div>
-      </div>
+        <div class="feat-card">
+          <div class="feat-icon"><svg viewBox="0 0 22 22" fill="none"><rect x="3" y="3" width="7" height="7" rx="2" fill="#9d7fe8" opacity="0.8"/><rect x="12" y="3" width="7" height="7" rx="2" fill="#9d7fe8" opacity="0.5"/><rect x="3" y="12" width="7" height="7" rx="2" fill="#9d7fe8" opacity="0.5"/><rect x="12" y="12" width="7" height="7" rx="2" fill="#9d7fe8" opacity="0.3"/></svg></div>
+          <div class="feat-name">高速サムネイルグリッド</div>
+          <div class="feat-desc">仮想描画による超高速グリッド表示。数千冊のコレクションでもスムーズにスクロール。</div>
+        </div>
 
-      <div class="feat-card">
-        <div class="feat-icon"><svg viewBox="0 0 22 22" fill="none"><path d="M19 14v4a1 1 0 01-1 1H4a1 1 0 01-1-1v-4" stroke="#9d7fe8" stroke-width="1.5" stroke-linecap="round"/><path d="M11 3v11M7.5 7.5L11 4l3.5 3.5" stroke="#c4a8ff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
-        <div class="feat-name">自動バックアップ</div>
-        <div class="feat-desc">ライブラリ変更時に自動でDBをバックアップ。タイムスタンプ付きで世代管理。</div>
-      </div>
+        <div class="feat-card">
+          <div class="feat-icon"><svg viewBox="0 0 22 22" fill="none"><rect x="3" y="4" width="16" height="12" rx="2.5" stroke="#9d7fe8" stroke-width="1.5"/><path d="M8 10l2 2 4-4" stroke="#c4a8ff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+          <div class="feat-name">ビルトインビューア</div>
+          <div class="feat-desc">JPG・PNG・WEBP・GIF・BMPに対応したビューアを内蔵。外部アプリ不要で、ライブラリからそのまま閲覧できる。</div>
+        </div>
 
+        <div class="feat-card">
+          <div class="feat-icon"><svg viewBox="0 0 22 22" fill="none"><path d="M3 11c0-3 2.5-5 5-5h6c2.5 0 5 2 5 5s-2.5 5-5 5H8c-2.5 0-5-2-5-5z" stroke="#9d7fe8" stroke-width="1.5"/><circle cx="11" cy="11" r="2.5" fill="#c4a8ff"/></svg></div>
+          <div class="feat-name">ビューア連携機能</div>
+          <div class="feat-desc">ストア購入ファイルも、そのまま起動。外部アプリとの連携で、どんな形式もアプリから直接開ける。</div>
+        </div>
+
+        <div class="feat-card">
+          <div class="feat-icon"><svg viewBox="0 0 22 22" fill="none"><circle cx="10" cy="10" r="6" stroke="#9d7fe8" stroke-width="1.5"/><path d="M14.5 14.5L19 19" stroke="#c4a8ff" stroke-width="1.7" stroke-linecap="round"/></svg></div>
+          <div class="feat-name">ライブラリ管理</div>
+          <div class="feat-desc">タイトル・サークル・タグで瞬時に検索。豊富なフィルターでコレクションを自在に整理できる。</div>
+        </div>
+
+        <div class="feat-card">
+          <div class="feat-icon"><svg viewBox="0 0 22 22" fill="none"><path d="M19 14v4a1 1 0 01-1 1H4a1 1 0 01-1-1v-4" stroke="#9d7fe8" stroke-width="1.5" stroke-linecap="round"/><path d="M11 3v11M7.5 7.5L11 4l3.5 3.5" stroke="#c4a8ff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+          <div class="feat-name">自動バックアップ</div>
+          <div class="feat-desc">ライブラリ変更時に自動でDBをバックアップ。タイムスタンプ付きで世代管理。</div>
+        </div>
+
+      </div>
     </div>
   </div>
+
+  <!-- 更新履歴タブ -->
+  <div id="changelog" class="tab-content">
+    <div id="history-list"></div>
+  </div>
+
+  <!-- ライセンスタブ -->
+  <div id="license" class="tab-content">
+    <div id="license-content" class="content-box">取得中...</div>
+  </div>
+
 </div>
 
 <script>
   const REPO = 'ask501/Noble_Shelf';
   const API_RELEASES = `https://api.github.com/repos/${REPO}/releases`;
-  const API_README = `https://api.github.com/repos/${REPO}/readme`;
   const API_LICENSE = `https://api.github.com/repos/${REPO}/license`;
 
   function showTab(tabId, btn) {
@@ -308,26 +255,15 @@
     } catch(e) { dlEl.innerHTML = '<p class="loading">取得失敗</p>'; }
   }
 
-  async function fetchReadme() {
-    const el = document.getElementById('readme-content');
-    try {
-      const res = await fetch(API_README, { headers: { Accept: 'application/vnd.github.v3.raw' } });
-      el.textContent = await res.text();
-      el.classList.remove('loading');
-    } catch(e) { el.textContent = '取得失敗'; }
-  }
-
   async function fetchLicense() {
     const el = document.getElementById('license-content');
     try {
       const res = await fetch(API_LICENSE, { headers: { Accept: 'application/vnd.github.v3.raw' } });
       el.textContent = await res.text();
-      el.classList.remove('loading');
     } catch(e) { el.textContent = '取得失敗'; }
   }
 
   fetchDownloadAndHistory();
-  fetchReadme();
   fetchLicense();
 </script>
 </body>
