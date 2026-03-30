@@ -2,18 +2,64 @@ from __future__ import annotations
 
 import os
 
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QFont, QPainter, QPixmap
+from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
     QVBoxLayout,
+    QWidget,
 )
 
 import config
+import paths
 from theme import THEME_COLORS, apply_dark_titlebar
+
+
+def _svg_abs_path_to_pixmap(abs_svg_path: str, size_px: int) -> QPixmap:
+    """SVG を指定ピクセル角の QPixmap に描画する。"""
+    renderer = QSvgRenderer(abs_svg_path)
+    pm = QPixmap(size_px, size_px)
+    pm.fill(Qt.GlobalColor.transparent)
+    if not renderer.isValid():
+        return pm
+    painter = QPainter(pm)
+    renderer.render(painter)
+    painter.end()
+    return pm
+
+
+def _add_warning_icon_text_row(
+    parent_layout: QVBoxLayout,
+    pixmap: QPixmap,
+    text: str,
+    qss_color: str,
+) -> None:
+    """アイコン QLabel + テキスト QLabel の1行を parent_layout に追加する。"""
+    row_widget = QWidget()
+    row_widget.setStyleSheet(config.LIBRARY_FOLDER_DIALOG_WARNING_ROW_QSS)
+    row = QHBoxLayout(row_widget)
+    row.setContentsMargins(*config.LAYOUT_MARGINS_ZERO)
+    row.setSpacing(config.RENAME_DIALOG_SPACING)
+    sz = config.LIBRARY_FOLDER_DIALOG_WARNING_ICON_DISPLAY_PX
+    icon_lbl = QLabel()
+    icon_lbl.setPixmap(pixmap)
+    icon_lbl.setFixedSize(sz, sz)
+    icon_lbl.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+    text_lbl = QLabel(text)
+    text_lbl.setFont(QFont(config.FONT_FAMILY, config.FONT_SIZE_DIALOG_LABEL))
+    text_lbl.setStyleSheet(f"color: {qss_color};")
+    text_lbl.setWordWrap(True)
+    text_lbl.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+    row.addWidget(icon_lbl, 0, Qt.AlignmentFlag.AlignVCenter)
+    row.addWidget(text_lbl, 1, Qt.AlignmentFlag.AlignVCenter)
+    parent_layout.addWidget(row_widget)
 
 
 def _default_library_path() -> str:
@@ -60,6 +106,25 @@ class LibraryFolderDialog(QDialog):
         row.addWidget(self._browse_btn, stretch=0)
         root.addLayout(row)
 
+        warn_rows = QVBoxLayout()
+        warn_rows.setSpacing(config.LIBRARY_FOLDER_DIALOG_WARNING_ROWS_SPACING_PX)
+        icon_px = config.LIBRARY_FOLDER_DIALOG_WARNING_ICON_DISPLAY_PX
+        red_path = paths.ICON_LIBRARY_FOLDER_RED_DANGER_SVG
+        yellow_path = paths.ICON_LIBRARY_FOLDER_YELLOW_HELP_SVG
+        _add_warning_icon_text_row(
+            warn_rows,
+            _svg_abs_path_to_pixmap(red_path, icon_px),
+            config.LIBRARY_FOLDER_DIALOG_CHANGE_WARNING_LINE1_TEXT,
+            THEME_COLORS["delete"],
+        )
+        _add_warning_icon_text_row(
+            warn_rows,
+            _svg_abs_path_to_pixmap(yellow_path, icon_px),
+            config.LIBRARY_FOLDER_DIALOG_CHANGE_WARNING_LINE2_TEXT,
+            THEME_COLORS["card_star_on"],
+        )
+        root.addLayout(warn_rows)
+
         btn_row = QHBoxLayout()
         btn_row.addStretch()
         self._ok_btn = QPushButton("OK")
@@ -80,6 +145,19 @@ class LibraryFolderDialog(QDialog):
         if not t:
             return ""
         return os.path.normpath(os.path.expanduser(t))
+
+    @staticmethod
+    def _selected_path_conflicts_with_app_data_dir(normalized_path: str) -> bool:
+        """ライブラリ候補がアプリデータディレクトリと同一、またはその配下なら True。"""
+        app_data = os.path.normpath(os.path.abspath(config.APP_DATA_DIR))
+        selected = os.path.normpath(os.path.abspath(normalized_path))
+        if os.path.normcase(selected) == os.path.normcase(app_data):
+            return True
+        try:
+            common = os.path.commonpath([selected, app_data])
+        except ValueError:
+            return False
+        return os.path.normcase(common) == os.path.normcase(app_data)
 
     def _on_browse(self) -> None:
         # 入力欄 → ダイアログ表示時の保存パス → 既定の順で、存在するフォルダを起点にする
@@ -104,6 +182,13 @@ class LibraryFolderDialog(QDialog):
     def _on_ok(self) -> None:
         path = self._normalize_path(self._line_edit.text())
         if not path:
+            return
+        if self._selected_path_conflicts_with_app_data_dir(path):
+            QMessageBox.warning(
+                self,
+                config.LIBRARY_FOLDER_DIALOG_TITLE,
+                config.LIBRARY_FOLDER_DIALOG_APP_DATA_CONFLICT_MESSAGE,
+            )
             return
         if os.path.isdir(path):
             self._selected_path = path

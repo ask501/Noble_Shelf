@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QMenu,
 )
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QAction, QPixmapCache
+from PySide6.QtGui import QAction, QBrush, QColor, QFont, QPixmapCache
 import logging
 import config
 from theme import (
@@ -68,7 +68,7 @@ class BookmarkletWindow(QWidget):
 
         self._btn_help = QPushButton("？")
         self._btn_help.setFixedWidth(32)
-        self._btn_help.setToolTip("ヘルプを表示")
+        self._btn_help.setToolTip("手順のヘルプを開く（初めての方はこちら）")
         self._btn_help.clicked.connect(self._open_help)
         copy_row.addWidget(self._btn_help)
 
@@ -197,6 +197,13 @@ class BookmarkletWindow(QWidget):
             self._detail.clear()
             return
         row_id = current.data(Qt.UserRole)
+        if row_id == config.BOOKMARKLET_QUEUE_PLACEHOLDER_ROW_ID:
+            self._thumb.clear()
+            self._detail.clear()
+            self._btn_apply.setEnabled(False)
+            self._current_row = None
+            self._found_path = None
+            return
         row = db.get_bookmarklet_queue_by_id(row_id)
         if not row:
             return
@@ -299,7 +306,23 @@ class BookmarkletWindow(QWidget):
     def refresh(self) -> None:
         """DBからキューを再読み込みしてリストを更新する"""
         self._list.clear()
-        for row in db.get_bookmarklet_queue():
+        rows = db.get_bookmarklet_queue()
+        if not rows:
+            ph = QListWidgetItem(config.BOOKMARKLET_QUEUE_EMPTY_PLACEHOLDER)
+            ph.setData(Qt.UserRole, config.BOOKMARKLET_QUEUE_PLACEHOLDER_ROW_ID)
+            ph.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            ph.setForeground(QBrush(QColor(THEME_COLORS["text_sub"])))
+            ph_font = QFont(config.FONT_FAMILY, config.FONT_SIZE_PROP_HINT)
+            ph.setFont(ph_font)
+            self._list.addItem(ph)
+            self._thumb.clear()
+            self._detail.clear()
+            self._btn_apply.setEnabled(False)
+            self._current_row = None
+            self._found_path = None
+            self._list.setCurrentRow(-1)
+            return
+        for row in rows:
             lamp = STATUS_LABEL.get(row["status"], "⚪")
             text = f"{lamp}  {row['title'] or row['url']}  [{row['site']}]  {row['fetched_at']}"
             item = QListWidgetItem(text)
@@ -319,6 +342,8 @@ class BookmarkletWindow(QWidget):
         if not item:
             return
         row_id = item.data(Qt.UserRole)
+        if row_id == config.BOOKMARKLET_QUEUE_PLACEHOLDER_ROW_ID:
+            return
         menu = QMenu(self)
         act_del = QAction("削除", self)
         act_del.triggered.connect(lambda: self._delete_item(row_id))

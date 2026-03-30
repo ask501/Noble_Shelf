@@ -10,7 +10,7 @@ import time
 import uuid as uuid_lib
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 
@@ -461,7 +461,7 @@ class BookScannerWorker(QRunnable):
         - TTL 未満 → 何もしない
         - TTL 以上 → delete_paths_out に path を追加
         """
-        now_iso = datetime.utcnow().isoformat()
+        now_iso = datetime.now(UTC).isoformat()
         for r in rows:
             p = (r.get("path") or "").strip()
             if not p:
@@ -471,8 +471,8 @@ class BookScannerWorker(QRunnable):
                 db.mark_missing_since_if_null(p, now_iso)
                 continue
             try:
-                dt_missing = datetime.fromisoformat(missing_since)
-                elapsed_days = (datetime.utcnow() - dt_missing).days
+                dt_missing = datetime.fromisoformat(missing_since).replace(tzinfo=UTC)
+                elapsed_days = (datetime.now(UTC) - dt_missing).days
             except Exception:
                 elapsed_days = config.MISSING_BOOK_TTL_DAYS
             if elapsed_days >= config.MISSING_BOOK_TTL_DAYS:
@@ -904,9 +904,9 @@ class BookScannerWorker(QRunnable):
                     cnt_file_root_skip += 1
                     continue
                 if not os.path.exists(abs_row):
-                    delete_paths.append(path)
-                    immediate_file_paths.append(path)
-                    cnt_file_immediate += 1
+                    # 実体消失は即削除せず missing_since_date → TTL とフォルダ欠落と同じ経路に統一する
+                    folder_missing_candidates.append(r)
+                    cnt_isdir_missing += 1
 
         fm_paths = [(x.get("path") or "").strip() for x in folder_missing_candidates]
         logging.info(
@@ -976,16 +976,17 @@ class BookScannerWorker(QRunnable):
         logging.info("[SCAN] phase=final_fetch %.3fs", t7 - t_after_db)
         books = [
             {
-                "path": row[3],
-                "name": row[0],
-                "title": row[2] or row[0],
-                "circle": row[1] or "",
-                "cover": row[4] or "",
+                "path": row[config.BOOK_ROW_PATH],
+                "name": row[config.BOOK_ROW_NAME],
+                "title": row[config.BOOK_ROW_TITLE] or row[config.BOOK_ROW_NAME],
+                "circle": row[config.BOOK_ROW_CIRCLE] or "",
+                "cover": row[config.BOOK_ROW_COVER] or "",
                 "pages": 0,
                 "rating": 0,
+                "missing_since_date": (row[config.BOOK_ROW_MISSING_SINCE_DATE] or ""),
             }
             for row in rows
-            if row[3]
+            if row[config.BOOK_ROW_PATH]
         ]
         return books, duplicate_results
 

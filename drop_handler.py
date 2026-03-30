@@ -37,6 +37,87 @@ PDF_EXTS = {".pdf"}
 IMAGE_EXTS   = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
 
 
+def _check_path_length(path: str) -> bool:
+    """Win32 長パスプレフィックスなしで扱う上限を超えるパス長なら True（登録拒否判定用）。"""
+    return len(path) > config.WINDOWS_MAX_PATH
+
+
+def _drop_registered_row_for_dest(
+    dest: str,
+    archive_source_path: str | None,
+) -> dict | None:
+    """dest の DB path 一致、またはアーカイブ時はファイルの content_hash 一致で books 行を返す。"""
+    row = db.get_book_by_path(dest)
+    if row is None and archive_source_path:
+        file_hash = db._compute_store_content_hash(archive_source_path)
+        if file_hash:
+            hb = db.find_book_by_content_hash(file_hash)
+            rel = (hb.get("path") or "").strip() if hb else ""
+            if rel:
+                try:
+                    row = db.get_book_by_path(db._from_db_path(rel))
+                except ValueError:
+                    row = None
+    return row
+
+
+def _drop_resolve_registration_conflict(
+    dest: str,
+    item_display_name: str,
+    parent,
+    on_done: Callable[[], None] | None,
+    *,
+    archive_source_path: str | None = None,
+    duplicate_registered_template: str = config.DROP_DUPLICATE_FOLDER_REGISTERED_TEMPLATE,
+) -> bool:
+    """
+    登録済み・行方不明の扱い。
+    True: コピー／解凍など通常フローを続行。
+    False: 中断（on_done は必要に応じて本関数内で実行済み）。
+    """
+    row = _drop_registered_row_for_dest(dest, archive_source_path)
+    if row is None:
+        return True
+    msd = (row.get("missing_since_date") or "").strip()
+    if msd:
+        btn = QMessageBox.question(
+            parent,
+            config.DROP_MISSING_BOOK_REDIALOG_TITLE,
+            config.DROP_MISSING_BOOK_REDIALOG_MESSAGE,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if btn != QMessageBox.StandardButton.Yes:
+            if on_done:
+                on_done()
+            return False
+        db.clear_missing_since_date(row["uuid"])
+        try:
+            new_db_path = db.to_db_path_from_any(dest)
+        except ValueError:
+            if on_done:
+                on_done()
+            return False
+        old_path = (row.get("path") or "").strip()
+        if old_path != new_db_path:
+            mtime_val = None
+            if os.path.exists(dest):
+                try:
+                    mtime_val = os.path.getmtime(dest)
+                except OSError:
+                    mtime_val = None
+            db.rename_book_path(row["uuid"], new_db_path, mtime_val, None)
+        return True
+    QMessageBox.warning(
+        parent,
+        config.DROP_DUPLICATE_DIALOG_TITLE,
+        duplicate_registered_template.format(name=item_display_name),
+    )
+    if on_done:
+        on_done()
+    return False
+
+
 def _compute_cover_hash(folder_path: str) -> str | None:
     """フォルダ内の先頭画像（ソート済み）1枚の hash を返す。画像がなければ None。"""
     imgs = sorted(
@@ -79,9 +160,7 @@ def _get_pdf_cover_and_pages(pdf_path: str) -> tuple[str, int]:
             pix.save(cover_path)
         doc.close()
     except Exception as e:
-        import traceback
-
-        traceback.print_exc()
+        _logger.exception(config.LOG_PDF_COVER_FAILURE_TEMPLATE, pdf_path, e)
     return (cover_path if os.path.exists(cover_path) else ""), pages
 
 
@@ -187,12 +266,17 @@ def handle_drop(
     library_folder: str,
     parent=None,
     on_done: Callable[[], None] | None = None,
+    *,
+    scan_blocked: bool = False,
 ):
     """
     ドロップされたパスリストを処理してDBに登録。
     on_done: 全処理完了後に1回だけ呼ぶコールバック（グリッド再スキャン用）。
     各アイテムの完了通知は内部で集約する（スキャンロックで2本目以降が落ちるのを防ぐ）。
+    scan_blocked: True のとき何もせず return（ライブラリスキャン中の二重処理防止用）。
     """
+    if scan_blocked:
+        return
     valid_paths: list[str] = []
     for path in paths:
         path = path.strip().strip("{}")
@@ -230,15 +314,27 @@ def _handle_folder(path: str, library_folder: str, parent, on_done):
     """フォルダを重複チェック後、確認なしでコピーして登録する。"""
     folder_name = os.path.basename(path)
     dest = os.path.join(library_folder, folder_name)
-    if os.path.exists(dest):
-        QMessageBox.warning(parent, "重複", f"「{folder_name}」は既に存在します。")
+    if _check_path_length(dest):
+        QMessageBox.warning(
+            parent,
+            config.APP_TITLE,
+            config.DROP_PATH_TOO_LONG_MESSAGE.format(path=dest),
+        )
         if on_done:
             on_done()
         return
-    if db.is_path_registered(dest):
-        QMessageBox.warning(parent, "重複", f"「{folder_name}」は既に登録済みです。")
+    if os.path.exists(dest):
+        QMessageBox.warning(
+            parent,
+            config.DROP_DUPLICATE_DIALOG_TITLE,
+            config.DROP_DUPLICATE_FOLDER_EXISTS_TEMPLATE.format(name=folder_name),
+        )
         if on_done:
             on_done()
+        return
+    if not _drop_resolve_registration_conflict(
+        dest, folder_name, parent, on_done, archive_source_path=None
+    ):
         return
     try:
         shutil.copytree(path, dest)
@@ -259,6 +355,8 @@ def _handle_folder(path: str, library_folder: str, parent, on_done):
         if on_done:
             on_done()
     except Exception as e:
+        if os.path.isdir(dest):
+            shutil.rmtree(dest, ignore_errors=True)
         QMessageBox.critical(parent, "エラー", str(e))
         if on_done:
             on_done()
@@ -268,10 +366,31 @@ def _handle_archive(path: str, library_folder: str, parent, on_done):
     fname = os.path.basename(path)
     dest_name = os.path.splitext(fname)[0]
     dest = os.path.join(library_folder, dest_name)
-    if os.path.exists(dest) or db.is_path_registered(dest):
-        QMessageBox.warning(parent, "重複", f"「{dest_name}」は既に存在または登録済みです。")
+    if _check_path_length(dest):
+        QMessageBox.warning(
+            parent,
+            config.APP_TITLE,
+            config.DROP_PATH_TOO_LONG_MESSAGE.format(path=dest),
+        )
         if on_done:
             on_done()
+        return
+    if os.path.exists(dest):
+        QMessageBox.warning(
+            parent,
+            config.DROP_DUPLICATE_DIALOG_TITLE,
+            config.DROP_DUPLICATE_ARCHIVE_OR_REGISTERED_TEMPLATE.format(name=dest_name),
+        )
+        if on_done:
+            on_done()
+        return
+    if not _drop_resolve_registration_conflict(
+        dest,
+        dest_name,
+        parent,
+        on_done,
+        archive_source_path=path,
+    ):
         return
     dlg = ArchiveDropDialog(fname, parent)
     if parent:
@@ -299,15 +418,32 @@ def _handle_store_file(path: str, library_folder: str, parent, on_done):
     """ストアファイル/PDFをコピー後、resolver判定に応じて即時対話で登録する。"""
     fname = os.path.basename(path)
     dest = os.path.join(library_folder, fname)
-    if os.path.exists(dest):
-        QMessageBox.warning(parent, "重複", f"「{fname}」は既にライブラリに存在します。")
+    if _check_path_length(dest):
+        QMessageBox.warning(
+            parent,
+            config.APP_TITLE,
+            config.DROP_PATH_TOO_LONG_MESSAGE.format(path=dest),
+        )
         if on_done:
             on_done()
         return
-    if db.is_path_registered(dest):
-        QMessageBox.warning(parent, "重複", f"「{fname}」は既に登録済みです。")
+    if os.path.exists(dest):
+        QMessageBox.warning(
+            parent,
+            config.DROP_DUPLICATE_DIALOG_TITLE,
+            config.DROP_DUPLICATE_STORE_FILE_EXISTS_TEMPLATE.format(name=fname),
+        )
         if on_done:
             on_done()
+        return
+    if not _drop_resolve_registration_conflict(
+        dest,
+        fname,
+        parent,
+        on_done,
+        archive_source_path=None,
+        duplicate_registered_template=config.DROP_DUPLICATE_STORE_FILE_REGISTERED_TEMPLATE,
+    ):
         return
     try:
         shutil.copy2(path, dest)

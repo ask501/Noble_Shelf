@@ -40,4 +40,7 @@ class ToastWidget(QLabel):
     def mousePressEvent(self, event):
         if self._on_click:
             self._on_click()
-        self.deleteLater()
+        try:
+            self.deleteLater()
+        except RuntimeError:
+            pass

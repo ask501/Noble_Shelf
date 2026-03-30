@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
+
+import config
 from typing import Literal
 
 
@@ -75,7 +78,12 @@ def build_db_index(db_rows: list[dict], library_root: str) -> DBIndex:
                 missing_path_set.add(path)
             if summary.content_hash:
                 rows_by_content_hash.setdefault(summary.content_hash, []).append(summary)
-        except Exception:
+        except Exception as e:
+            logging.warning(
+                config.LOG_RESOLVER_DB_ROW_SKIP_TEMPLATE,
+                row.get("path"),
+                e,
+            )
             continue
 
     for key in list(rows_by_content_hash.keys()):

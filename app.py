@@ -311,8 +311,10 @@ class MainWindow(QMainWindow):
             self._act_file_paste.setEnabled(has_clipboard and has_library)
         if hasattr(self, "_act_file_print"):
             self._act_file_print.setEnabled(has_selection)
-        if hasattr(self, "_act_file_rescan"):
-            self._act_file_rescan.setEnabled(has_library)
+        if hasattr(self, config.MAIN_WINDOW_FILE_RESCAN_ACTION_ATTR):
+            getattr(self, config.MAIN_WINDOW_FILE_RESCAN_ACTION_ATTR).setEnabled(
+                has_library and not self._is_scan_blocked()
+            )
         if hasattr(self, "_act_file_reset_cache"):
             self._act_file_reset_cache.setEnabled(True)
         if hasattr(self, "_act_file_set_library"):
@@ -417,6 +419,7 @@ class MainWindow(QMainWindow):
             library_folder=folder,
             parent=self,
             on_done=self._on_drop_done,
+            scan_blocked=self._is_scan_blocked(),
         )
 
     def _file_print_selected(self):
@@ -930,8 +933,8 @@ class MainWindow(QMainWindow):
             try:
                 db.backup_daily(config.DB_BACKUP_DAILY_PATH)
                 db.set_last_backup_time(time.time())
-            except Exception:
-                pass
+            except Exception as e:
+                logging.warning(config.LOG_BACKUP_QUIT_FAILURE_TEMPLATE, e)
         try:
             os.remove(config.APP_LOCK_FILE_PATH)
         except Exception:
@@ -1344,6 +1347,15 @@ class MainWindow(QMainWindow):
         self._scan_blocking = blocked
         if hasattr(self, "_grid"):
             self._grid.setEnabled(not blocked)
+        ra = config.MAIN_WINDOW_FILE_RESCAN_ACTION_ATTR
+        if hasattr(self, ra):
+            act = getattr(self, ra)
+            if blocked:
+                act.setEnabled(False)
+            else:
+                library_folder = (db.get_setting(db.LIBRARY_FOLDER_SETTING_KEY) or "").strip()
+                has_library = bool(library_folder and os.path.isdir(library_folder))
+                act.setEnabled(has_library)
 
     def _is_scan_blocked(self) -> bool:
         """ライブラリスキャン中のとき True（D&D 等の重複スキャンを防ぐ）。"""
@@ -1499,13 +1511,22 @@ class MainWindow(QMainWindow):
                 """新旧ブック一覧に差分があるか判定する。"""
                 if len(a) != len(b):
                     return True
-                for x, y in zip(a, b):
+                pk = config.BOOK_DICT_KEY_PATH
+                _path_sort_key = lambda book: os.path.normcase(
+                    (book.get(pk) or "").strip()
+                )
+                for x, y in zip(
+                    sorted(a, key=_path_sort_key),
+                    sorted(b, key=_path_sort_key),
+                ):
                     if (
-                        x.get("path") != y.get("path")
+                        x.get(pk) != y.get(pk)
                         or x.get("name") != y.get("name")
                         or x.get("title") != y.get("title")
                         or x.get("circle") != y.get("circle")
                         or x.get("cover") != y.get("cover")
+                        or (x.get("missing_since_date") or "")
+                        != (y.get("missing_since_date") or "")
                     ):
                         return True
                 return False
@@ -1530,7 +1551,6 @@ class MainWindow(QMainWindow):
             self._sidebar.refresh()
             self.setWindowTitle(f"{config.APP_TITLE} v{VERSION}")
             self._status_label.setText(f"{len(books)} 冊")
-            self._set_scan_blocked(False)
             if hasattr(self, "_scan_stale_flag"):
                 self._scan_stale_flag.setVisible(False)
             if duplicate_results:
@@ -1540,6 +1560,7 @@ class MainWindow(QMainWindow):
             # 起動時スキャンは1回完了したら終了（以降のスキャンではストアダイアログを通常表示）
             self._is_startup_scan = False
             self._hide_scan_progress_ui()
+            self._set_scan_blocked(False)
 
     def _on_store_action_summary(self, rename_results: list, error_results: list) -> None:
         if rename_results:
@@ -2010,6 +2031,22 @@ class MainWindow(QMainWindow):
 
         # サムネイル未設定フィルタ（表示メニュー）
         books = self._apply_no_cover_filter(books)
+
+        # 見つからない本：メニューOFF時は missing パスを常に除外（missing_since 付きレコードの既定非表示）
+        if (
+            config.GRID_EXCLUDE_MISSING_PATHS_WHEN_MISSING_VIEW_OFF
+            and not self._filter_missing_books_only
+        ):
+            missing_set = self._missing_book_paths_norm_set()
+            if missing_set:
+                books_without_missing: list[dict] = []
+                for b in books:
+                    bp = (b.get("path") or "").strip()
+                    if not bp:
+                        continue
+                    if self._norm_path_for_missing_filter(bp) not in missing_set:
+                        books_without_missing.append(b)
+                books = books_without_missing
 
         # 見つからない本：通常はグリッドから除外、メニューON時のみ missing のみ表示
         books = self._apply_missing_books_filter(books)
@@ -2658,7 +2695,7 @@ class MainWindow(QMainWindow):
     def _bulk_update_kana(self):
         """全書籍の title_kana / circle_kana を一括で自動生成・更新"""
         try:
-            rows = db.get_all_books()  # [(name, circle, title, path, cover, is_dlst), ...]
+            rows = db.get_all_books()  # [(name, circle, title, path, cover, is_dlst, uuid, missing_since_date), ...]
         except Exception as e:
             QMessageBox.critical(self, "エラー", f"書籍一覧の取得に失敗しました: {e}")
             return
@@ -3051,6 +3088,7 @@ class MainWindow(QMainWindow):
             library_folder=folder,
             parent=self,
             on_done=self._on_drop_done,
+            scan_blocked=self._is_scan_blocked(),
         )
         event.acceptProposedAction()
 

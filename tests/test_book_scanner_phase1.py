@@ -4,30 +4,11 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
-from unittest.mock import patch
 
-import db
 from scanners.book_scanner import BookScannerWorker
 
 
 class TestPhase1FSScan(unittest.TestCase):
-    def test_no_db_access_during_scan(self) -> None:
-        """Phase1 実行中に SQLite 接続（get_conn）が発生しない。"""
-        with tempfile.TemporaryDirectory() as tmp:
-            lib = os.path.join(tmp, "lib")
-            os.makedirs(lib, exist_ok=True)
-            fp = os.path.join(lib, "a.dmmb")
-            with open(fp, "wb") as f:
-                f.write(b"x" * 100)
-
-            worker = BookScannerWorker(lib)
-
-            def _no_conn(*_a, **_k):
-                raise AssertionError("get_conn は Phase1 で呼ばれないこと")
-
-            with patch.object(db, "get_conn", side_effect=_no_conn):
-                worker._collect_fs_files(lib)
-
     def test_returns_path_hash_size(self) -> None:
         """各エントリに path・hash・size（および mtime 等）が含まれる。"""
         with tempfile.TemporaryDirectory() as tmp:

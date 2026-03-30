@@ -429,8 +429,10 @@ def init_db():
             )
             try:
                 backup_pre_migration(pre_migration_backup_path)
-            except Exception:
-                pass
+            except Exception as e:
+                logging.warning(
+                    config.LOG_DB_PRE_MIGRATION_BACKUP_FAILURE_TEMPLATE, e
+                )
 
     conn = get_conn()
     try:
@@ -624,8 +626,8 @@ def init_db():
 
     try:
         set_last_launch_version(VERSION)
-    except Exception:
-        pass
+    except Exception as e:
+        _logger.warning(config.LOG_DB_SET_LAUNCH_VERSION_FAILURE_TEMPLATE, e)
 
 
 
@@ -872,12 +874,18 @@ def _safe_backup(backup_path: str) -> None:
         conn.execute(f"VACUUM INTO '{safe_path}'")
     finally:
         conn.close()
-    for _ in range(3):
+    for _ in range(config.SAFE_BACKUP_REPLACE_RETRY_COUNT):
         try:
             os.replace(tmp_path, backup_path)
             break
         except PermissionError:
-            time.sleep(0.5)
+            time.sleep(config.SAFE_BACKUP_REPLACE_RETRY_WAIT_SEC)
+    else:
+        _logger.warning(config.LOG_SAFE_BACKUP_REPLACE_FAILURE_TEMPLATE, tmp_path)
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
 
 
 def backup_daily(backup_path: str) -> None:
@@ -1097,18 +1105,28 @@ def get_hidden_paths() -> list[str]:
 # ══════════════════════════════════════════════════════
 
 def get_all_books():
-    """全booksを (name, circle, title, path, cover_path, is_dlst, uuid) のリストで返す
+    """全booksを (name, circle, title, path, cover_path, is_dlst, uuid, missing_since_date) のリストで返す
     cover_customが設定されていればそちらを優先"""
     conn = get_conn()
     try:
         rows = conn.execute(
             """SELECT uuid, name, circle, title, path,
                COALESCE(NULLIF(cover_custom, ''), cover_path) as cover_path,
-               COALESCE(is_dlst, 0) as is_dlst
+               COALESCE(is_dlst, 0) as is_dlst,
+               COALESCE(missing_since_date, '') as missing_since_date
                FROM books ORDER BY name"""
         ).fetchall()
         return [
-            (r["name"], r["circle"], r["title"], r["path"], r["cover_path"], r["is_dlst"], r["uuid"])
+            (
+                r["name"],
+                r["circle"],
+                r["title"],
+                r["path"],
+                r["cover_path"],
+                r["is_dlst"],
+                r["uuid"],
+                r["missing_since_date"],
+            )
             for r in rows
         ]
     finally:
@@ -1133,6 +1151,26 @@ def clear_missing_since_for_paths(paths: list[str]) -> None:
             pass
     finally:
         conn.close()
+
+
+def clear_missing_since_date(uuid: str) -> None:
+    """指定 uuid の books.missing_since_date を NULL にする。"""
+    u = (uuid or "").strip()
+    if not u:
+        return
+    conn = get_conn()
+    try:
+        try:
+            conn.execute(
+                "UPDATE books SET missing_since_date=NULL WHERE uuid=?",
+                (u,),
+            )
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
+    finally:
+        conn.close()
+    cache.invalidate()
 
 
 def mark_missing_since_if_null(path: str, iso_utc: str) -> None:
@@ -1221,11 +1259,21 @@ def get_all_books_order_by_added_desc():
         rows = conn.execute(
             """SELECT uuid, name, circle, title, path,
                COALESCE(NULLIF(cover_custom, ''), cover_path) as cover_path,
-               COALESCE(is_dlst, 0) as is_dlst
+               COALESCE(is_dlst, 0) as is_dlst,
+               COALESCE(missing_since_date, '') as missing_since_date
                FROM books ORDER BY updated_at DESC, name"""
         ).fetchall()
         return [
-            (r["name"], r["circle"], r["title"], r["path"], r["cover_path"], r["is_dlst"], r["uuid"])
+            (
+                r["name"],
+                r["circle"],
+                r["title"],
+                r["path"],
+                r["cover_path"],
+                r["is_dlst"],
+                r["uuid"],
+                r["missing_since_date"],
+            )
             for r in rows
         ]
     finally:
@@ -1414,6 +1462,35 @@ def is_path_registered(path: str) -> bool:
     try:
         row = conn.execute("SELECT 1 FROM books WHERE path=?", (db_path,)).fetchone()
         return row is not None
+    finally:
+        conn.close()
+
+
+def get_book_by_path(path: str) -> dict | None:
+    """path（絶対またはライブラリ相対）に対応する books 行の一部を返す。無ければ None。"""
+    if not path or not str(path).strip():
+        return None
+    try:
+        db_path = to_db_path_from_any(path)
+    except ValueError:
+        return None
+    conn = get_conn()
+    try:
+        try:
+            row = conn.execute(
+                "SELECT uuid, path, missing_since_date FROM books WHERE path=? LIMIT 1",
+                (db_path,),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return None
+        if not row:
+            return None
+        msd = row["missing_since_date"]
+        return {
+            "uuid": row["uuid"],
+            "path": row["path"],
+            "missing_since_date": (msd or "").strip() if msd is not None else "",
+        }
     finally:
         conn.close()
 
@@ -3038,7 +3115,7 @@ def search_books(conditions, operator="AND"):
     """
     conditions: [{"field": "title"|"circle"|"author"|"series"|"character"|"tag", "value": str}, ...]
     operator: "AND" | "OR"
-    全booksを (name, circle, title, path, cover_path, is_dlst, uuid) のリストで返す（get_all_books と同形式）
+    全booksを (name, circle, title, path, cover_path, is_dlst, uuid, missing_since_date) のリストで返す（get_all_books と同形式）
     検索語・DB側とも NFKC 正規化して比較する（全角/半角・異体字などを同一視）
     """
     if not conditions:
@@ -3191,12 +3268,22 @@ def search_books(conditions, operator="AND"):
         rows = conn.execute(
             f"SELECT uuid, name, circle, title, path, "
             f"COALESCE(NULLIF(cover_custom, ''), cover_path) as cover_path, "
-            f"COALESCE(is_dlst, 0) as is_dlst FROM books "
+            f"COALESCE(is_dlst, 0) as is_dlst, "
+            f"COALESCE(missing_since_date, '') as missing_since_date FROM books "
             f"WHERE path IN ({placeholders}) ORDER BY name",
             list(matched_paths)
         ).fetchall()
         return [
-            (r["name"], r["circle"], r["title"], r["path"], r["cover_path"], r["is_dlst"], r["uuid"])
+            (
+                r["name"],
+                r["circle"],
+                r["title"],
+                r["path"],
+                r["cover_path"],
+                r["is_dlst"],
+                r["uuid"],
+                r["missing_since_date"],
+            )
             for r in rows
         ]
     finally:

@@ -34,6 +34,9 @@ ICON_TOOLBAR_BOOKMARKLET = os.path.join(APP_BASE, "assets", "bookmarklet.png")
 ICON_TOOLBAR_SETTINGS = os.path.join(APP_BASE, "assets", "toolbar_settings.png")
 # theme.py: QComboBox::down-arrow 用 SVG（QSS の url は / 区切りに変換して使用）
 ICON_COMBO_ARROW = os.path.join(APP_BASE, "assets", "mdi--triangle-down.svg")
+# library_folder_dialog.py: ライブラリ変更警告行のアイコン
+ICON_LIBRARY_FOLDER_RED_DANGER_SVG = os.path.join(APP_BASE, "assets", "Red_danger.svg")
+ICON_LIBRARY_FOLDER_YELLOW_HELP_SVG = os.path.join(APP_BASE, "assets", "Yellow_help.svg")
 
 # ── アプリアイコン（ウィンドウ・exe） ──────────────────
 APP_ICON = os.path.join(APP_BASE, "assets", "icon.png")
