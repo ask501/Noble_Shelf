@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from typing import Optional
 
-from PySide6.QtCore import QModelIndex, Qt, Signal, QSize
+from PySide6.QtCore import QModelIndex, QTimer, Qt, Signal, QSize
 from PySide6.QtWidgets import QAbstractItemView, QListView, QMessageBox
 
 import config
@@ -11,7 +11,15 @@ import db
 from ui.utils.auto_scroll_mixin import AutoScrollMixin
 from .delegate import BookCardDelegate, CARD_H, CARD_W, MIN_GAP
 from .model import BookListModel
-from .roles import ROLE_CIRCLE, ROLE_COVER, ROLE_PAGES, ROLE_PATH, ROLE_RATING, ROLE_TITLE
+from .roles import (
+    ROLE_CIRCLE,
+    ROLE_COVER,
+    ROLE_PAGES,
+    ROLE_PATH,
+    ROLE_RATING,
+    ROLE_THUMB,
+    ROLE_TITLE,
+)
 
 
 def _safe_from_db_path(path: str) -> str:
@@ -67,6 +75,10 @@ class BookGridView(AutoScrollMixin, QListView):
         self.setContextMenuPolicy(Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(self._on_context_menu_requested)
 
+        self._thumb_request_timer = QTimer(self)
+        self._thumb_request_timer.setSingleShot(True)
+        self._thumb_request_timer.timeout.connect(self._request_visible_thumbs)
+
     def wheelEvent(self, event):
         """Ctrl+ホイールはズーム、それ以外は通常スクロール"""
         if event.modifiers() & Qt.ControlModifier:
@@ -77,7 +89,20 @@ class BookGridView(AutoScrollMixin, QListView):
             super().wheelEvent(event)
 
     def load_books(self, books: list[dict]):
+        index = self.indexAt(self.viewport().rect().topLeft())
+        key = index.data(ROLE_PATH) if index.isValid() else None
         self._model.set_books(books)
+        if key is not None:
+            col = config.GRID_LIST_MODEL_COLUMN
+            matches = self._model.match(
+                self._model.index(0, col),
+                ROLE_PATH,
+                key,
+                config.GRID_LOAD_BOOKS_PATH_MATCH_MAX_HITS,
+                Qt.MatchFlag.MatchExactly,
+            )
+            if matches:
+                self.scrollTo(matches[0], QAbstractItemView.PositionAtTop)
 
     def scroll_to_path(self, path: str):
         """指定pathのカードが見えるようにスクロール"""
@@ -96,6 +121,24 @@ class BookGridView(AutoScrollMixin, QListView):
 
     def preload_thumbs_for_books(self, books: list[dict]):
         self._model.preload_thumbs_for_books(books)
+
+    def scrollContentsBy(self, dx: int, dy: int) -> None:
+        super().scrollContentsBy(dx, dy)
+        self._thumb_request_timer.start(config.GRID_RENDER_THROTTLE_MS)
+
+    def _request_visible_thumbs(self) -> None:
+        self._model._thumb_serial += 1
+        rect = self.viewport().rect()
+        top_index = self.indexAt(rect.topLeft())
+        bottom_index = self.indexAt(rect.bottomRight())
+        if not top_index.isValid():
+            return
+        top_row = top_index.row()
+        bottom_row = bottom_index.row() if bottom_index.isValid() else self._model.rowCount() - 1
+        for row in range(top_row, bottom_row + 1):
+            index = self._model.index(row, 0)
+            if index.isValid():
+                self._model.data(index, ROLE_THUMB)
 
     def set_card_width(self, w: int):
         self._card_w = w

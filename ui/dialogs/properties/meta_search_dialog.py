@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 import config
 import db
 from book_updater import BookUpdateError, rename_book
+from cover_paths import to_cover_db_path
 from ui.dialogs.properties._utils import (
     BTN_CANCEL_STYLE,
     BTN_SAVE_STYLE,
@@ -480,7 +481,7 @@ class MetaSearchDialog(QDialog):
                             final_abs_for_ui = new_abs
 
                     if cover_path_applied:
-                        db.set_cover_custom(final_abs_for_ui, cover_path_applied)
+                        db.set_cover_custom(final_abs_for_ui, to_cover_db_path(cover_path_applied))
                 except BookUpdateError as e:
                     logging.warning("[meta_search_dialog] 検索結果適用時の書籍更新失敗 (BookUpdateError): %s", e)
                 except Exception as e:

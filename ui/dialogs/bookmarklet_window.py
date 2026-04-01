@@ -378,13 +378,13 @@ class BookmarkletWindow(QWidget):
         current = db.get_book_meta(found_path) or {}
 
         # books テーブルから title / circle を補完（get_all_books: name, circle, title, path, cover, is_dlst）
-        book_row = next((r for r in db.get_all_books() if r[3] == found_path_db), None)
+        book_row = next((r for r in db.get_all_books() if r["path"] == found_path_db), None)
         if book_row:
-            current["title"] = book_row[2] or book_row[0] or ""
-            current["circle"] = book_row[1] or ""
+            current["title"] = book_row["title"] or book_row["name"] or ""
+            current["circle"] = book_row["circle"] or ""
 
         # カバーパスを解決して cover キーに追加（MetaApplyDialog は current["cover"] を参照）
-        book_cover_raw = book_row[4] if book_row else ""
+        book_cover_raw = book_row["cover_path"] if book_row else ""
         current["cover"] = resolve_cover_path(book_cover_raw)
 
         # fetchedはキューのメタをMetaApplyDialog形式に変換
@@ -446,12 +446,12 @@ class BookmarkletWindow(QWidget):
                     )
                 elif cover_path:
                     for row in db.get_all_books():
-                        if row[3] == found_path_db:
+                        if row["path"] == found_path_db:
                             update_book_meta(
                                 found_path,
-                                row[0],
-                                row[1],
-                                row[2] or row[0],
+                                row["name"],
+                                row["circle"],
+                                row["title"] or row["name"],
                                 cover_path=cover_path,
                             )
                             break

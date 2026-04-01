@@ -4,11 +4,122 @@ from __future__ import annotations
 db.py - SQLiteデータベース管理・バックアップ処理
 
 担当:
-  - DBの初期化・マイグレーション
-  - books / bookmarks / recent_books / settings の読み書き
-  - 起動時の自動バックアップ（直近10件保持）
+  - DBの初期化（db_migrations.py に委譲）
+  - books / bookmarks / recent_books / settings / book_meta の読み書き
+  - 起動時の自動バックアップ（直近N件保持）
   - バックアップ一覧取得・復元
+
+接続管理ルール:
+  - 書き込み（INSERT/UPDATE/DELETE）: `with transaction() as conn:` を使う
+  - 読み取り（SELECT のみ）: `get_conn()` + `try/finally conn.close()` を使う
+  - FS操作を含む関数: FSで結果を確定してからDBに一括コミットする
+
+スキーマ管理:
+  - テーブル定義・マイグレーションは db_migrations.py を参照
+  - v1.0以降のスキーマ変更は db_migrations._MIGRATIONS にのみ追加する
 """
+# === 接続管理分類 ===
+# 凡例:
+#   WRITE : transaction() を使用。INSERT/UPDATE/DELETE を含む
+#   READ  : get_conn() + try/finally。SELECT のみ
+#   MIXED-DB : READ+WRITE混在。transaction() で全体を保護
+#   MIXED-FS : FS操作+DB書き込み混在。FSを先に確定してからDB一括コミット
+#
+# WRITE:
+#   update_book_path_by_uuid, upsert_book_by_uuid, rename_book_path,
+#   update_content_hash, update_cover_hash,
+#   add_bookmarklet_queue, update_bookmarklet_status,
+#   delete_bookmarklet_queue_by_status, delete_bookmarklet_queue_all,
+#   delete_bookmarklet_queue_by_id, update_bookmarklet_queue_status,
+#   set_setting, add_hidden_path, remove_hidden_path,
+#   clear_missing_since_for_paths, clear_missing_since_date,
+#   mark_missing_since_if_null, delete_books_by_paths,
+#   update_book_cover_path, delete_book, bulk_delete_books,
+#   bulk_upsert_and_delete_books, set_bookmark, remove_recent_book,
+#   set_excluded, set_cover_custom, set_shortcuts,
+#   apply_action_result, backup_on_startup, create_backup, restore_backup,
+#   backup_daily, backup_pre_migration, set_last_backup_time,
+#   set_last_launch_version
+#
+# READ:
+#   get_conn, get_book_uuid, get_book_by_uuid, fetch_all_rows_for_index,
+#   get_bookmarklet_queue, get_bookmarklet_queue_by_id,
+#   find_book_by_bookmarklet, list_backups, get_last_backup_time,
+#   get_last_launch_version, get_setting, get_hidden_paths,
+#   get_all_books, get_all_books_order_by_added_desc,
+#   get_missing_books, get_missing_books_count,
+#   get_known_paths, get_paths_missing_content_hash,
+#   get_store_upsert_seed, find_book_by_content_hash,
+#   get_book_by_cover_hash, get_books_updated_at_map,
+#   is_path_registered, get_book_by_path,
+#   get_all_bookmarks, get_recent_books, get_book_name_by_path,
+#   get_book_meta, get_all_book_metas, has_metadata,
+#   get_paths_with_metadata, get_paths_excluded, is_excluded,
+#   get_meta_source_counts, get_books_by_meta_source,
+#   get_books_by_metadata_status, get_cover_custom,
+#   get_shortcuts, get_all_tags, get_all_tags_with_count,
+#   get_all_circles_with_count, get_all_characters,
+#   get_all_characters_with_count, get_all_authors,
+#   get_all_authors_with_count, get_paths_with_author,
+#   get_paths_with_tag, get_paths_with_character,
+#   get_all_series, get_all_circles, get_all_series_with_count,
+#   get_paths_with_series, search_books,
+#   get_added_dates_with_count, get_books_by_added_date
+#
+# MIXED-DB:
+#   upsert_book, bulk_upsert_books, rename_book,
+#   set_book_meta, update_book_display, add_recent_book
+#
+# MIXED-FS:
+#   repair_folder_covers, cleanup_invalid_cover_custom, cleanup_invalid_paths
+#
+# ユーティリティ（DB接続なし）:
+#   _new_uuid, _compute_store_content_hash, _get_library_root,
+#   _to_db_path, to_db_path_from_any, _from_db_path, _get_book_uuid,
+#   _is_uuid_schema_ready, _consume_debug_force_db_recreate_once,
+#   _safe_backup, _backup_ts_to_display, _cleanup_backups,
+#   resolve_book_path, format_book_name, parse_display_name,
+#   _effective_meta_source, _normalize_cover_for_save,
+#   resolve_cover_stored_value, _resolve_cover_path_for_cleanup,
+#   cleanup_unused_cover_cache, clear_all_caches,
+#   repair_wrong_paths, bulk_rename_to_current_format,
+#   update_book_cover_path
+# =====================================
+# === パス変換使用箇所 (調査) ===
+# _to_db_path():
+#   - to_db_path_from_any: ライブラリ配下の入力パスをDB保存用の相対パスへ正規化
+#   - get_book_meta: 絶対パス入力時の検索キー正規化
+#   - set_book_meta: 絶対パス入力時の検索キー正規化
+#
+# _from_db_path():
+#   - rename_book: cover_custom の旧パス配下判定と新パスへの差し替え計算
+#
+# to_db_path_from_any():
+#   - is_path_registered: 重複登録チェック前のパス正規化
+#   - get_book_by_path: 絶対/相対入力を統一して既存行を検索
+#   - upsert_book: 登録時の path / cover_path 正規化
+#   - bulk_upsert_books: バッチ登録時の path 正規化
+#   - rename_book: old/new パスをDB保存形式へ統一
+#
+# to_rel() (paths.py):
+#   - repair_wrong_paths: 実ファイルパスをライブラリ相対へ変換して rename_book に渡す
+#   - set_bookmark: UI入力パスを保存キーへ統一
+#   - update_book_display: 表示項目更新対象の path 正規化
+#   - set_book_meta: メタ更新対象の path 正規化
+#   - set_cover_custom: カスタムカバー更新対象の path 正規化
+#
+# 直接 normpath/abspath:
+#   - _to_db_path / to_db_path_from_any / _from_db_path: DB保存用パスの正規化
+#   - get_paths_missing_content_hash: path 比較用キー正規化
+#   - rename_book: cover_custom 差し替え判定時の正規化
+#   - repair_wrong_paths: 候補パスとの同一性比較
+#   - bulk_rename_to_current_format: ライブラリルート判定とカバーパス差し替え判定
+#   - set_bookmark / update_book_display / set_book_meta / set_cover_custom: library_folder 正規化
+#   - _normalize_cover_for_save: cover_cache 配下判定用の絶対パス正規化
+#   - resolve_cover_stored_value: 保存値（ID/相対/絶対）を参照用絶対パスへ解決
+#   - cleanup_unused_cover_cache: 未使用 cover_cache ファイル判定時の正規化
+# =====================================
+
 import re
 import sqlite3
 import os
@@ -22,7 +133,9 @@ import hashlib
 from contextlib import contextmanager
 from datetime import datetime
 import config
+from db_migrations import run_migrations
 from paths import DB_FILE, BACKUP_DIR, to_rel
+from types_ns import BookRow
 
 # バックアップファイル名（config のパターンと同期すること）
 _BACKUP_FILENAME_STRICT_RE = re.compile(config.BACKUP_FILENAME_PATTERN)
@@ -172,18 +285,13 @@ def update_book_path_by_uuid(book_uuid: str, new_path: str) -> bool:
     """uuid指定でbooks.pathを更新する。更新時はTrueを返す。"""
     if not book_uuid or not new_path:
         return False
-    conn = get_conn()
-    try:
+    with transaction() as conn:
         cur = conn.execute(
             "UPDATE books SET path=?, updated_at=datetime('now','localtime') WHERE uuid=?",
             (new_path, book_uuid),
         )
-        if cur.rowcount:
-            conn.commit()
-            return True
-        return False
-    finally:
-        conn.close()
+        updated = cur.rowcount > 0
+    return updated
 
 
 def upsert_book_by_uuid(
@@ -202,8 +310,7 @@ def upsert_book_by_uuid(
     if not book_uuid or not path:
         return
     store_cover = _normalize_cover_for_save(cover_path) if cover_path else ""
-    conn = get_conn()
-    try:
+    with transaction() as conn:
         conn.execute(
             """INSERT INTO books(uuid, name, circle, title, path, cover_path, mtime, is_dlst, content_hash, updated_at)
                VALUES(?,?,?,?,?,?,?,?,?,datetime('now','localtime'))
@@ -216,11 +323,8 @@ def upsert_book_by_uuid(
                  updated_at=excluded.updated_at""",
             (book_uuid, name, circle, title, path, store_cover, mtime, is_dlst, content_hash),
         )
-        conn.commit()
-        if pages is not None:
-            set_book_meta(path, pages=pages)
-    finally:
-        conn.close()
+    if pages is not None:
+        set_book_meta(path, pages=pages)
     cache.invalidate()
 
 
@@ -299,8 +403,7 @@ def rename_book_path(
         return
     if not new_path or not str(new_path).strip():
         return
-    conn = get_conn()
-    try:
+    with transaction() as conn:
         conn.execute(
             """
             UPDATE books
@@ -314,9 +417,6 @@ def rename_book_path(
                 str(uuid).strip(),
             ),
         )
-        conn.commit()
-    finally:
-        conn.close()
     cache.invalidate()
 
 
@@ -360,15 +460,11 @@ def update_content_hash(uuid: str, content_hash: str) -> None:
         return
     if content_hash is None:
         return
-    conn = get_conn()
-    try:
+    with transaction() as conn:
         conn.execute(
             "UPDATE books SET content_hash=? WHERE uuid=?",
             (str(content_hash).strip(), str(uuid).strip()),
         )
-        conn.commit()
-    finally:
-        conn.close()
 
 
 def update_cover_hash(uuid: str, cover_hash: str) -> None:
@@ -377,18 +473,15 @@ def update_cover_hash(uuid: str, cover_hash: str) -> None:
         return
     if cover_hash is None:
         return
-    conn = get_conn()
-    try:
+    with transaction() as conn:
         conn.execute(
             "UPDATE books SET cover_hash=? WHERE uuid=?",
             (str(cover_hash).strip(), str(uuid).strip()),
         )
-        conn.commit()
-    finally:
-        conn.close()
 
 
 def _is_uuid_schema_ready(c: sqlite3.Cursor) -> bool:
+    # TODO: force_recreate廃止時に削除
     """books/book_metaがuuid基準スキーマならTrue。"""
     book_cols = [r[1] for r in c.execute("PRAGMA table_info(books)").fetchall()]
     meta_cols = [r[1] for r in c.execute("PRAGMA table_info(book_meta)").fetchall()]
@@ -407,7 +500,7 @@ def _consume_debug_force_db_recreate_once() -> bool:
     return True
 
 
-def init_db():
+def init_db() -> None:
     """テーブル作成・マイグレーション。起動時に1回呼ぶ。"""
     has_settings = False
     conn_pre = get_conn()
@@ -440,185 +533,25 @@ def init_db():
         force_recreate = _consume_debug_force_db_recreate_once()
 
         # 旧path主キー構成なら、v3スキーマへ再作成（既存ユーザーゼロ前提）
-        c.execute("CREATE TABLE IF NOT EXISTS books(path TEXT PRIMARY KEY)")
-        c.execute("CREATE TABLE IF NOT EXISTS book_meta(path TEXT PRIMARY KEY)")
-        if force_recreate or not _is_uuid_schema_ready(c):
+        has_books = c.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='books'"
+        ).fetchone() is not None
+        has_book_meta = c.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='book_meta'"
+        ).fetchone() is not None
+        needs_recreate = force_recreate or ((has_books or has_book_meta) and not _is_uuid_schema_ready(c))
+        if needs_recreate:
             c.execute("DROP TABLE IF EXISTS book_characters")
             c.execute("DROP TABLE IF EXISTS book_tags")
             c.execute("DROP TABLE IF EXISTS book_meta")
             c.execute("DROP TABLE IF EXISTS books")
 
-        # ── books テーブル ──────────────────────────────
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS books (
-                uuid        TEXT PRIMARY KEY,
-                path        TEXT NOT NULL UNIQUE,
-                name        TEXT NOT NULL,
-                circle      TEXT NOT NULL,
-                title       TEXT NOT NULL,
-                cover_path  TEXT,
-                mtime       REAL,
-                content_hash TEXT,
-                missing_since_date TEXT DEFAULT NULL,
-                updated_at  TEXT DEFAULT (datetime('now','localtime'))
-            )
-        """)
-
-        # ── bookmarks テーブル ─────────────────────────
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS bookmarks (
-                path    TEXT PRIMARY KEY,
-                rating  INTEGER NOT NULL DEFAULT 0,
-                updated_at TEXT DEFAULT (datetime('now','localtime'))
-            )
-        """)
-
-        # ── recent_books テーブル ──────────────────────
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS recent_books (
-                path       TEXT PRIMARY KEY,
-                name       TEXT NOT NULL,
-                opened_at  TEXT DEFAULT (datetime('now','localtime'))
-            )
-        """)
-
-        # ── settings テーブル ──────────────────────────
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS settings (
-                key   TEXT PRIMARY KEY,
-                value TEXT
-            )
-        """)
-        # ── hidden_paths テーブル（ライブラリ整合性チェックの非表示管理） ──
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS hidden_paths (
-                path TEXT PRIMARY KEY
-            )
-        """)
-
-        # ── book_meta テーブル（作者・タイプ・シリーズ・作品ID・除外フラグなど）────
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS book_meta (
-                uuid         TEXT PRIMARY KEY,
-                author       TEXT DEFAULT '',
-                type         TEXT DEFAULT '',
-                series       TEXT DEFAULT '',
-                dlsite_id    TEXT DEFAULT '',
-                excluded     INTEGER DEFAULT 0,
-                title_kana   TEXT DEFAULT '',
-                circle_kana  TEXT DEFAULT '',
-                pages        INTEGER,
-                release_date TEXT DEFAULT '',
-                price        INTEGER,
-                memo         TEXT DEFAULT '',
-                store_url    TEXT DEFAULT '',
-                meta_source  TEXT DEFAULT '',
-                updated_at   TEXT DEFAULT (datetime('now','localtime')),
-                FOREIGN KEY (uuid) REFERENCES books(uuid) ON DELETE CASCADE
-            )
-        """)
-        # 既存DBに不足カラムがあれば追加（マイグレーション）
-        meta_cols = [r[1] for r in c.execute("PRAGMA table_info(book_meta)").fetchall()]
-        if "dlsite_id" not in meta_cols:
-            c.execute("ALTER TABLE book_meta ADD COLUMN dlsite_id TEXT DEFAULT ''")
-        if "excluded" not in meta_cols:
-            c.execute("ALTER TABLE book_meta ADD COLUMN excluded INTEGER DEFAULT 0")
-        if "title_kana" not in meta_cols:
-            c.execute("ALTER TABLE book_meta ADD COLUMN title_kana TEXT DEFAULT ''")
-        if "circle_kana" not in meta_cols:
-            c.execute("ALTER TABLE book_meta ADD COLUMN circle_kana TEXT DEFAULT ''")
-        if "pages" not in meta_cols:
-            c.execute("ALTER TABLE book_meta ADD COLUMN pages INTEGER")
-        if "release_date" not in meta_cols:
-            c.execute("ALTER TABLE book_meta ADD COLUMN release_date TEXT DEFAULT ''")
-        if "price" not in meta_cols:
-            c.execute("ALTER TABLE book_meta ADD COLUMN price INTEGER")
-        if "memo" not in meta_cols:
-            c.execute("ALTER TABLE book_meta ADD COLUMN memo TEXT DEFAULT ''")
-        if "meta_source" not in meta_cols:
-            c.execute("ALTER TABLE book_meta ADD COLUMN meta_source TEXT DEFAULT ''")
-        if "store_url" not in meta_cols:
-            c.execute("ALTER TABLE book_meta ADD COLUMN store_url TEXT DEFAULT ''")
-
-        # ── book_characters テーブル ───────────────────
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS book_characters (
-                uuid      TEXT NOT NULL,
-                character TEXT NOT NULL,
-                PRIMARY KEY (uuid, character),
-                FOREIGN KEY (uuid) REFERENCES books(uuid) ON DELETE CASCADE
-            )
-        """)
-
-        # ── book_tags テーブル ─────────────────────────
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS book_tags (
-                uuid TEXT NOT NULL,
-                tag  TEXT NOT NULL,
-                PRIMARY KEY (uuid, tag),
-                FOREIGN KEY (uuid) REFERENCES books(uuid) ON DELETE CASCADE
-            )
-        """)
-
-        # ── bookmarklet_queue テーブル ─────────────────────
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS bookmarklet_queue (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                url          TEXT NOT NULL,
-                site         TEXT NOT NULL DEFAULT '',
-                title        TEXT NOT NULL DEFAULT '',
-                circle       TEXT NOT NULL DEFAULT '',
-                author       TEXT NOT NULL DEFAULT '',
-                dlsite_id    TEXT NOT NULL DEFAULT '',
-                tags         TEXT NOT NULL DEFAULT '',
-                price        INTEGER,
-                release_date TEXT NOT NULL DEFAULT '',
-                cover_url    TEXT NOT NULL DEFAULT '',
-                store_url    TEXT NOT NULL DEFAULT '',
-                status       TEXT NOT NULL DEFAULT 'pending',
-                fetched_at   TEXT DEFAULT (datetime('now','localtime'))
-            )
-        """)
-
-        # bookmarklet_queue マイグレーション
-        bq_cols = [r[1] for r in c.execute("PRAGMA table_info(bookmarklet_queue)").fetchall()]
-        if "cover_url" not in bq_cols:
-            c.execute("ALTER TABLE bookmarklet_queue ADD COLUMN cover_url TEXT NOT NULL DEFAULT ''")
-        if "store_url" not in bq_cols:
-            c.execute("ALTER TABLE bookmarklet_queue ADD COLUMN store_url TEXT NOT NULL DEFAULT ''")
-
-        # ── booksテーブルにcover_customカラムを追加（なければ）──
-        cols = [r[1] for r in c.execute("PRAGMA table_info(books)").fetchall()]
-        if 'cover_custom' not in cols:
-            c.execute("ALTER TABLE books ADD COLUMN cover_custom TEXT")
-        
-        # ── booksテーブルにis_dlstカラムを追加（なければ）──
-        if 'is_dlst' not in cols:
-            c.execute("ALTER TABLE books ADD COLUMN is_dlst INTEGER DEFAULT 0")
-        if "content_hash" not in cols:
-            c.execute("ALTER TABLE books ADD COLUMN content_hash TEXT")
-        if "cover_hash" not in cols:
-            c.execute("ALTER TABLE books ADD COLUMN cover_hash TEXT DEFAULT NULL")
-        if "missing_since_date" not in cols:
-            c.execute("ALTER TABLE books ADD COLUMN missing_since_date TEXT DEFAULT NULL")
-
-        # ── インデックス ───────────────────────────────
-        c.execute("CREATE INDEX IF NOT EXISTS idx_books_circle ON books(circle)")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_books_path ON books(path)")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_books_content_hash ON books(content_hash)")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_books_cover_hash ON books(cover_hash)")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_characters_uuid ON book_characters(uuid)")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_tags_uuid ON book_tags(uuid)")
-
-        conn.commit()
+        run_migrations(conn)
 
         # 強制終了で残った「保留ドロップ」設定を起動時に消す（起動時にダイアログが出るバグ防止）
         for key in ("pending_drop_paths", "deferred_drop_paths", "drop_paths"):
             c.execute("DELETE FROM settings WHERE key=?", (key,))
         conn.commit()
-
-        # 追加マイグレーション: release_date のフォーマット統一
-        migrate_release_date_format()
     finally:
         conn.close()
 
@@ -628,35 +561,6 @@ def init_db():
         set_last_launch_version(VERSION)
     except Exception as e:
         _logger.warning(config.LOG_DB_SET_LAUNCH_VERSION_FAILURE_TEMPLATE, e)
-
-
-
-
-def migrate_release_date_format():
-    """release_dateを 'yyyy年m月d日' 形式に統一する"""
-    import re as _re
-
-    conn = get_conn()
-    try:
-        rows = conn.execute(
-            """SELECT m.uuid, m.release_date
-               FROM book_meta m
-               WHERE m.release_date != ''"""
-        ).fetchall()
-        for row in rows:
-            rd = row["release_date"] or ""
-            m = _re.match(r"(\\d{4})[-/\\.](\\d{1,2})[-/\\.](\\d{1,2})", rd)
-            if m:
-                normalized = f"{m.group(1)}年{int(m.group(2))}月{int(m.group(3))}日"
-                conn.execute(
-                    "UPDATE book_meta SET release_date = ? WHERE uuid = ?",
-                    (normalized, row["uuid"]),
-                )
-        conn.commit()
-    finally:
-        conn.close()
-
-
 # ══════════════════════════════════════════════════════
 #  bookmarklet_queue
 # ══════════════════════════════════════════════════════
@@ -676,18 +580,14 @@ def add_bookmarklet_queue(
     store_url: str = "",
 ) -> int:
     """キューに1件追加してidを返す"""
-    conn = get_conn()
-    try:
+    with transaction() as conn:
         c = conn.execute(
             """INSERT INTO bookmarklet_queue
                (url, site, title, circle, author, dlsite_id, tags, price, release_date, cover_url, status, store_url)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (url, site, title, circle, author, dlsite_id, tags, price, release_date, cover_url, status, store_url),
         )
-        conn.commit()
         return c.lastrowid
-    finally:
-        conn.close()
 
 
 def get_bookmarklet_queue() -> list[dict]:
@@ -704,47 +604,31 @@ def get_bookmarklet_queue() -> list[dict]:
 
 def update_bookmarklet_status(id: int, status: str) -> None:
     """ステータスを更新する"""
-    conn = get_conn()
-    try:
+    with transaction() as conn:
         conn.execute(
             "UPDATE bookmarklet_queue SET status = ? WHERE id = ?",
             (status, id),
         )
-        conn.commit()
-    finally:
-        conn.close()
 
 
 def delete_bookmarklet_queue_by_status(status: str) -> None:
     """指定ステータスの件を一括削除する"""
-    conn = get_conn()
-    try:
+    with transaction() as conn:
         conn.execute(
             "DELETE FROM bookmarklet_queue WHERE status = ?", (status,)
         )
-        conn.commit()
-    finally:
-        conn.close()
 
 
 def delete_bookmarklet_queue_all() -> None:
     """キューを全削除する"""
-    conn = get_conn()
-    try:
+    with transaction() as conn:
         conn.execute("DELETE FROM bookmarklet_queue")
-        conn.commit()
-    finally:
-        conn.close()
 
 
 def delete_bookmarklet_queue_by_id(id: int) -> None:
     """個別削除する"""
-    conn = get_conn()
-    try:
+    with transaction() as conn:
         conn.execute("DELETE FROM bookmarklet_queue WHERE id = ?", (id,))
-        conn.commit()
-    finally:
-        conn.close()
 
 
 def get_bookmarklet_queue_by_id(row_id: int) -> dict | None:
@@ -780,15 +664,11 @@ def get_bookmarklet_queue_by_id(row_id: int) -> dict | None:
 
 
 def update_bookmarklet_queue_status(row_id: int, status: str) -> None:
-    conn = get_conn()
-    try:
+    with transaction() as conn:
         conn.execute(
             "UPDATE bookmarklet_queue SET status = ? WHERE id = ?",
             (status, row_id),
         )
-        conn.commit()
-    finally:
-        conn.close()
 
 
 def find_book_by_bookmarklet(dlsite_id: str, title: str, url: str = "") -> dict | None:
@@ -1051,43 +931,31 @@ def get_setting(key, default=None):
 
 
 def set_setting(key, value):
-    conn = get_conn()
-    try:
+    with transaction() as conn:
         conn.execute(
             "INSERT INTO settings(key,value) VALUES(?,?) "
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             (key, str(value) if value is not None else None)
         )
-        conn.commit()
-    finally:
-        conn.close()
 
 
 def add_hidden_path(path: str):
     """非表示パスを追加する。"""
     if not path or not str(path).strip():
         return
-    conn = get_conn()
-    try:
+    with transaction() as conn:
         conn.execute(
             "INSERT OR IGNORE INTO hidden_paths(path) VALUES(?)",
             (path,),
         )
-        conn.commit()
-    finally:
-        conn.close()
 
 
 def remove_hidden_path(path: str):
     """非表示パスを削除する。"""
     if not path or not str(path).strip():
         return
-    conn = get_conn()
-    try:
+    with transaction() as conn:
         conn.execute("DELETE FROM hidden_paths WHERE path=?", (path,))
-        conn.commit()
-    finally:
-        conn.close()
 
 
 def get_hidden_paths() -> list[str]:
@@ -1117,15 +985,15 @@ def get_all_books():
                FROM books ORDER BY name"""
         ).fetchall()
         return [
-            (
-                r["name"],
-                r["circle"],
-                r["title"],
-                r["path"],
-                r["cover_path"],
-                r["is_dlst"],
-                r["uuid"],
-                r["missing_since_date"],
+            BookRow(
+                name=r["name"],
+                circle=r["circle"],
+                title=r["title"],
+                path=r["path"],
+                cover_path=r["cover_path"],
+                is_dlst=r["is_dlst"],
+                uuid=r["uuid"],
+                missing_since_date=r["missing_since_date"],
             )
             for r in rows
         ]
@@ -1138,19 +1006,15 @@ def clear_missing_since_for_paths(paths: list[str]) -> None:
     targets = [str(p).strip() for p in (paths or []) if str(p).strip()]
     if not targets:
         return
-    conn = get_conn()
-    try:
+    with transaction() as conn:
         try:
             conn.executemany(
                 "UPDATE books SET missing_since_date=NULL WHERE path=?",
                 [(p,) for p in targets],
             )
-            conn.commit()
         except sqlite3.OperationalError:
             # 旧スキーマ環境（missing_since_date未追加）では何もしない。
             pass
-    finally:
-        conn.close()
 
 
 def clear_missing_since_date(uuid: str) -> None:
@@ -1158,18 +1022,14 @@ def clear_missing_since_date(uuid: str) -> None:
     u = (uuid or "").strip()
     if not u:
         return
-    conn = get_conn()
-    try:
+    with transaction() as conn:
         try:
             conn.execute(
                 "UPDATE books SET missing_since_date=NULL WHERE uuid=?",
                 (u,),
             )
-            conn.commit()
         except sqlite3.OperationalError:
             pass
-    finally:
-        conn.close()
     cache.invalidate()
 
 
@@ -1179,8 +1039,7 @@ def mark_missing_since_if_null(path: str, iso_utc: str) -> None:
     ts = (iso_utc or "").strip()
     if not p or not ts:
         return
-    conn = get_conn()
-    try:
+    with transaction() as conn:
         try:
             conn.execute(
                 """
@@ -1190,12 +1049,9 @@ def mark_missing_since_if_null(path: str, iso_utc: str) -> None:
                 """,
                 (ts, p),
             )
-            conn.commit()
         except sqlite3.OperationalError:
             # 旧スキーマ環境（missing_since_date未追加）では何もしない。
             pass
-    finally:
-        conn.close()
 
 
 def delete_books_by_paths(paths: list[str]) -> None:
@@ -1203,13 +1059,9 @@ def delete_books_by_paths(paths: list[str]) -> None:
     unique_paths = [str(p).strip() for p in (paths or []) if str(p).strip()]
     if not unique_paths:
         return
-    conn = get_conn()
-    try:
+    with transaction() as conn:
         conn.executemany("DELETE FROM books WHERE path=?", [(p,) for p in unique_paths])
         conn.executemany("DELETE FROM bookmarks WHERE path=?", [(p,) for p in unique_paths])
-        conn.commit()
-    finally:
-        conn.close()
     cache.invalidate()
 
 
@@ -1264,15 +1116,15 @@ def get_all_books_order_by_added_desc():
                FROM books ORDER BY updated_at DESC, name"""
         ).fetchall()
         return [
-            (
-                r["name"],
-                r["circle"],
-                r["title"],
-                r["path"],
-                r["cover_path"],
-                r["is_dlst"],
-                r["uuid"],
-                r["missing_since_date"],
+            BookRow(
+                name=r["name"],
+                circle=r["circle"],
+                title=r["title"],
+                path=r["path"],
+                cover_path=r["cover_path"],
+                is_dlst=r["is_dlst"],
+                uuid=r["uuid"],
+                missing_since_date=r["missing_since_date"],
             )
             for r in rows
         ]
@@ -1285,43 +1137,48 @@ def repair_folder_covers():
     フォルダ型書籍で cover_path が未設定または存在しない場合、
     フォルダ内の先頭画像をカバーとして設定する。
     """
-    IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp")
+    from scanners.book_scanner import IMAGE_EXTS
+
     conn = get_conn()
     try:
         rows = conn.execute("SELECT path, cover_path FROM books").fetchall()
-        updated = 0
-        for r in rows:
-            path = r["path"] or ""
-            raw_cover = r["cover_path"] or ""
-            cover_path = resolve_cover_stored_value(raw_cover) if raw_cover else ""
-            if not path or not os.path.isdir(path):
-                continue
-            if cover_path and os.path.isfile(cover_path):
-                continue
-            try:
-                images = sorted(
-                    name
-                    for name in os.listdir(path)
-                    if os.path.splitext(name)[1].lower() in IMAGE_EXTS
-                )
-            except Exception:
-                continue
-            if not images:
-                continue
-            new_cover = os.path.join(path, images[0])
-            if not os.path.isfile(new_cover):
-                continue
-            store = _normalize_cover_for_save(new_cover)
-            conn.execute(
-                "UPDATE books SET cover_path=?, updated_at=datetime('now','localtime') WHERE path=?",
-                (store, path),
-            )
-            updated += 1
-        if updated:
-            conn.commit()
-        return updated
     finally:
         conn.close()
+
+    updates: list[tuple[str, str]] = []
+    for r in rows:
+        path = r["path"] or ""
+        raw_cover = r["cover_path"] or ""
+        cover_path = resolve_cover_stored_value(raw_cover) if raw_cover else ""
+        if not path or not os.path.isdir(path):
+            continue
+        if cover_path and os.path.isfile(cover_path):
+            continue
+        try:
+            images = sorted(
+                name
+                for name in os.listdir(path)
+                if os.path.splitext(name)[1].lower() in IMAGE_EXTS
+            )
+        except Exception:
+            continue
+        if not images:
+            continue
+        new_cover = os.path.join(path, images[0])
+        if not os.path.isfile(new_cover):
+            continue
+        store = _normalize_cover_for_save(new_cover)
+        updates.append((store, path))
+
+    if not updates:
+        return 0
+
+    with transaction() as conn:
+        conn.executemany(
+            "UPDATE books SET cover_path=?, updated_at=datetime('now','localtime') WHERE path=?",
+            updates,
+        )
+    return len(updates)
 
 
 def update_book_cover_path(path: str, cover_path: str) -> bool:
@@ -1329,18 +1186,13 @@ def update_book_cover_path(path: str, cover_path: str) -> bool:
     if not path or not str(path).strip():
         return False
     store = _normalize_cover_for_save(cover_path) if cover_path else ""
-    conn = get_conn()
-    try:
+    with transaction() as conn:
         cur = conn.execute(
             "UPDATE books SET cover_path=?, updated_at=datetime('now','localtime') WHERE path=?",
             (store, path),
         )
-        if cur.rowcount:
-            conn.commit()
-            return True
-        return False
-    finally:
-        conn.close()
+        updated = cur.rowcount > 0
+    return updated
 
 
 def get_known_paths():
@@ -1521,8 +1373,12 @@ def upsert_book(
     if cover_hash is not None:
         ch = str(cover_hash).strip()
         cover_hash_store = ch if ch else None
-    conn = get_conn()
-    try:
+    if pages is not None:
+        # NOTE: set_book_meta は別トランザクション。pages書き込みは upsert と非アトミック
+        pages_to_set = pages
+    else:
+        pages_to_set = None
+    with transaction() as conn:
         row = conn.execute("SELECT uuid FROM books WHERE path=?", (path,)).fetchone()
         if row:
             book_uuid = row["uuid"]
@@ -1541,11 +1397,8 @@ def upsert_book(
                  updated_at=excluded.updated_at""",
             (book_uuid, name, circle, title, path, store_cover, mtime, is_dlst, cover_hash_store)
         )
-        conn.commit()
-        if pages is not None:
-            set_book_meta(path, pages=pages)
-    finally:
-        conn.close()
+    if pages_to_set is not None:
+        set_book_meta(path, pages=pages_to_set)
     cache.invalidate()
 
 
@@ -1560,8 +1413,7 @@ def bulk_upsert_books(records):
     if not records:
         return
     normalized: list[tuple] = []
-    conn = get_conn()
-    try:
+    with transaction() as conn:
         for r in records:
             try:
                 db_path = to_db_path_from_any(r[3])
@@ -1587,12 +1439,8 @@ def bulk_upsert_books(records):
                     ch,
                 )
             )
-    finally:
-        conn.close()
-    if not normalized:
-        return
-    conn = get_conn()
-    try:
+        if not normalized:
+            return
         conn.executemany(
             """INSERT INTO books(uuid, name, circle, title, path, cover_path, mtime, is_dlst, cover_hash, updated_at)
                VALUES(?,?,?,?,?,?,?,?,?,datetime('now','localtime'))
@@ -1604,21 +1452,14 @@ def bulk_upsert_books(records):
                  updated_at=excluded.updated_at""",
             normalized,
         )
-        conn.commit()
-    finally:
-        conn.close()
     cache.invalidate()
 
 
 def delete_book(path):
-    conn = get_conn()
-    try:
+    with transaction() as conn:
         conn.execute("DELETE FROM books WHERE path=?", (path,))
         conn.execute("DELETE FROM bookmarks WHERE path=?", (path,))
         conn.execute("DELETE FROM recent_books WHERE path=?", (path,))
-        conn.commit()
-    finally:
-        conn.close()
     cache.invalidate()
 
 
@@ -1630,13 +1471,9 @@ def bulk_delete_books(paths):
         return
     # 重複を排除
     unique_paths = list(set(paths))
-    conn = get_conn()
-    try:
+    with transaction() as conn:
         conn.executemany("DELETE FROM books WHERE path=?", [(p,) for p in unique_paths])
         conn.executemany("DELETE FROM bookmarks WHERE path=?", [(p,) for p in unique_paths])
-        conn.commit()
-    finally:
-        conn.close()
     cache.invalidate()
 
 
@@ -1651,8 +1488,7 @@ def bulk_upsert_and_delete_books(
     """
     if not upsert_records and not delete_paths:
         return
-    conn = get_conn()
-    try:
+    with transaction() as conn:
         for args in upsert_records:
             conn.execute(
                 """INSERT INTO books(uuid, name, circle, title, path, cover_path, mtime, is_dlst, cover_hash, updated_at)
@@ -1674,12 +1510,6 @@ def bulk_upsert_and_delete_books(
             conn.executemany(
                 "DELETE FROM bookmarks WHERE path=?", [(p,) for p in unique_paths]
             )
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
     cache.invalidate()
 
 
@@ -1692,60 +1522,60 @@ def rename_book(old_path, new_path, new_name, new_circle, new_title, new_cover_p
     except ValueError as exc:
         _logger.warning("rename_book: パス相対化に失敗したため中止: %s", exc)
         return
-    conn = get_conn()
     try:
-        # 新しいパスに既存のエントリがある場合は先に削除（UNIQUE制約エラー回避）
-        conn.execute("DELETE FROM books WHERE path=? AND path!=?", (new_rel, old_rel))
-        conn.execute("DELETE FROM bookmarks WHERE path=? AND path!=?", (new_rel, old_rel))
-        conn.execute("DELETE FROM recent_books WHERE path=? AND path!=?", (new_rel, old_rel))
+        with transaction() as conn:
+            # 新しいパスに既存のエントリがある場合は先に削除（UNIQUE制約エラー回避）
+            conn.execute("DELETE FROM books WHERE path=? AND path!=?", (new_rel, old_rel))
+            conn.execute("DELETE FROM bookmarks WHERE path=? AND path!=?", (new_rel, old_rel))
+            conn.execute("DELETE FROM recent_books WHERE path=? AND path!=?", (new_rel, old_rel))
 
-        # cover_custom が旧パス配下なら新パスに差し替え（参照切れ防止）。ID のみの場合はそのまま。
-        row = conn.execute("SELECT cover_custom FROM books WHERE path=?", (old_rel,)).fetchone()
-        new_cover_custom = None
-        if row and row["cover_custom"]:
-            cc = row["cover_custom"].strip()
-            if os.sep in cc or (len(cc) >= 2 and cc[1] == ":"):
-                try:
-                    old_fs = _from_db_path(old_rel)
-                    new_fs = _from_db_path(new_rel)
-                except ValueError:
-                    old_fs = ""
-                    new_fs = ""
-                if old_fs and new_fs:
-                    ob = os.path.normpath(old_fs if os.path.isdir(old_fs) else os.path.dirname(old_fs))
-                    nb = os.path.normpath(new_fs if os.path.isdir(new_fs) else os.path.dirname(new_fs))
-                    cc_norm = os.path.normpath(cc)
-                    if cc_norm == ob or cc_norm.startswith(ob + os.sep):
-                        new_cover_custom = nb + cc_norm[len(ob) :]
-            if new_cover_custom is None:
+            # cover_custom が旧パス配下なら新パスに差し替え（参照切れ防止）。ID のみの場合はそのまま。
+            row = conn.execute("SELECT cover_custom FROM books WHERE path=?", (old_rel,)).fetchone()
+            new_cover_custom = None
+            if row and row["cover_custom"]:
+                cc = row["cover_custom"].strip()
+                if os.sep in cc or (len(cc) >= 2 and cc[1] == ":"):
+                    try:
+                        old_fs = _from_db_path(old_rel)
+                        new_fs = _from_db_path(new_rel)
+                    except ValueError:
+                        old_fs = ""
+                        new_fs = ""
+                    if old_fs and new_fs:
+                        ob = os.path.normpath(old_fs if os.path.isdir(old_fs) else os.path.dirname(old_fs))
+                        nb = os.path.normpath(new_fs if os.path.isdir(new_fs) else os.path.dirname(new_fs))
+                        cc_norm = os.path.normpath(cc)
+                        if cc_norm == ob or cc_norm.startswith(ob + os.sep):
+                            new_cover_custom = nb + cc_norm[len(ob) :]
+                if new_cover_custom is None:
+                    new_cover_custom = row["cover_custom"]
+            if new_cover_custom is None and row:
                 new_cover_custom = row["cover_custom"]
-        if new_cover_custom is None and row:
-            new_cover_custom = row["cover_custom"]
 
-        if new_cover_path:
-            cover_path_store = _normalize_cover_for_save(new_cover_path)
-            conn.execute(
-                """UPDATE books SET path=?, name=?, circle=?, title=?, cover_path=?,
-                   updated_at=datetime('now','localtime') WHERE path=?""",
-                (new_rel, new_name, new_circle, new_title, cover_path_store, old_rel),
-            )
-        else:
-            conn.execute(
-                """UPDATE books SET path=?, name=?, circle=?, title=?,
-                   updated_at=datetime('now','localtime') WHERE path=?""",
-                (new_rel, new_name, new_circle, new_title, old_rel),
-            )
-        if new_cover_custom:
-            conn.execute(
-                "UPDATE books SET cover_custom=? WHERE path=?",
-                (new_cover_custom, new_rel),
-            )
-        # pathを持つ関連テーブルのみ更新
-        conn.execute("UPDATE bookmarks SET path=? WHERE path=?", (new_rel, old_rel))
-        conn.execute("UPDATE recent_books SET path=? WHERE path=?", (new_rel, old_rel))
-        conn.commit()
-    finally:
-        conn.close()
+            if new_cover_path:
+                cover_path_store = _normalize_cover_for_save(new_cover_path)
+                conn.execute(
+                    """UPDATE books SET path=?, name=?, circle=?, title=?, cover_path=?,
+                       updated_at=datetime('now','localtime') WHERE path=?""",
+                    (new_rel, new_name, new_circle, new_title, cover_path_store, old_rel),
+                )
+            else:
+                conn.execute(
+                    """UPDATE books SET path=?, name=?, circle=?, title=?,
+                       updated_at=datetime('now','localtime') WHERE path=?""",
+                    (new_rel, new_name, new_circle, new_title, old_rel),
+                )
+            if new_cover_custom:
+                conn.execute(
+                    "UPDATE books SET cover_custom=? WHERE path=?",
+                    (new_cover_custom, new_rel),
+                )
+            # pathを持つ関連テーブルのみ更新
+            conn.execute("UPDATE bookmarks SET path=? WHERE path=?", (new_rel, old_rel))
+            conn.execute("UPDATE recent_books SET path=? WHERE path=?", (new_rel, old_rel))
+    except Exception:
+        _logger.exception("rename_book: トランザクション失敗 old=%s new=%s", old_rel, new_rel)
+        raise
     cache.invalidate()
 
 
@@ -1998,8 +1828,7 @@ def update_book_display(path: str, circle: str | None = None, title: str | None 
         return
     lib_root = os.path.normpath((get_setting("library_folder") or "").strip())
     path = to_rel(path, lib_root)
-    conn = get_conn()
-    try:
+    with transaction() as conn:
         row = conn.execute("SELECT name, circle, title FROM books WHERE path=?", (path,)).fetchone()
         if not row:
             return
@@ -2017,10 +1846,7 @@ def update_book_display(path: str, circle: str | None = None, title: str | None 
             """UPDATE books SET name=?, circle=?, title=?, updated_at=datetime('now','localtime') WHERE path=?""",
             (new_name, new_circle, new_title, path),
         )
-        conn.commit()
-        cache.invalidate()
-    finally:
-        conn.close()
+    cache.invalidate()
 
 
 # ══════════════════════════════════════════════════════
@@ -2042,8 +1868,7 @@ def set_bookmark(path, rating):
         return
     lib_root = os.path.normpath((get_setting("library_folder") or "").strip())
     path = to_rel(path, lib_root)
-    conn = get_conn()
-    try:
+    with transaction() as conn:
         if rating == 0:
             conn.execute("DELETE FROM bookmarks WHERE path=?", (path,))
         else:
@@ -2054,9 +1879,6 @@ def set_bookmark(path, rating):
                      rating=excluded.rating, updated_at=excluded.updated_at""",
                 (path, rating)
             )
-        conn.commit()
-    finally:
-        conn.close()
 
 
 # ══════════════════════════════════════════════════════
@@ -2076,8 +1898,7 @@ def get_recent_books(limit=10):
 
 
 def add_recent_book(name, path):
-    conn = get_conn()
-    try:
+    with transaction() as conn:
         conn.execute(
             """INSERT INTO recent_books(path, name, opened_at)
                VALUES(?,?,datetime('now','localtime'))
@@ -2088,21 +1909,14 @@ def add_recent_book(name, path):
         # 11件目以降を削除
         conn.execute("""
             DELETE FROM recent_books WHERE path NOT IN (
-                SELECT path FROM recent_books ORDER BY opened_at DESC LIMIT 10
+                SELECT path FROM recent_books ORDER BY opened_at DESC LIMIT ?
             )
-        """)
-        conn.commit()
-    finally:
-        conn.close()
+        """, (config.RECENT_BOOKS_MENU_LIMIT,))
 
 
 def remove_recent_book(path):
-    conn = get_conn()
-    try:
+    with transaction() as conn:
         conn.execute("DELETE FROM recent_books WHERE path=?", (path,))
-        conn.commit()
-    finally:
-        conn.close()
 
 
 def get_book_name_by_path(path: str):
@@ -2300,8 +2114,7 @@ def get_paths_excluded():
 
 def set_excluded(path, excluded=True):
     """除外フラグを設定"""
-    conn = get_conn()
-    try:
+    with transaction() as conn:
         book_uuid = _get_book_uuid(conn, path)
         if not book_uuid:
             return
@@ -2312,9 +2125,6 @@ def set_excluded(path, excluded=True):
                  excluded=excluded.excluded, updated_at=excluded.updated_at""",
             (book_uuid, 1 if excluded else 0)
         )
-        conn.commit()
-    finally:
-        conn.close()
 
 
 def is_excluded(path):
@@ -2549,19 +2359,18 @@ def set_book_meta(
         return
     lib_root = os.path.normpath((get_setting("library_folder") or "").strip())
     path = to_rel(path, lib_root)
-    conn = get_conn()
-    try:
-        lookup_path = path
-        # 絶対パスで渡された場合はDB保存形式（相対パス）に揃えて検索する
-        if isinstance(path, str):
-            if os.path.isabs(path):
-                try:
-                    lookup_path = _to_db_path(path)
-                except ValueError:
-                    lookup_path = path
-            elif os.path.dirname(path) == "":
-                # ストアファイル名のみ（例: .dlst）で渡るケースはそのまま検索
+    lookup_path = path
+    # 絶対パスで渡された場合はDB保存形式（相対パス）に揃えて検索する
+    if isinstance(path, str):
+        if os.path.isabs(path):
+            try:
+                lookup_path = _to_db_path(path)
+            except ValueError:
                 lookup_path = path
+        elif os.path.dirname(path) == "":
+            # ストアファイル名のみ（例: .dlst）で渡るケースはそのまま検索
+            lookup_path = path
+    with transaction() as conn:
         book_uuid = _get_book_uuid(conn, lookup_path)
         if not book_uuid:
             return
@@ -2647,9 +2456,6 @@ def set_book_meta(
                     conn.execute(
                         "INSERT OR IGNORE INTO book_tags(uuid, tag) VALUES(?,?)", (book_uuid, t)
                     )
-        conn.commit()
-    finally:
-        conn.close()
     cache.invalidate()
 
 
@@ -2660,14 +2466,10 @@ def set_cover_custom(path, cover_path):
     lib_root = os.path.normpath((get_setting("library_folder") or "").strip())
     path = to_rel(path, lib_root)
     store = _normalize_cover_for_save(cover_path) if cover_path else ""
-    conn = get_conn()
-    try:
+    with transaction() as conn:
         conn.execute(
             "UPDATE books SET cover_custom=? WHERE path=?", (store, path)
         )
-        conn.commit()
-    finally:
-        conn.close()
 
 
 def get_cover_custom(path):
@@ -2689,18 +2491,25 @@ def cleanup_invalid_cover_custom():
         rows = conn.execute(
             "SELECT path, cover_custom FROM books WHERE cover_custom != '' AND cover_custom IS NOT NULL"
         ).fetchall()
-        cleared_count = 0
-        for row in rows:
-            if not row["cover_custom"]:
-                continue
-            resolved = resolve_cover_stored_value(row["cover_custom"])
-            if resolved and not os.path.exists(resolved):
-                conn.execute("UPDATE books SET cover_custom='' WHERE path=?", (row["path"],))
-                cleared_count += 1
-        if cleared_count > 0:
-            conn.commit()
     finally:
         conn.close()
+
+    to_clear: list[str] = []
+    for row in rows:
+        if not row["cover_custom"]:
+            continue
+        resolved = resolve_cover_stored_value(row["cover_custom"])
+        if resolved and not os.path.exists(resolved):
+            to_clear.append(row["path"])
+
+    if not to_clear:
+        return
+
+    with transaction() as conn:
+        conn.executemany(
+            "UPDATE books SET cover_custom='' WHERE path=?",
+            [(p,) for p in to_clear],
+        )
 
 
 def clear_all_caches():
@@ -2827,22 +2636,24 @@ def cleanup_unused_cover_cache():
 
 def cleanup_invalid_paths():
     """存在しないフォルダを指すブックをDBから削除する"""
-    import os
     conn = get_conn()
     try:
         rows = conn.execute("SELECT path FROM books").fetchall()
-        deleted_count = 0
-        for row in rows:
-            if row["path"] and not os.path.exists(row["path"]):
-                # books削除時にbook_meta/tag/characterはFK CASCADEで削除
-                conn.execute("DELETE FROM books WHERE path=?", (row["path"],))
-                conn.execute("DELETE FROM bookmarks WHERE path=?", (row["path"],))
-                conn.execute("DELETE FROM recent_books WHERE path=?", (row["path"],))
-                deleted_count += 1
-        if deleted_count > 0:
-            conn.commit()
     finally:
         conn.close()
+
+    to_delete: list[str] = []
+    for row in rows:
+        if row["path"] and not os.path.exists(row["path"]):
+            to_delete.append(row["path"])
+
+    if not to_delete:
+        return
+
+    with transaction() as conn:
+        conn.executemany("DELETE FROM books WHERE path=?", [(p,) for p in to_delete])
+        conn.executemany("DELETE FROM bookmarks WHERE path=?", [(p,) for p in to_delete])
+        conn.executemany("DELETE FROM recent_books WHERE path=?", [(p,) for p in to_delete])
 
 
 # ══════════════════════════════════════════════════════
@@ -2879,17 +2690,13 @@ def get_shortcuts():
 
 def set_shortcuts(shortcuts: dict):
     """ショートカット設定を一括保存。空文字は「未割り当て」として保存。"""
-    conn = get_conn()
-    try:
+    with transaction() as conn:
         for action, key in shortcuts.items():
             conn.execute(
                 "INSERT INTO settings(key,value) VALUES(?,?) "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                 (f"shortcut_{action}", key.lower().strip() if key else "")
             )
-        conn.commit()
-    finally:
-        conn.close()
 
 
 # ══════════════════════════════════════════════════════
@@ -3274,15 +3081,15 @@ def search_books(conditions, operator="AND"):
             list(matched_paths)
         ).fetchall()
         return [
-            (
-                r["name"],
-                r["circle"],
-                r["title"],
-                r["path"],
-                r["cover_path"],
-                r["is_dlst"],
-                r["uuid"],
-                r["missing_since_date"],
+            BookRow(
+                name=r["name"],
+                circle=r["circle"],
+                title=r["title"],
+                path=r["path"],
+                cover_path=r["cover_path"],
+                is_dlst=r["is_dlst"],
+                uuid=r["uuid"],
+                missing_since_date=r["missing_since_date"],
             )
             for r in rows
         ]
@@ -3309,12 +3116,25 @@ def get_books_by_added_date(date_str):
     conn = get_conn()
     try:
         rows = conn.execute(
-            """SELECT name, circle, title, path,
+            """SELECT uuid, name, circle, title, path,
                COALESCE(NULLIF(cover_custom, ''), cover_path) as cover_path,
-               COALESCE(is_dlst, 0) as is_dlst
+               COALESCE(is_dlst, 0) as is_dlst,
+               COALESCE(missing_since_date, '') as missing_since_date
                FROM books WHERE date(updated_at) = ? ORDER BY updated_at DESC""",
             (date_str,)
         ).fetchall()
-        return [(r["name"], r["circle"], r["title"], r["path"], r["cover_path"], r["is_dlst"]) for r in rows]
+        return [
+            BookRow(
+                name=r["name"],
+                circle=r["circle"],
+                title=r["title"],
+                path=r["path"],
+                cover_path=r["cover_path"],
+                is_dlst=r["is_dlst"],
+                uuid=r["uuid"],
+                missing_since_date=r["missing_since_date"],
+            )
+            for r in rows
+        ]
     finally:
         conn.close()

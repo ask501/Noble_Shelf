@@ -53,7 +53,7 @@ from theme import (
 )
 
 # ローカルモジュール
-from cover_paths import resolve_cover_path
+from cover_paths import resolve_cover_path, to_cover_db_path
 
 # _setup_ui(): 下部ボタン列の固定幅（元の直書き互換）
 BTN_W = 80
@@ -714,7 +714,7 @@ class PropertyDialog(QDialog):
         if "price"        in applied: self._e_price.setText(applied["price"])
         if "dlsite_id"    in applied: self._e_dlsite_id.setText(applied["dlsite_id"])
         if applied.get("cover_path"):
-            db.set_cover_custom(self._path, applied["cover_path"])
+            db.set_cover_custom(self._path, to_cover_db_path(applied["cover_path"]))
             self._new_cover_path = applied["cover_path"]
             pix = QPixmap(applied["cover_path"])
             if not pix.isNull():
@@ -1172,7 +1172,7 @@ class PropertyDialog(QDialog):
             else None
         )
         # 画像を変更で選んだカバーは set_cover_custom のみ。rename_book へ渡すと cover_path にも二重で載る。
-        cover_for_rename_book = (new_cover or None) if not self._new_cover_path else None
+        cover_for_rename_book = (to_cover_db_path(new_cover) or None) if not self._new_cover_path else None
         try:
             bu_rename_book(
                 path,
@@ -1199,7 +1199,7 @@ class PropertyDialog(QDialog):
         # カバー変更時は必ず DB に保存してから cleanup（保存前にクリアされないよう順序を保証）
         # new_cover は上で _new_cover_path を取り込み、フォルダリネーム時は作品フォルダ配下ならパス補正済み
         if self._new_cover_path:
-            db.set_cover_custom(new_db_path, new_cover)
+            db.set_cover_custom(new_db_path, to_cover_db_path(new_cover))
 
         # メタ情報を保存
         db.set_book_meta(

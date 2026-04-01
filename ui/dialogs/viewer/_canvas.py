@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import threading
 from typing import Callable, Optional
 
@@ -9,11 +8,11 @@ from PySide6.QtCore import Qt, QPoint, QRunnable
 from PySide6.QtGui import QPainter, QPixmap, QWheelEvent, QMouseEvent
 from PySide6.QtWidgets import QWidget
 
-from PIL import Image
 import config
 from theme import VIEWER_BG
 
 from ui.dialogs.viewer._reader import BookReader, FolderReader
+from ui.dialogs.viewer._reader_utils import read_page_concurrent
 from ui.dialogs.viewer._utils import _pil_to_qpixmap
 
 
@@ -145,16 +144,16 @@ class _OriginalPixmapRunnable(QRunnable):
         if self._reader is None:
             return
         try:
-            with self._reader_lock:
+            if isinstance(self._reader, FolderReader):
                 if self._serial_getter() != self._serial:
                     return
-                if isinstance(self._reader, FolderReader):
-                    img = Image.open(
-                        os.path.join(self._reader._path, self._reader._files[self._idx])
-                    )
-                else:
-                    img = self._reader.read_page(self._idx)
-            img = img.convert("RGB")
+            else:
+                with self._reader_lock:
+                    if self._serial_getter() != self._serial:
+                        return
+            img = read_page_concurrent(
+                self._reader, self._reader_lock, self._idx
+            )
             pm = _pil_to_qpixmap(img)
             if self._serial_getter() == self._serial:
                 self._callback(self._idx, pm, self._serial)

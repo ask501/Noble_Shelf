@@ -407,9 +407,9 @@ class SidebarWidget(QWidget):
                 # 作品名を追加順（updated_at 降順）で一覧
                 rows = db.get_all_books_order_by_added_desc()
                 return [
-                    (row[2] or row[0] or row[3], row[3], 0)  # title or name, path, count
+                    (row["title"] or row["name"] or row["path"], row["path"], 0)  # title or name, path, count
                     for row in rows
-                    if row[3]
+                    if row["path"]
                 ]
 
             elif mode == "history":

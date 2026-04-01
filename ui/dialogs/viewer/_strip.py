@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Callable, Optional
+from typing import Callable
 
 from PySide6.QtCore import Qt, QObject, QRunnable, Signal, QSize
 from PySide6.QtGui import QImage, QMouseEvent, QPixmap, QWheelEvent
@@ -18,7 +18,8 @@ from theme import (
     COLOR_UI_TRANSPARENT,
 )
 
-from ui.dialogs.viewer._reader import BookReader
+from ui.dialogs.viewer._reader import BookReader, FolderReader
+from ui.dialogs.viewer._reader_utils import read_page_concurrent
 
 
 # ══════════════════════════════════════════════════════════
@@ -81,11 +82,16 @@ class _ThumbStripRunnable(QRunnable):
             self._emitter.thumb_failed.emit(self._idx)
             return
         try:
-            with self._reader_lock:
+            if isinstance(self._reader, FolderReader):
                 if self._serial_getter() != self._serial:
                     return
-                pil = self._reader.read_page(self._idx)
-            pil = pil.convert("RGB")
+            else:
+                with self._reader_lock:
+                    if self._serial_getter() != self._serial:
+                        return
+            pil = read_page_concurrent(
+                self._reader, self._reader_lock, self._idx
+            )
             tw, th = config.VIEWER_THUMB_STRIP_SIZE
             pil.thumbnail((tw, th), Image.Resampling.BILINEAR)
             data = pil.tobytes("raw", "RGB")

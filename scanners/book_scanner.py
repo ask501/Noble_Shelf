@@ -976,17 +976,17 @@ class BookScannerWorker(QRunnable):
         logging.info("[SCAN] phase=final_fetch %.3fs", t7 - t_after_db)
         books = [
             {
-                "path": row[config.BOOK_ROW_PATH],
-                "name": row[config.BOOK_ROW_NAME],
-                "title": row[config.BOOK_ROW_TITLE] or row[config.BOOK_ROW_NAME],
-                "circle": row[config.BOOK_ROW_CIRCLE] or "",
-                "cover": row[config.BOOK_ROW_COVER] or "",
+                "path": row["path"],
+                "name": row["name"],
+                "title": row["title"] or row["name"],
+                "circle": row["circle"] or "",
+                "cover": row["cover_path"] or "",
                 "pages": 0,
                 "rating": 0,
-                "missing_since_date": (row[config.BOOK_ROW_MISSING_SINCE_DATE] or ""),
+                "missing_since_date": (row["missing_since_date"] or ""),
             }
             for row in rows
-            if row[config.BOOK_ROW_PATH]
+            if row["path"]
         ]
         return books, duplicate_results
 

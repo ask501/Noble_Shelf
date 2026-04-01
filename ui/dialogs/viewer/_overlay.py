@@ -17,7 +17,9 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QWidget, QGraphicsOpacityEffect
 
-from PIL import Image
+import cv2
+import numpy as np
+
 import config
 from theme import (
     VIEWER_OVERLAY_HIGHLIGHT_BORDER,
@@ -25,7 +27,8 @@ from theme import (
     VIEWER_OVERLAY_PLACEHOLDER_BG,
     COLOR_WHITE,
 )
-from ui.dialogs.viewer._reader import BookReader
+from ui.dialogs.viewer._reader import BookReader, FolderReader
+from ui.dialogs.viewer._reader_utils import read_page_concurrent
 
 
 class _OverlayThumbRunnable(QRunnable):
@@ -64,25 +67,42 @@ class _OverlayThumbRunnable(QRunnable):
             )
             return
         try:
-            with self._reader_lock:
+            if isinstance(self._reader, FolderReader):
                 if self._serial_getter() != self._job_serial:
                     return
-                pil = self._reader.read_page(self._idx)
-            pil = pil.convert("RGB")
+            else:
+                with self._reader_lock:
+                    if self._serial_getter() != self._job_serial:
+                        return
+            pil = read_page_concurrent(
+                self._reader, self._reader_lock, self._idx
+            )
             tw, th = (
                 config.VIEWER_OVERLAY_THUMB_SIZE
                 if self._is_high
                 else config.VIEWER_OVERLAY_THUMB_LOW_SIZE
             )
-            pil.thumbnail((tw, th), Image.Resampling.BILINEAR)
-            data = pil.tobytes("raw", "RGB")
+            arr_in = np.asarray(pil)
+            h_orig, w_orig = int(arr_in.shape[0]), int(arr_in.shape[1])
+            scale = min(tw / w_orig, th / h_orig)
+            bpp = config.VIEWER_OVERLAY_THUMB_RGB_BYTES_PER_PIXEL
+            new_w = max(1, int(w_orig * scale))
+            new_h = max(1, int(h_orig * scale))
+            arr = cv2.resize(
+                arr_in,
+                (new_w, new_h),
+                interpolation=config.VIEWER_OVERLAY_THUMB_CV2_INTERPOLATION,
+            )
+            arr = np.ascontiguousarray(arr, dtype=np.uint8)
+            stride = new_w * bpp
             qimg = QImage(
-                data,
-                pil.width,
-                pil.height,
-                pil.width * 3,
+                arr.data,
+                new_w,
+                new_h,
+                stride,
                 QImage.Format.Format_RGB888,
             ).copy()
+            # 外部バッファ参照の QImage を copy() で複製し、arr が GC されても安全にする
             pm = QPixmap.fromImage(qimg)
             if self._serial_getter() == self._job_serial:
                 QMetaObject.invokeMethod(

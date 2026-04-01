@@ -46,6 +46,7 @@ from theme import (
 )
 
 from ui.dialogs.viewer._reader import BookReader, FolderReader, PdfReader, IMAGE_EXTS
+from ui.dialogs.viewer._reader_utils import read_page_concurrent
 from ui.dialogs.viewer._utils import _pil_to_qpixmap
 from ui.dialogs.viewer._canvas import PageCanvas, _OriginalPixmapRunnable
 from ui.dialogs.viewer._overlay import ThumbnailOverlay, _OverlayThumbRunnable
@@ -688,10 +689,10 @@ class Viewer(QDialog):
             return QPixmap()
         try:
             if isinstance(self._reader, FolderReader):
-                path = os.path.join(self._reader._path, self._reader._files[idx])
-                img = Image.open(path)
+                img = read_page_concurrent(self._reader, self._reader_lock, idx)
             else:
-                img = self._reader.read_page(idx)
+                with self._reader_lock:
+                    img = read_page_concurrent(self._reader, self._reader_lock, idx)
 
             # キャンバスサイズに収まるよう事前にLANCZOSでリサイズ
             iw, ih = img.size

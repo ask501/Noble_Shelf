@@ -8,6 +8,31 @@ import os
 import db
 
 
+def to_cover_db_path(absolute_or_any: str) -> str:
+    """
+    カバーパスをDBに保存する形式（相対パス）に変換する。
+    - 空文字 → "" を返す
+    - ライブラリ内の絶対パス → 相対パスに変換
+    - ライブラリ外の絶対パス → 正規化してそのまま返す
+    - すでに相対パス → そのまま返す
+    内部で db.to_db_path_from_any() を使う。
+    """
+    import sys
+
+    print(f"[DEBUG] to_cover_db_path input: {absolute_or_any!r}", file=sys.stderr)
+    p = (absolute_or_any or "").strip()
+    if not p:
+        return ""
+    try:
+        result = db.to_db_path_from_any(p)
+        print(f"[DEBUG] to_cover_db_path result: {result!r}", file=sys.stderr)
+        return result
+    except ValueError:
+        result = os.path.normpath(p)
+        print(f"[DEBUG] to_cover_db_path fallback: {result!r}", file=sys.stderr)
+        return result
+
+
 def resolve_cover_path(stored: str) -> str:
     """
     DBに保存された cover 値を絶対パスに解決する。

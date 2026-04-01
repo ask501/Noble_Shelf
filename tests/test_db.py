@@ -59,7 +59,10 @@ class TestDbIsolated(unittest.TestCase):
             operator="AND",
         )
         self.assertEqual(len(rows), 1)
-        _name, _circle, title, path, _cover, _is_dlst, uuid_val, _missing_since = rows[0]
+        row = rows[0]
+        title = row["title"]
+        path = row["path"]
+        uuid_val = row["uuid"]
         self.assertEqual(title, "UniqueSearchTitleX")
         self.assertTrue(uuid_val)
         self.assertTrue(path)
@@ -76,8 +79,8 @@ class TestDbIsolated(unittest.TestCase):
         db_mod.upsert_book("a2", "c2", "t2", fp, "", mtime=2.0, uuid=uid)
         self.assertEqual(len(db_mod.get_all_books()), 1)
         row = db_mod.get_all_books()[0]
-        self.assertEqual(row[2], "t2")
-        self.assertEqual(row[6], uid)
+        self.assertEqual(row["title"], "t2")
+        self.assertEqual(row["uuid"], uid)
 
     def test_rename_book_path(self) -> None:
         lib = os.path.join(self._td.name, "lib3")
@@ -94,7 +97,7 @@ class TestDbIsolated(unittest.TestCase):
             operator="AND",
         )
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0][3], "new.dmmb")
+        self.assertEqual(rows[0]["path"], "new.dmmb")
 
     def test_rename_nonexistent_uuid_no_error(self) -> None:
         lib = os.path.join(self._td.name, "lib4")

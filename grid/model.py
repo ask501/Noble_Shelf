@@ -61,6 +61,7 @@ class BookListModel(QAbstractListModel):
         self._bookmarks: dict[str, int] = {}
         self._dummy_mode: bool = False
         self._dummy_thumb_pm: QPixmap | None = None
+        self._thumb_serial: int = 0
 
     def dummy_mode(self) -> bool:
         """スクリーンショット用ダミー表示が有効か（delegate 等から参照）。"""
@@ -226,12 +227,12 @@ class BookListModel(QAbstractListModel):
             return
         self._pending.add(cover)
         self._emit_thumb_queue_changed()
-        w = ThumbWorker(cover)
+        w = ThumbWorker(cover, self._thumb_serial, lambda: self._thumb_serial)
         w.signals.done.connect(self._on_thumb_done)
+        w.signals.finished.connect(self._on_thumb_finished)
         self._pool.start(w)
 
     def _on_thumb_done(self, cover: str, pix: QPixmap):
-        self._pending.discard(cover)
         self._thumbs[cover] = pix
         nc = os.path.normpath(cover)
         for row, b in enumerate(self._books):
@@ -239,6 +240,9 @@ class BookListModel(QAbstractListModel):
                 idx = self.index(row)
                 self.dataChanged.emit(idx, idx, [ROLE_THUMB])  # noqa: F405
                 break
+
+    def _on_thumb_finished(self, cover: str) -> None:
+        self._pending.discard(cover)
         self._flush_queue()
         self._emit_thumb_queue_changed()
 
@@ -250,8 +254,9 @@ class BookListModel(QAbstractListModel):
                 continue
             self._pending.add(cover)
             self._queued.discard(cover)
-            w = ThumbWorker(cover)
+            w = ThumbWorker(cover, self._thumb_serial, lambda: self._thumb_serial)
             w.signals.done.connect(self._on_thumb_done)
+            w.signals.finished.connect(self._on_thumb_finished)
             self._pool.start(w)
 
     def invalidate_thumb(self, cover: str) -> None:

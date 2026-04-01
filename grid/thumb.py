@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
-from typing import Optional
+from typing import Callable, Optional
 
 from PIL import Image
 from PySide6.QtCore import QObject, QRunnable, Signal
@@ -39,17 +39,28 @@ def _load_thumb_sync(cover: str) -> Optional[QPixmap]:
 
 class ThumbSignals(QObject):
     done = Signal(str, QPixmap)
+    finished = Signal(str)
 
 
 class ThumbWorker(QRunnable):
-    def __init__(self, cover: str):
+    def __init__(
+        self,
+        cover: str,
+        serial: int,
+        serial_getter: Callable[[], int],
+    ) -> None:
         super().__init__()
         self.cover = cover
+        self._serial = serial
+        self._serial_getter = serial_getter
         self.signals = ThumbSignals()
         self.setAutoDelete(True)
 
-    def run(self):
-        pix = _load_thumb_sync(self.cover)
-        if pix:
-            self.signals.done.emit(self.cover, pix)
+    def run(self) -> None:
+        try:
+            pix = _load_thumb_sync(self.cover)
+            if pix and self._serial_getter() == self._serial:
+                self.signals.done.emit(self.cover, pix)
+        finally:
+            self.signals.finished.emit(self.cover)
 

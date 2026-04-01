@@ -56,7 +56,7 @@ from ui.widgets.toast import ToastWidget
 from store_file_resolver import ActionResult
 
 # ローカルモジュール
-from cover_paths import resolve_cover_path, resolve_cover_path_fast
+from cover_paths import resolve_cover_path, resolve_cover_path_fast, to_cover_db_path
 
 
 def _cover_has_path_segment(clean: str) -> bool:
@@ -618,8 +618,8 @@ class MainWindow(QMainWindow):
                     except ValueError:
                         found_path_db = found_path
                     for row in db.get_all_books():
-                        if row[3] == found_path_db:
-                            existing_cover = (row[4] or "").strip()
+                        if row["path"] == found_path_db:
+                            existing_cover = (row["cover_path"] or "").strip()
                             break
                     resolved = resolve_cover_path(existing_cover)
                     overwrite_thumb = db.get_setting("bookmarklet_overwrite_thumb") == "1"
@@ -789,12 +789,12 @@ class MainWindow(QMainWindow):
                                             )
                         elif saved_path:
                             for row in db.get_all_books():
-                                if row[3] == found_path:
+                                if row["path"] == found_path:
                                     update_book_meta(
                                         found_path,
-                                        row[0],
-                                        row[1],
-                                        row[2] or row[0],
+                                        row["name"],
+                                        row["circle"],
+                                        row["title"] or row["name"],
                                         cover_path=saved_path,
                                     )
                                     break
@@ -851,7 +851,7 @@ class MainWindow(QMainWindow):
         if found_path:
             self.on_book_updated(found_path)
             target_title = next(
-                (row[2] for row in db.get_all_books() if row[3] == found_path),
+                (row["title"] for row in db.get_all_books() if row["path"] == found_path),
                 None,
             )
             real_book = next(
@@ -1403,17 +1403,17 @@ class MainWindow(QMainWindow):
         if rows:
             books = [
                 {
-                    "path": os.path.normpath(os.path.join(library_folder, row[3])) if library_folder else row[3],
-                    "name":   row[0],
-                    "title":  row[2] or row[0],
-                    "circle": row[1] or "",
-                    "cover":  row[4] or "",
-                    "cover_resolved": resolve_cover_path_fast(row[4] or "", library_folder),
+                    "path": os.path.normpath(os.path.join(library_folder, row["path"])) if library_folder else row["path"],
+                    "name":   row["name"],
+                    "title":  row["title"] or row["name"],
+                    "circle": row["circle"] or "",
+                    "cover":  row["cover_path"] or "",
+                    "cover_resolved": resolve_cover_path_fast(row["cover_path"] or "", library_folder),
                     "pages":  0,
                     "rating": 0,
                 }
                 for row in rows
-                if row[3]
+                if row["path"]
             ]
             self._all_books = books
             if hasattr(self, "_sidebar"):
@@ -1573,7 +1573,7 @@ class MainWindow(QMainWindow):
         import re as _re
 
         books_rows = db.get_all_books()
-        row_by_path = {r[3]: r for r in books_rows}
+        row_by_path = {r["path"]: r for r in books_rows}
 
         for result in duplicate_results:
             winner_path = (result.existing_path or "").strip()
@@ -1596,10 +1596,10 @@ class MainWindow(QMainWindow):
                         db.rename_book(
                             winner_path,
                             loser_path,
-                            winner_row[0] or "",
-                            winner_row[1] or "",
-                            winner_row[2] or (winner_row[0] or ""),
-                            winner_row[4] or "",
+                            winner_row["name"] or "",
+                            winner_row["circle"] or "",
+                            winner_row["title"] or (winner_row["name"] or ""),
+                            winner_row["cover_path"] or "",
                         )
                         self.on_book_updated(loser_abs)
                     else:
@@ -1626,13 +1626,13 @@ class MainWindow(QMainWindow):
             winner_meta = db.get_book_meta(winner_abs) or {}
             loser_meta = db.get_book_meta(loser_abs) or {}
 
-            winner_cover = db.resolve_cover_stored_value(winner_row[4] or "")
-            loser_cover = db.resolve_cover_stored_value(loser_row[4] or "")
+            winner_cover = db.resolve_cover_stored_value(winner_row["cover_path"] or "")
+            loser_cover = db.resolve_cover_stored_value(loser_row["cover_path"] or "")
             winner_has_cover = bool(winner_cover and os.path.isfile(winner_cover))
             loser_has_cover = bool(loser_cover and os.path.isfile(loser_cover))
             current = {
-                "title": winner_row[2] or winner_row[0] or "",
-                "circle": winner_row[1] or "",
+                "title": winner_row["title"] or winner_row["name"] or "",
+                "circle": winner_row["circle"] or "",
                 "author": winner_meta.get("author", ""),
                 "series": winner_meta.get("series", ""),
                 "characters": winner_meta.get("characters", []),
@@ -1645,8 +1645,8 @@ class MainWindow(QMainWindow):
                 "cover": winner_cover if winner_has_cover else "",
             }
             fetched = {
-                "title": loser_row[2] or loser_row[0] or "",
-                "circle": loser_row[1] or "",
+                "title": loser_row["title"] or loser_row["name"] or "",
+                "circle": loser_row["circle"] or "",
                 "author": loser_meta.get("author", ""),
                 "series": loser_meta.get("series", ""),
                 "characters": loser_meta.get("characters", []),
@@ -1691,7 +1691,7 @@ class MainWindow(QMainWindow):
             )
             cover_path = applied.get("cover_path")
             if cover_path:
-                db.set_cover_custom(winner_path, cover_path)
+                db.set_cover_custom(winner_path, to_cover_db_path(cover_path))
             elif (not winner_has_cover) and loser_has_cover:
                 # ダイアログでカバー未選択でも、採用側にカバーが無い場合は重複側のカバーを引き継ぐ
                 db.update_book_cover_path(winner_path, loser_cover)
@@ -1749,19 +1749,19 @@ class MainWindow(QMainWindow):
         library_folder = (db.get_setting("library_folder") or "").strip()
         books = []
         for row in rows:
-            if not row[3]:
+            if not row["path"]:
                 continue
             books.append(
                 {
-                    "path": self._safe_from_db_path(row[3] or ""),
-                    "name": row[0],
-                    "title": row[2] or row[0],
-                    "circle": row[1] or "",
-                    "cover": row[4] or "",
-                    "cover_resolved": resolve_cover_path_fast(row[4] or "", library_folder),
+                    "path": self._safe_from_db_path(row["path"] or ""),
+                    "name": row["name"],
+                    "title": row["title"] or row["name"],
+                    "circle": row["circle"] or "",
+                    "cover": row["cover_path"] or "",
+                    "cover_resolved": resolve_cover_path_fast(row["cover_path"] or "", library_folder),
                     "pages": 0,
                     "rating": 0,
-                    "is_dlst": int(row[5]) if len(row) > 5 else 0,
+                    "is_dlst": int(row["is_dlst"]),
                 }
             )
         self._all_books = books
@@ -1839,20 +1839,20 @@ class MainWindow(QMainWindow):
         books = [
             {
                 "path": (
-                    _p := os.path.normpath(os.path.join(lib_root, (row[3] or "").strip()))
-                    if lib_root else (row[3] or "").strip()
+                    _p := os.path.normpath(os.path.join(lib_root, (row["path"] or "").strip()))
+                    if lib_root else (row["path"] or "").strip()
                 ),
-                "name":   row[0],
-                "title":  row[2] or row[0],
-                "circle": row[1] or "",
-                "cover":  row[4] or "",
-                "cover_resolved": resolve_cover_path_fast(row[4] or "", lib_root),
+                "name":   row["name"],
+                "title":  row["title"] or row["name"],
+                "circle": row["circle"] or "",
+                "cover":  row["cover_path"] or "",
+                "cover_resolved": resolve_cover_path_fast(row["cover_path"] or "", lib_root),
                 "pages":  0,
                 "rating": 0,
-                "is_dlst": int(row[5]) if len(row) > 5 else 0,
+                "is_dlst": int(row["is_dlst"]),
             }
             for row in rows
-            if row[3]
+            if row["path"]
         ]
         self._all_books = books
 
@@ -2500,8 +2500,8 @@ class MainWindow(QMainWindow):
                 os.path.normpath((db.get_setting("library_folder") or "").strip())
             )
             for row in rows:
-                path = row[3] or ""
-                cover = row[4] or ""
+                path = row["path"] or ""
+                cover = row["cover_path"] or ""
                 ext = os.path.splitext(path)[1].lower() if path else ""
                 if ext == ".pdf":
                     if library_folder and os.path.normcase(
@@ -2535,12 +2535,12 @@ class MainWindow(QMainWindow):
             os.path.normpath((db.get_setting("library_folder") or "").strip())
         )
         pdf_rows = [
-            (r[3], r[4]) for r in rows
-            if r[3]
-            and os.path.splitext(r[3])[1].lower() == ".pdf"
+            (r["path"], r["cover_path"]) for r in rows
+            if r["path"]
+            and os.path.splitext(r["path"])[1].lower() == ".pdf"
             and (
                 not library_folder
-                or os.path.normcase(os.path.normpath(os.path.dirname(r[3]))) == library_folder
+                or os.path.normcase(os.path.normpath(os.path.dirname(r["path"]))) == library_folder
             )
         ]
         need_repair = [(path, cover) for path, cover in pdf_rows if not cover or not os.path.isfile(cover)]
@@ -2708,7 +2708,7 @@ class MainWindow(QMainWindow):
         # get_all_books にはふりがなが含まれないため、全件パスでメタを見て既存ふりがなの有無だけ判定する
         has_existing_kana = False
         for row in rows:
-            _path = row[3]
+            _path = row["path"]
             try:
                 _meta = db.get_book_meta(_path) or {}
             except Exception:

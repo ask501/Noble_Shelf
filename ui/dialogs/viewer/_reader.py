@@ -8,7 +8,11 @@ try:
 except ImportError:
     HAS_PYMUPDF = False
 
+import cv2
+import numpy as np
 from PIL import Image
+
+import config
 
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp")
 
@@ -52,7 +56,15 @@ class FolderReader(BookReader):
         return len(self._files)
 
     def read_page(self, idx: int) -> Image.Image:
-        return Image.open(os.path.join(self._path, self._files[idx])).convert("RGB")
+        full_path = os.path.join(self._path, self._files[idx])
+        with open(full_path, "rb") as f:
+            buf = f.read()
+        arr = np.frombuffer(buf, dtype=np.uint8)
+        decoded = cv2.imdecode(arr, config.VIEWER_FOLDER_READ_IMREAD_COLOR)
+        if decoded is None:
+            raise ValueError(f"画像をデコードできません: {full_path}")
+        rgb_arr = cv2.cvtColor(decoded, config.VIEWER_FOLDER_READ_COLOR_BGR2RGB)
+        return Image.fromarray(rgb_arr)
 
 
 class PdfReader(BookReader):

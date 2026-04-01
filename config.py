@@ -288,6 +288,9 @@ CARD_STAR_BADGE_PADDING = 6      # 星バッジの左右パディング
 CARD_BADGE_RADIUS = 4            # ページ数・星バッジの角丸
 CARD_META_BADGE_RADIUS = 5       # メタバッジの角丸
 GRID_SCROLL_SINGLE_STEP = 20     # グリッド縦スクロールの単步
+# load_books 後の ROLE_PATH 追跡復元（model.match / scrollTo）
+GRID_LIST_MODEL_COLUMN = 0
+GRID_LOAD_BOOKS_PATH_MATCH_MAX_HITS = 1
 
 
 def grid_card_total_height_for_width(card_width: int) -> int:
@@ -806,6 +809,11 @@ VIEWER_DIRECTION_DATA_LTR = "ltr"
 # 初期ウィンドウサイズ（最大化前の基準）
 VIEWER_INIT_WIDTH = 900
 VIEWER_INIT_HEIGHT = 700
+# ui/dialogs/viewer/_reader.py FolderReader: cv2.imdecode / cvtColor（OpenCV 定数と同一の整数値）
+VIEWER_FOLDER_READ_IMREAD_COLOR = 1  # cv2.IMREAD_COLOR
+VIEWER_FOLDER_READ_COLOR_BGR2RGB = 4  # cv2.COLOR_BGR2RGB
+# ui/dialogs/viewer/_reader_utils.read_page_concurrent: PIL convert 用モード
+VIEWER_READ_PAGE_PIL_MODE_RGB = "RGB"
 # PageCanvas: この倍率を超えたらフル解像度 pixmap で描画（以下は縮小済み pixmap）
 VIEWER_CANVAS_ZOOM_BASE = 1.0
 # PageCanvas: ウィジェット中心座標（幅・高さをこの値で割る）
@@ -855,6 +863,10 @@ VIEWER_THUMB_STRIP_WHEEL_HSCROLL_STEP = 64
 # 全画面サムネイルオーバーレイ（viewer.py ThumbnailOverlay）
 VIEWER_OVERLAY_THUMB_SIZE = (160, 160)
 VIEWER_OVERLAY_THUMB_LOW_SIZE = (80, 80)
+# ThumbnailOverlay: RGB888 1 画素あたりバイト数（QImage stride 用）
+VIEWER_OVERLAY_THUMB_RGB_BYTES_PER_PIXEL = 3
+# OpenCV cv2.resize 用（全画面サムネ縮小向け: cv2.INTER_AREA と同一の整数値。モアレ抑制）
+VIEWER_OVERLAY_THUMB_CV2_INTERPOLATION = 3
 VIEWER_OVERLAY_THUMB_GAP = 8
 VIEWER_OVERLAY_BG_ALPHA = 192
 VIEWER_OVERLAY_PREVIEW_DEBOUNCE_MS = 80
@@ -866,8 +878,17 @@ VIEWER_OVERLAY_FADE_OUT_MS = 100
 VIEWER_OVERLAY_BORDER_WIDTH = 2
 VIEWER_OVERLAY_PAGE_NUM_FONT_SIZE = 11
 VIEWER_OVERLAY_SCHEDULE_BATCH = 12
-# ThumbnailOverlay 用 QThreadPool の同時ワーカー上限
-VIEWER_OVERLAY_POOL_MAX_THREADS = 4
+# ThumbnailOverlay 用 QThreadPool の同時ワーカー上限（論理コアの半分、下限あり）
+VIEWER_OVERLAY_POOL_MAX_THREADS_MIN = 4
+# os.cpu_count() が None のときに仮定する論理コア数
+VIEWER_OVERLAY_POOL_CPU_COUNT_FALLBACK = 8
+# 論理コア数に対する使用割合の分母（この値で割る＝半分使用）
+VIEWER_OVERLAY_POOL_CPU_SHARE_DIVISOR = 2
+VIEWER_OVERLAY_POOL_MAX_THREADS = max(
+    VIEWER_OVERLAY_POOL_MAX_THREADS_MIN,
+    (os.cpu_count() or VIEWER_OVERLAY_POOL_CPU_COUNT_FALLBACK)
+    // VIEWER_OVERLAY_POOL_CPU_SHARE_DIVISOR,
+)
 DRAG_THRESHOLD_PX = 6
 
 # （旧）起動直後スキャンでストアダイアログを抑止する時間(秒)。app.py は _is_startup_scan で管理。

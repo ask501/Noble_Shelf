@@ -70,7 +70,7 @@ class TestScannerIntegration(unittest.TestCase):
         BookScannerWorker(self.lib)._scan()
         rows = db_mod.get_all_books()
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0][3], "new.dmmb")
+        self.assertEqual(rows[0]["path"], "new.dmmb")
 
     def test_deleted_file_sets_missing(self) -> None:
         fp = os.path.join(self.lib, "gone.dmmb")
